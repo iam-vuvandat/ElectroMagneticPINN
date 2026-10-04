@@ -7,6 +7,7 @@ class Segment:
         self.material = "air"
         self.bh_curve = None
         self.coercive = [0.0, 0.0]
+        self.current = 0.0
         self.current_density = 0.0
         
         self.vacuum_reluctivity = 795774.715459 # 1/(4*pi* 10^(-7))
