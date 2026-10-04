@@ -2,7 +2,13 @@ import torch
 from geometry_engine.segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
 
 class Segment:
-    def __init__(self, outline=None):
+    def __init__(self, 
+                 outline=None,
+                 material = "air",
+                 bh_curve = None,
+                 coercive = [0,0],
+                 current = 0,
+                 steepness = 0.5):
         self.outline = None
         self.material = "air"
         self.bh_curve = None
