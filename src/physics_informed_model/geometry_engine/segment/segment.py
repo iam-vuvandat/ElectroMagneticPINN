@@ -5,7 +5,7 @@ class Segment:
     def __init__(self, outline=None):
         self.outline = None
         self.material = "air"
-        self.b_h_curve = None
+        self.bh_curve = None
         self.coercive = [0.0, 0.0]
         self.current_density = 0.0
         
