@@ -3,6 +3,7 @@ from geometry_engine.segment.polygon_signed_distance_field import compute_polygo
 
 class Segment:
     def __init__(self, outline=None):
+        self.outline = None
         self.material = "air"
         self.b_h_curve = None
         self.coercive = [0.0, 0.0]
