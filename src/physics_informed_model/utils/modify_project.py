@@ -1,11 +1,124 @@
 import os
 
-def execute_update():
+def execute_refactor_to_composition():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
     # ---------------------------------------------------------
-    # 1. CẬP NHẬT FILE TEST_SIMULATION.PY
+    # 1. CẬP NHẬT FILE ELECTRO_MAGNETIC_PINN.PY
+    # ---------------------------------------------------------
+    emp_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
+    emp_code = """import torch
+from pinn_architecture import PINNArchitecture
+from training_manager import TrainingManager
+from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
+from geometry_engine.geometry import Geometry
+from physics_domain.collocation_sampler import CollocationSampler
+
+class ElectroMagneticPINN:
+    def __init__(
+        self, 
+        geometry_config=None,
+        sampler_config=None,
+        pinn_config=None,
+        training_config=None
+    ):
+        # 1. LƯU TRỮ CÁC CẤU HÌNH NHƯ LÀ THUỘC TÍNH CỦA CLASS MẸ
+        self.geometry_config = geometry_config if geometry_config is not None else {}
+        self.sampler_config = sampler_config if sampler_config is not None else {
+            "x_boundaries": (-0.05, 0.05),
+            "y_boundaries": (-0.05, 0.05)
+        }
+        self.pinn_config = pinn_config if pinn_config is not None else {}
+        self.training_config = training_config if training_config is not None else {}
+        
+        # 2. KHỞI TẠO TRỰC TIẾP CÁC LỚP CON (LOẠI BỎ TIÊM PHỤ THUỘC)
+        self.geometry_engine_instance = Geometry(**self.geometry_config)
+        
+        self.collocation_sampler_instance = CollocationSampler(
+            x_boundaries_tuple=self.sampler_config.get("x_boundaries", (-0.05, 0.05)),
+            y_boundaries_tuple=self.sampler_config.get("y_boundaries", (-0.05, 0.05))
+        )
+        
+        # Thiết lập hằng số quy chuẩn
+        self.L0 = self.collocation_sampler_instance.x_maximum
+        self.H0 = 800000.0
+        self.nu0 = 795774.715459  # Hằng số chân không (vì đã bị gỡ khỏi Geometry)
+        self.A0 = (self.H0 * self.L0) / self.nu0
+        
+        # 3. TRUYỀN CẤU HÌNH VÀO CÁC LỚP LÕI THÔNG QUA **KWARGS
+        self.pinn_architecture_instance = PINNArchitecture(
+            domain_scale=self.L0,
+            **self.pinn_config
+        )
+        
+        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
+        
+        self.training_manager_instance = TrainingManager(
+            model=self.pinn_architecture_instance,
+            pde_evaluator=self.maxwell_pde_loss_instance,
+            **self.training_config
+        )
+
+    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
+        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
+            geometry_object=self.geometry_engine_instance,
+            number_of_uniform_points=number_of_uniform_points,
+            number_of_interface_points=number_of_interface_points,
+            distance_threshold=distance_threshold
+        )
+        
+        physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
+        
+        print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
+        self.training_manager_instance.train_adam(
+            epochs=epochs_adam,
+            points_tensor=points_tensor,
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+        
+        print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
+        self.training_manager_instance.train_lbfgs(
+            epochs=epochs_lbfgs, 
+            points_tensor=points_tensor, 
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"], 
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"], 
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"], 
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+
+    def predict_magnetic_vector_potential(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        with torch.no_grad():
+            A_z_star = self.pinn_architecture_instance(points_tensor)
+        return A_z_star * self.A0
+
+    def evaluate_fields(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        points_tensor.requires_grad_(True)
+        
+        A_z_star = self.pinn_architecture_instance(points_tensor)
+        A_z_phys = A_z_star * self.A0
+        
+        grad_A = torch.autograd.grad(
+            outputs=A_z_phys,
+            inputs=points_tensor,
+            grad_outputs=torch.ones_like(A_z_phys),
+            create_graph=False,
+            retain_graph=False
+        )[0]
+        
+        B_x = grad_A[:, 1:2]
+        B_y = -grad_A[:, 0:1]
+        
+        return A_z_phys.detach(), B_x.detach(), B_y.detach()
+"""
+
+    # ---------------------------------------------------------
+    # 2. CẬP NHẬT FILE TEST_SIMULATION.PY
     # ---------------------------------------------------------
     test_file = os.path.join(project_root, 'test_simulation.py')
     test_code = """import os
@@ -21,56 +134,67 @@ if torch.cuda.is_available():
 
 import numpy as np
 import matplotlib.pyplot as plt
-from geometry_engine.geometry import Geometry
 from geometry_engine.segment.segment import Segment
-from physics_domain.collocation_sampler import CollocationSampler
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    geometry_instance = Geometry()
+    # 1. ĐỊNH NGHĨA CÁC DICTIONARY CẤU HÌNH RÕ RÀNG
+    sampler_config = {
+        "x_boundaries": (-0.05, 0.05),
+        "y_boundaries": (-0.05, 0.05)
+    }
     
+    pinn_config = {
+        "hidden_layers": 4,
+        "hidden_neurons": 64
+    }
+    
+    training_config = {
+        "lr_adam": 1e-3,
+        "target_loss": 1e-3,
+        "lbfgs_lr": 0.8,
+        "lbfgs_tolerance_grad": 1e-8,
+        "lbfgs_tolerance_change": 1e-10
+    }
+
+    # 2. KHỞI TẠO LỚP MẸ CHỈ VỚI CÁC CẤU HÌNH (Lớp mẹ sẽ tự xây dựng hệ thống con)
+    model = ElectroMagneticPINN(
+        sampler_config=sampler_config,
+        pinn_config=pinn_config,
+        training_config=training_config
+    )
+    
+    # 3. THAO TÁC TRỰC TIẾP LÊN THUỘC TÍNH CON CỦA LỚP MẸ
     top_magnet_vertices = [
         [-0.03, 0.015], [0.03, 0.015], [0.03, 0.025], [-0.03, 0.025]
     ]
-    # Cập nhật theo giao diện Segment mới
     top_magnet = Segment(outline=top_magnet_vertices).set_material_properties(
         material="top_magnet",
         relative_permeability=1.05,
         coercive=[800000.0, 0.0]
     )
-    geometry_instance.add_segment(top_magnet)
+    model.geometry_engine_instance.add_segment(top_magnet)
 
     bottom_magnet_vertices = [
         [-0.03, -0.025], [0.03, -0.025], [0.03, -0.015], [-0.03, -0.015]
     ]
-    # Cập nhật theo giao diện Segment mới
     bottom_magnet = Segment(outline=bottom_magnet_vertices).set_material_properties(
         material="bottom_magnet",
         relative_permeability=1.05,
         coercive=[-800000.0, 0.0]
     )
-    geometry_instance.add_segment(bottom_magnet)
-    
-    collocation_sampler_instance = CollocationSampler(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05)
-    )
+    model.geometry_engine_instance.add_segment(bottom_magnet)
 
-    geometry_instance.plot_problem_definition(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05),
+    # Lấy thông số từ sampler config để vẽ hình
+    xb = model.sampler_config["x_boundaries"]
+    yb = model.sampler_config["y_boundaries"]
+    model.geometry_engine_instance.plot_problem_definition(
+        x_boundaries_tuple=xb,
+        y_boundaries_tuple=yb,
         resolution=100
     )
 
-    model = ElectroMagneticPINN(
-        geometry_engine_instance=geometry_instance,
-        collocation_sampler_instance=collocation_sampler_instance,
-        lr_adam=1e-3,
-        lbfgs_lr=0.8,
-        lbfgs_max_iter=1000,
-        lbfgs_max_eval=1250
-    )
-    
+    # 4. KÍCH HOẠT QUÁ TRÌNH HUẤN LUYỆN
     model.execute_training_process(
         number_of_uniform_points=5000,
         number_of_interface_points=1500,
@@ -79,6 +203,7 @@ def main():
         epochs_lbfgs=1000
     )
     
+    # --- ĐOẠN MÃ VẼ BIỂU ĐỒ (Giữ nguyên) ---
     resolution = 120
     x_coords = np.linspace(-0.05, 0.05, resolution)
     y_coords = np.linspace(-0.05, 0.05, resolution)
@@ -131,103 +256,18 @@ if __name__ == "__main__":
     main()
 """
 
-    # ---------------------------------------------------------
-    # 2. CẬP NHẬT FILE GEOMETRY.PY
-    # ---------------------------------------------------------
-    geom_file = os.path.join(project_root, 'geometry_engine', 'geometry.py')
-    geom_code = """import torch
-from geometry_engine.segment.segment import Segment
-from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
-from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
-from geometry_engine.geometry_visualizer import plot_geometry_problem
-
-class Geometry:
-    def __init__(self):
-        self.segments_list = []
-        self.vacuum_reluctivity = 795774.715459
-
-    def add_segment(self, segment_object):
-        # Tự động khởi tạo thông số nội tại của Segment mới trước khi lưu
-        segment_object.compute_section_area()
-        segment_object.compute_current_density()
-        segment_object.calculate_penetrating_steepness()
-        
-        self.segments_list.append(segment_object)
-        return self
-
-    def compute_global_signed_distance_field(self, points_tensor):
-        return compute_global_signed_distance_field(self.segments_list, points_tensor)
-
-    def evaluate_global_physical_properties(self, points_tensor):
-        return evaluate_global_physical_properties(self.segments_list, points_tensor, self.vacuum_reluctivity)
-
-    def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
-        plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
-"""
-
-    # ---------------------------------------------------------
-    # 3. CẬP NHẬT FILE GLOBAL_PHYSICAL_PROPERTIES_EVALUATION.PY
-    # ---------------------------------------------------------
-    prop_file = os.path.join(project_root, 'geometry_engine', 'global_physical_properties_evaluation.py')
-    prop_code = """import torch
-
-def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity):
-    number_of_points = points_tensor.shape[0]
-    computation_device = points_tensor.device
-    
-    global_reluctivity_tensor = torch.full((number_of_points, 1), vacuum_reluctivity, dtype=torch.float32, device=computation_device)
-    global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-
-    material_index_counter = 1.0
-
-    for segment_object in segments_list:
-        signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
-        
-        # Áp dụng độ dốc động (Adaptive Steepness) của Segment hiện tại
-        # Công thức giải ngược: s = (5000.0 - ideal_k) / 4960.0  => ideal_k = 5000.0 - s * 4960.0
-        actual_k = 5000.0 - segment_object.steepness * 4960.0
-        mask_smooth = torch.sigmoid(-actual_k * signed_distance_field).view(-1, 1)
-        
-        seg_reluctivity = segment_object.evaluate_reluctivity(points_tensor)
-        hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)
-        seg_jz = segment_object.evaluate_current_density(points_tensor)
-        
-        global_reluctivity_tensor = global_reluctivity_tensor + mask_smooth * (seg_reluctivity - vacuum_reluctivity)
-        global_coercive_field_x_tensor = global_coercive_field_x_tensor + mask_smooth * hx_tensor
-        global_coercive_field_y_tensor = global_coercive_field_y_tensor + mask_smooth * hy_tensor
-        global_current_density_z_tensor = global_current_density_z_tensor + mask_smooth * seg_jz
-        
-        global_material_classification_tensor = global_material_classification_tensor + mask_smooth * material_index_counter
-        
-        material_index_counter += 1.0
-
-    return {
-        "reluctivity": global_reluctivity_tensor,
-        "coercive_field_x": global_coercive_field_x_tensor,
-        "coercive_field_y": global_coercive_field_y_tensor,
-        "current_density_z": global_current_density_z_tensor,
-        "material_classification": global_material_classification_tensor
-    }
-"""
-
-    # Tiến hành ghi file
     files_to_update = [
-        (test_file, test_code),
-        (geom_file, geom_code),
-        (prop_file, prop_code)
+        (emp_file, emp_code),
+        (test_file, test_code)
     ]
     
-    print("Đang cập nhật các tệp liên kết với lớp Segment mới...")
+    print("Đang cấu trúc lại quan hệ Hợp thành (Composition) và Config...")
     for file_path, content in files_to_update:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content.strip() + "\n")
         print(f"[+] Đã cập nhật: {os.path.basename(file_path)}")
         
-    print("\nHOÀN TẤT! Hệ thống đã được đồng bộ với kiến trúc Segment mới.")
+    print("\nHOÀN TẤT! File main hiện tại cực kỳ gọn gàng với Configuration Dictionaries.")
 
 if __name__ == "__main__":
-    execute_update()
+    execute_refactor_to_composition()
