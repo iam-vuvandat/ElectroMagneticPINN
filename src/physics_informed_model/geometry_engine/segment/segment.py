@@ -9,8 +9,9 @@ class Segment:
         self.coercive = [0.0, 0.0]
         self.current = 0.0
         self.current_density = 0.0
+        self.section_area = 0.0
         
-        self.vacuum_reluctivity = 795774.715459 # 1/(4*pi* 10^(-7))
+        self.vacuum_reluctivity = 795774.715459
         self.relative_permeability = 1.0
         
         self.outline_tensor = None
@@ -18,39 +19,39 @@ class Segment:
             self.set_outline(outline)
 
     def compute_constant_bh_curve(self):
-        pass
+        constant_reluctivity = self.vacuum_reluctivity / self.relative_permeability
+        self.bh_curve = lambda points_tensor: torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
+        return self.bh_curve
 
     def compute_section_area(self):
-        pass
+        if self.outline is None or len(self.outline) < 3:
+            self.section_area = 0.0
+            return self.section_area
+        x = [p[0] for p in self.outline]
+        y = [p[1] for p in self.outline]
+        self.section_area = 0.5 * abs(sum(x[i] * y[i+1] - x[i+1] * y[i] for i in range(-1, len(x)-1)))
+        return self.section_area
 
     def compute_current_density(self):
-        pass
+        area = self.compute_section_area()
+        if area > 0.0:
+            self.current_density = self.current / area
+        else:
+            self.current_density = 0.0
+        return self.current_density
 
     def set_outline(self, outline):
+        self.outline = outline
         self.outline_tensor = torch.tensor(outline, dtype=torch.float32)
-        return self
-
-    def set_material_properties(
-        self, 
-        material="default", 
-        b_h_curve=None,
-        coercive=[0.0, 0.0],
-        current_density=0.0,
-        relative_permeability=1.0
-    ):
-        self.material = material
-        self.b_h_curve = b_h_curve
-        self.coercive = coercive
-        self.current_density = current_density
-        self.relative_permeability = relative_permeability
+        self.compute_section_area()
         return self
 
     def compute_signed_distance_field(self, points_tensor):
         return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
 
     def evaluate_reluctivity(self, points_tensor):
-        if self.b_h_curve is not None:
-            return self.b_h_curve(points_tensor)
+        if getattr(self, 'bh_curve', None) is not None:
+            return self.bh_curve(points_tensor)
         
         constant_reluctivity = self.vacuum_reluctivity / self.relative_permeability
         return torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
