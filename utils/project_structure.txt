@@ -1,0 +1,49 @@
+Twin_model_pinns/
+├── README.md
+├── batch.log
+├── draft
+│   ├── draw1.py
+│   ├── draw2.py
+│   └── pinn_training_process.gif
+├── examples
+│   ├── demo.py
+│   ├── demo2.py
+│   ├── demo3.py
+│   └── test.py
+├── main.ipynb
+├── requirements.txt
+├── src
+│   ├── ansys_aedt
+│   │   ├── configuration.py
+│   │   ├── create_model.py
+│   │   ├── reluctance_synchronous_motor.py
+│   │   └── reset_ansys_environment.py
+│   └── physics_informed_model
+│       ├── curriculum_training_manager.py
+│       ├── electro_magnetic_pinn.py
+│       ├── extract.py
+│       ├── geometry_engine
+│       │   ├── geometry.py
+│       │   ├── global_physical_properties_evaluation.py
+│       │   ├── global_signed_distance_field.py
+│       │   └── segment
+│       │       ├── __init__.py
+│       │       ├── polygon_signed_distance_field.py
+│       │       └── segment.py
+│       ├── physics_domain
+│       │   ├── collocation_sampler.py
+│       │   └── physical_equations
+│       │       └── maxwell_pde_loss.py
+│       ├── pinn_architecture.py
+│       ├── project_codebase.txt
+│       ├── test_simulation.py
+│       ├── training_manager.py
+│       ├── trial_function_wrapper.py
+│       └── utils
+│           ├── extract_project.py
+│           ├── modify_project.py
+│           └── physics_model_source_code.txt
+└── utils
+    ├── extract_project_tree.py
+    ├── generate_project.py
+    └── project_structure.txt

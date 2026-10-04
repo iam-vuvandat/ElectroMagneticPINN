@@ -1,0 +1,33 @@
+{
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/*.pyo": true,
+    "**/*.pyd": true,
+    "**/*.ini": true,
+    "**/*.gitignore": false,
+    "**/*.project_root": true,
+    "**/*.log": true,
+    "**/*.spec": true,
+  },
+  "files.autoSave": "off",
+  "editor.suggest.snippetsPreventQuickSuggestions": false,
+  "editor.suggestOnTriggerCharacters": true,
+  "python.languageServer": "Pylance",
+  "python.analysis.autoImportCompletions": true,
+  "explorer.compactFolders": false,
+  "python-envs.defaultEnvManager": "ms-python.python:venv",
+  "python.terminal.activateEnvironment": true,
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "git.autofetch": true,
+  "git.enableSmartCommit": true,
+  "git.confirmSync": false,
+  "emeraldwalk.runonsave": {
+  "commands": [
+    {
+      "match": "\\.(py|ipynb)$",
+      "cmd": "git add . && git commit -m \"Auto commit on save\" && git pull --rebase origin main && git push origin main"
+    }
+  ]
+}
+}

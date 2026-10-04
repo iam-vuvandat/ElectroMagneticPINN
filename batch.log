@@ -1,0 +1,306 @@
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:39:08 PM  Sep 25, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+-- Message Window --
+      *Global - Messages
+        [info] GRPC server running on port: 51786. 
+-- Message Window --
+Stopping Batch Run: 4:41:31 PM  Sep 25, 2026
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:53:14 PM  Sep 25, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+The project 'reluctance_synchronous_motor_0001' has been edited and/or solved. Do you want to save the changes?
+-- Message Window --
+      *Global - Messages
+        [info] GRPC server running on port: 51955. 
+        [info] The project 'reluctance_synchronous_motor_0001' has been edited and/or solved. Do you want to save the changes?
+-- Message Window --
+Stopping Batch Run: 5:00:30 PM  Sep 25, 2026
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 5:14:51 PM  Sep 25, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 5:17:30 PM  Sep 25, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+The project 'reluctance_synchronous_motor_0001' has been edited and/or solved. Do you want to save the changes?
+-- Message Window --
+      *Global - Messages
+        [info] GRPC server running on port: 52269. 
+        [info] The project 'reluctance_synchronous_motor_0001' has been edited and/or solved. Do you want to save the changes?
+      reluctance_synchronous_motor_0001 (C:/Users/Surface/Documents/Visual Studio Code/Twin_model_pinns/data/temp/)
+        reluctance_synchronous_motor_0001 (Create Maxwell Model Only)
+          [warning] Stator/Core: InnerDiameter must be greater than 0. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Length must be greater than 0. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Length must be greater than 0. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:17:49 PM  Sep 25, 2026)
+          [warning] Stator/Core/Slot: Hs0 must be greater than 0. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Core/Slot: Hs0 must be greater than 0. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Parallel branches cannot be smaller than 1. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Parallel branches cannot be smaller than 1. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Rotor/Core: InnerDiameter must be greater than 0. (05:17:50 PM  Sep 25, 2026)
+          [warning] Rotor/Core: Length must be greater than 0. (05:17:50 PM  Sep 25, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Rotor/Core: Length must be greater than 0. (05:17:50 PM  Sep 25, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:17:50 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: Y0 must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Rotor/Core/Pole: B0 must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Shaft: ReferenceSpeed must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Shaft: ReferenceSpeed must be greater than 0. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:17:51 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:19:23 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:19:23 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:19:31 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:19:31 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:19:42 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:19:42 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:19:47 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:19:47 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:19:49 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:19:49 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:19:50 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:19:50 PM  Sep 25, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:20:05 PM  Sep 25, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:20:05 PM  Sep 25, 2026)
+          [error] Rotor/Core/Pole: Y0 must be greater than 0. (05:21:55 PM  Sep 25, 2026)
+          [error] Rotor/Core/Pole: B0 must be greater than 0. (05:21:55 PM  Sep 25, 2026)
+          [error] Simulation completed with execution error on server: Local Machine. (05:21:55 PM  Sep 25, 2026)
+-- Message Window --
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 9:46:39 AM  Sep 26, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:22:51 PM  Sep 26, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:27:26 PM  Sep 26, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:39:48 PM  Sep 26, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:32:48 PM  Sep 27, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:41:05 PM  Sep 27, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:55:06 PM  Sep 27, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 5:07:33 PM  Sep 27, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 5:15:42 PM  Sep 27, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+The project 'reluctance_synchronous_motor_0001' has been edited and/or solved. Do you want to save the changes?
+-- Message Window --
+      *Global - Messages
+        [info] GRPC server running on port: 60475. 
+        [info] The project 'reluctance_synchronous_motor_0001' has been edited and/or solved. Do you want to save the changes?
+      reluctance_synchronous_motor_0001 (C:/Users/Surface/Documents/Visual Studio Code/Twin_model_pinns/data/temp/)
+        Maxwell2DDesign1 (Transient, XY)
+          [info] With the geometry kernel migration to Parasolid, 2D designs no longer support the Mesh Method setting. All 2D meshes will be generated using the TAU mesher. (05:16:13 PM  Sep 27, 2026)
+          [info] User Defined Primitive: LapCoil - You may need to clean up solutions if they were obtained before V12.0.1. (05:16:15 PM  Sep 27, 2026)
+          [error] Y connection setup is modified according to the winding setup change. (05:24:50 PM  Sep 27, 2026)
+          [info] Motion setup is cleared due to solution type change. (01:01:13 PM  Sep 28, 2026)
+          [info] Problem specific data is cleared (Eddy effect, core loss, external circuit, Y connection, PWM voltage excitation etc..) (01:01:13 PM  Sep 28, 2026)
+          [warning] Excitation 'PhaseA': Winding data has been reset to default value due to solution type change. (01:01:13 PM  Sep 28, 2026)
+          [warning] Excitation 'PhaseB': Winding data has been reset to default value due to solution type change. (01:01:14 PM  Sep 28, 2026)
+          [warning] Excitation 'PhaseC': Winding data has been reset to default value due to solution type change. (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'Current(PhaseA)' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'Current(PhaseB)' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'Current(PhaseC)' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The report 'Stator Currents' was deleted because its traces were invalidated due to the edit. (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'Moving1.Torque' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The report 'Torque' was deleted because its traces were invalidated due to the edit. (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'L_d' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'L_q' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The report 'L_dq' was deleted because its traces were invalidated due to the edit. (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'Flux_d' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'Flux_q' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The report 'Flux_dq' was deleted because its traces were invalidated due to the edit. (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'I_d' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The trace 'I_q' refers to a solution that has been either deleted or is no longer applicable for trace's report type. The trace has been deleted as a result.  (01:01:14 PM  Sep 28, 2026)
+          [warning] The report 'I_dq' was deleted because its traces were invalidated due to the edit. (01:01:14 PM  Sep 28, 2026)
+        reluctance_synchronous_motor_0001 (Create Maxwell Model Only)
+          [warning] Stator/Core: InnerDiameter must be greater than 0. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Length must be greater than 0. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Length must be greater than 0. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core: Steel type is not assigned. (05:16:02 PM  Sep 27, 2026)
+          [warning] Stator/Core/Slot: Hs0 must be greater than 0. (05:16:03 PM  Sep 27, 2026)
+          [warning] Stator/Core/Slot: Hs0 must be greater than 0. (05:16:03 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Parallel branches cannot be smaller than 1. (05:16:04 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:16:04 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Parallel branches cannot be smaller than 1. (05:16:04 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:16:04 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:16:05 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:16:05 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:16:05 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:16:05 PM  Sep 27, 2026)
+          [warning] Stator/Winding: Conductor type is not assigned. (05:16:05 PM  Sep 27, 2026)
+          [warning] Rotor/Core: InnerDiameter must be greater than 0. (05:16:06 PM  Sep 27, 2026)
+          [warning] Rotor/Core: Length must be greater than 0. (05:16:06 PM  Sep 27, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:16:06 PM  Sep 27, 2026)
+          [warning] Rotor/Core: Length must be greater than 0. (05:16:06 PM  Sep 27, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:16:06 PM  Sep 27, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:16:06 PM  Sep 27, 2026)
+          [warning] Rotor/Core: Steel type is not assigned. (05:16:06 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:16:07 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:16:07 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:16:07 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:16:07 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:16:07 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:16:07 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:16:07 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:08 PM  Sep 27, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:16:08 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:08 PM  Sep 27, 2026)
+          [warning] Barrier 1: Dimension B0 must be larger than 0.. (05:16:08 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:08 PM  Sep 27, 2026)
+          [warning] Barrier 1: Dimension Y0 must be larger than 0.. (05:16:08 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Ti of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Rotor/Core/Pole: Bi of BarrierDimension must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Barrier 2: Dimension B0 must be larger than 0.. (05:16:08 PM  Sep 27, 2026)
+          [warning] Shaft: ReferenceSpeed must be greater than 0. (05:16:08 PM  Sep 27, 2026)
+          [warning] Shaft: ReferenceSpeed must be greater than 0. (05:16:09 PM  Sep 27, 2026)
+          [info] Normal completion of simulation on server: Local Machine. (05:16:12 PM  Sep 27, 2026)
+          [warning] Parameters: 'End clearance, Tip Inner Diameter, Base Inner Radius' will not be forwarded to created Maxwell 2D/3D designs. (05:16:22 PM  Sep 27, 2026)
+-- Message Window --
