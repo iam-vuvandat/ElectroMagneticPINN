@@ -16,6 +16,9 @@ class Segment:
         if outline is not None:
             self.set_outline(outline)
 
+    def compute_constant_bh_curve(self):
+        
+
     def set_outline(self, outline):
         self.outline_tensor = torch.tensor(outline, dtype=torch.float32)
         return self
