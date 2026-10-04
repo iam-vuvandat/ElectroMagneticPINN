@@ -21,24 +21,15 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
             "material_classification": global_material_classification_tensor
         }
 
-    # 1. TẠO VỎ BỌC TOÀN CỤC HOÀN HẢO TỪ CSG UNION SDF
-    # Đảm bảo mask luôn bằng chính xác 1.0 ở bất kỳ vị trí nào bên trong khối vật liệu
-    global_sdf = segments_list[0].compute_signed_distance_field(points_tensor)
-    for segment_object in segments_list[1:]:
-        current_sdf = segment_object.compute_signed_distance_field(points_tensor)
-        global_sdf = torch.minimum(global_sdf, current_sdf)
-        
-    max_steepness = max([seg.steepness for seg in segments_list])
-    envelope_k = 5000.0 - max_steepness * 4960.0
-    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
-
+    sdfs = []
     masks = []
     reluctivities = []
     hxs, hys, jzs = [], [], []
 
-    # 2. THU THẬP DỮ LIỆU ĐỂ PHA TRỘN NỘI BỘ
     for segment_object in segments_list:
         sdf = segment_object.compute_signed_distance_field(points_tensor)
+        sdfs.append(sdf)
+        
         actual_k = 5000.0 - segment_object.steepness * 4960.0
         mask = torch.sigmoid(-actual_k * sdf).view(-1, 1)
         
@@ -49,7 +40,13 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         hys.append(hy)
         jzs.append(segment_object.evaluate_current_density(points_tensor))
 
-    # 3. CHIA TỶ TRỌNG (Partition of Unity) CHO CÁC KHU VỰC CHỒNG LẤN
+    stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
+    global_sdf, _ = torch.min(stacked_sdfs, dim=1, keepdim=True)
+    
+    max_steepness = max([seg.steepness for seg in segments_list])
+    envelope_k = 5000.0 - max_steepness * 4960.0
+    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
+
     total_mask = sum(masks)
     safe_total_mask = total_mask + 1e-12 
 
@@ -73,7 +70,6 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         seg_h_mag = torch.sqrt(hxs[i]**2 + hys[i]**2)
         target_h_mag += weight * seg_h_mag
 
-    # 4. PHỤC HỒI BIÊN ĐỘ VECTOR
     blended_h_mag = torch.sqrt(blended_hx**2 + blended_hy**2)
     safe_blended_h_mag = torch.where(blended_h_mag < 1e-6, torch.full_like(blended_h_mag, 1.0), blended_h_mag)
     scale_factor = target_h_mag / safe_blended_h_mag
@@ -82,7 +78,6 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
     blended_hx = blended_hx * (1.0 - has_field_mask) + (blended_hx * scale_factor) * has_field_mask
     blended_hy = blended_hy * (1.0 - has_field_mask) + (blended_hy * scale_factor) * has_field_mask
 
-    # 5. ÁP DỤNG VỎ BỌC TOÀN CỤC ĐỂ CẮT GỌT RANH GIỚI
     global_reluctivity_tensor = VACUUM_RELUCTIVITY + global_envelope_mask * (blended_reluctivity - VACUUM_RELUCTIVITY)
     global_coercive_field_x_tensor = global_envelope_mask * blended_hx
     global_coercive_field_y_tensor = global_envelope_mask * blended_hy
