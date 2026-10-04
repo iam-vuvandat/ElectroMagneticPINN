@@ -1,10 +1,14 @@
 import torch
 
-def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity):
+# Đưa hằng số vật lý ra làm hằng số module (Module-level constant)
+VACUUM_RELUCTIVITY = 795774.715459
+
+def evaluate_global_physical_properties(segments_list, points_tensor):
+    
     number_of_points = points_tensor.shape[0]
     computation_device = points_tensor.device
     
-    global_reluctivity_tensor = torch.full((number_of_points, 1), vacuum_reluctivity, dtype=torch.float32, device=computation_device)
+    global_reluctivity_tensor = torch.full((number_of_points, 1), VACUUM_RELUCTIVITY, dtype=torch.float32, device=computation_device)
     global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
     global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
     global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
@@ -15,8 +19,7 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     for segment_object in segments_list:
         signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
         
-        # Áp dụng độ dốc động (Adaptive Steepness) của Segment hiện tại
-        # Công thức giải ngược: s = (5000.0 - ideal_k) / 4960.0  => ideal_k = 5000.0 - s * 4960.0
+        
         actual_k = 5000.0 - segment_object.steepness * 4960.0
         mask_smooth = torch.sigmoid(-actual_k * signed_distance_field).view(-1, 1)
         
@@ -24,7 +27,8 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
         hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)
         seg_jz = segment_object.evaluate_current_density(points_tensor)
         
-        global_reluctivity_tensor = global_reluctivity_tensor + mask_smooth * (seg_reluctivity - vacuum_reluctivity)
+        
+        global_reluctivity_tensor = global_reluctivity_tensor + mask_smooth * (seg_reluctivity - VACUUM_RELUCTIVITY)
         global_coercive_field_x_tensor = global_coercive_field_x_tensor + mask_smooth * hx_tensor
         global_coercive_field_y_tensor = global_coercive_field_y_tensor + mask_smooth * hy_tensor
         global_current_density_z_tensor = global_current_density_z_tensor + mask_smooth * seg_jz
