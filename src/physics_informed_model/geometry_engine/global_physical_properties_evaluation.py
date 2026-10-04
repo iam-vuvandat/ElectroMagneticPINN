@@ -47,28 +47,26 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
     envelope_k = 5000.0 - max_steepness * 4960.0
     global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
 
-    total_mask = sum(masks)
+    stacked_masks = torch.stack(masks, dim=1)
+    stacked_reluctivities = torch.stack(reluctivities, dim=1)
+    stacked_hxs = torch.stack(hxs, dim=1)
+    stacked_hys = torch.stack(hys, dim=1)
+    stacked_jzs = torch.stack(jzs, dim=1)
+
+    total_mask = torch.sum(stacked_masks, dim=1)
     safe_total_mask = total_mask + 1e-12 
+    weights = stacked_masks / safe_total_mask.unsqueeze(1) 
 
-    blended_reluctivity = torch.zeros_like(global_reluctivity_tensor)
-    blended_hx = torch.zeros_like(global_coercive_field_x_tensor)
-    blended_hy = torch.zeros_like(global_coercive_field_y_tensor)
-    blended_jz = torch.zeros_like(global_current_density_z_tensor)
-    blended_mat = torch.zeros_like(global_material_classification_tensor)
+    blended_reluctivity = torch.sum(weights * stacked_reluctivities, dim=1)
+    blended_hx = torch.sum(weights * stacked_hxs, dim=1)
+    blended_hy = torch.sum(weights * stacked_hys, dim=1)
+    blended_jz = torch.sum(weights * stacked_jzs, dim=1)
     
-    target_h_mag = torch.zeros_like(global_coercive_field_x_tensor)
+    mat_indices = torch.arange(1.0, len(segments_list) + 1.0, device=computation_device).view(1, -1, 1)
+    blended_mat = torch.sum(weights * mat_indices, dim=1)
 
-    for i in range(len(segments_list)):
-        weight = masks[i] / safe_total_mask
-        
-        blended_reluctivity += weight * reluctivities[i]
-        blended_hx += weight * hxs[i]
-        blended_hy += weight * hys[i]
-        blended_jz += weight * jzs[i]
-        blended_mat += weight * (i + 1.0)
-        
-        seg_h_mag = torch.sqrt(hxs[i]**2 + hys[i]**2)
-        target_h_mag += weight * seg_h_mag
+    stacked_h_mag = torch.sqrt(stacked_hxs**2 + stacked_hys**2)
+    target_h_mag = torch.sum(weights * stacked_h_mag, dim=1)
 
     blended_h_mag = torch.sqrt(blended_hx**2 + blended_hy**2)
     safe_blended_h_mag = torch.where(blended_h_mag < 1e-6, torch.full_like(blended_h_mag, 1.0), blended_h_mag)

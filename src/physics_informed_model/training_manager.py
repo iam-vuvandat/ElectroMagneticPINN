@@ -18,7 +18,6 @@ class TrainingManager:
         self.model = model
         self.pde_evaluator = pde_evaluator
         
-        # ĐƯA RA LÀM THUỘC TÍNH
         self.base_lr_adam = lr_adam
         self.target_loss = target_loss
         self.lbfgs_lr = lbfgs_lr
@@ -70,7 +69,7 @@ class TrainingManager:
                     param_group['lr'] *= 0.8
                 continue
                 
-            loss.backward(retain_graph=True)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
             scheduler_adam.step()
@@ -96,7 +95,7 @@ class TrainingManager:
             nonlocal early_stop_triggered
             self.optimizer_lbfgs.zero_grad(set_to_none=True)
             loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
-            loss.backward(retain_graph=True)
+            loss.backward()
             
             lbfgs_counter[0] += 1
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
