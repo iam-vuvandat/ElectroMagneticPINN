@@ -1,6 +1,6 @@
 import torch
 
-def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity, steepness=5000.0):
+def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_reluctivity):
     number_of_points = points_tensor.shape[0]
     computation_device = points_tensor.device
     
@@ -15,7 +15,10 @@ def evaluate_global_physical_properties(segments_list, points_tensor, vacuum_rel
     for segment_object in segments_list:
         signed_distance_field = segment_object.compute_signed_distance_field(points_tensor)
         
-        mask_smooth = torch.sigmoid(-steepness * signed_distance_field).view(-1, 1)
+        # Áp dụng độ dốc động (Adaptive Steepness) của Segment hiện tại
+        # Công thức giải ngược: s = (5000.0 - ideal_k) / 4960.0  => ideal_k = 5000.0 - s * 4960.0
+        actual_k = 5000.0 - segment_object.steepness * 4960.0
+        mask_smooth = torch.sigmoid(-actual_k * signed_distance_field).view(-1, 1)
         
         seg_reluctivity = segment_object.evaluate_reluctivity(points_tensor)
         hx_tensor, hy_tensor = segment_object.evaluate_magnetization_vector(points_tensor)

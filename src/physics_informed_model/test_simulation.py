@@ -20,30 +20,24 @@ def main():
     geometry_instance = Geometry()
     
     top_magnet_vertices = [
-        [-0.03, 0.015],
-        [0.03, 0.015],
-        [0.03, 0.025],
-        [-0.03, 0.025]
+        [-0.03, 0.015], [0.03, 0.015], [0.03, 0.025], [-0.03, 0.025]
     ]
-    top_magnet = Segment(top_magnet_vertices).set_material_properties(
-        name="top_magnet",
+    # Cập nhật theo giao diện Segment mới
+    top_magnet = Segment(outline=top_magnet_vertices).set_material_properties(
+        material="top_magnet",
         relative_permeability=1.05,
-        coercive_field_x=800000.0,
-        coercive_field_y=0.0
+        coercive=[800000.0, 0.0]
     )
     geometry_instance.add_segment(top_magnet)
 
     bottom_magnet_vertices = [
-        [-0.03, -0.025],
-        [0.03, -0.025],
-        [0.03, -0.015],
-        [-0.03, -0.015]
+        [-0.03, -0.025], [0.03, -0.025], [0.03, -0.015], [-0.03, -0.015]
     ]
-    bottom_magnet = Segment(bottom_magnet_vertices).set_material_properties(
-        name="bottom_magnet",
+    # Cập nhật theo giao diện Segment mới
+    bottom_magnet = Segment(outline=bottom_magnet_vertices).set_material_properties(
+        material="bottom_magnet",
         relative_permeability=1.05,
-        coercive_field_x=-800000.0,
-        coercive_field_y=0.0
+        coercive=[-800000.0, 0.0]
     )
     geometry_instance.add_segment(bottom_magnet)
     
@@ -90,35 +84,25 @@ def main():
     B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
     
     fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
-    
     contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
     fig1.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
     axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
-    axs[0, 0].set_xlabel("x (m)")
-    axs[0, 0].set_ylabel("y (m)")
     axs[0, 0].set_aspect('equal')
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
     axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
-    axs[0, 1].set_xlabel("x (m)")
-    axs[0, 1].set_ylabel("y (m)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
     fig1.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
     axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
-    axs[1, 0].set_xlabel("x (m)")
-    axs[1, 0].set_ylabel("y (m)")
     axs[1, 0].set_aspect('equal')
     
     contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
     fig1.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
     axs[1, 1].set_title("Magnetic Field Component ($B_y$)")
-    axs[1, 1].set_xlabel("x (m)")
-    axs[1, 1].set_ylabel("y (m)")
     axs[1, 1].set_aspect('equal')
-    
     fig1.tight_layout()
     
     fig2, ax2 = plt.subplots(figsize=(8, 7))
@@ -128,12 +112,10 @@ def main():
     step = 4
     ax2.quiver(X_grid[::step, ::step], Y_grid[::step, ::step], B_x_grid[::step, ::step], B_y_grid[::step, ::step], color='black', pivot='mid')
     ax2.set_title("Magnetic Flux Density Vectors (B)")
-    ax2.set_xlabel("x (m)")
-    ax2.set_ylabel("y (m)")
     ax2.set_aspect('equal')
-    
     fig2.tight_layout()
+    
     plt.show()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
