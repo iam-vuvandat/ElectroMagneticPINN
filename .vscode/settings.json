@@ -19,15 +19,4 @@
   "python-envs.defaultEnvManager": "ms-python.python:venv",
   "python.terminal.activateEnvironment": true,
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
-  "git.autofetch": true,
-  "git.enableSmartCommit": true,
-  "git.confirmSync": false,
-  "emeraldwalk.runonsave": {
-  "commands": [
-    {
-      "match": "\\.(py|ipynb)$",
-      "cmd": "git add . && git commit -m \"Auto commit on save\" && git pull --rebase origin main && git push origin main"
-    }
-  ]
-}
 }
