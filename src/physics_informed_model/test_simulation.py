@@ -1,5 +1,6 @@
 import os
 import sys
+from types import SimpleNamespace
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 if current_directory not in sys.path:
@@ -15,40 +16,38 @@ from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    # 1. ĐỊNH NGHĨA CÁC DICTIONARY CẤU HÌNH RÕ RÀNG
-    sampler_config = {
-        "x_boundaries": (-0.05, 0.05),
-        "y_boundaries": (-0.05, 0.05)
-    }
-    
-    pinn_config = {
-        "hidden_layers": 4,
-        "hidden_neurons": 64
-    }
-    
-    training_config = {
-        "lr_adam": 1e-3,
-        "target_loss": 1e-3,
-        "lbfgs_lr": 0.8,
-        "lbfgs_tolerance_grad": 1e-8,
-        "lbfgs_tolerance_change": 1e-10
-    }
-
-    # 2. KHỞI TẠO LỚP MẸ CHỈ VỚI CÁC CẤU HÌNH (Lớp mẹ sẽ tự xây dựng hệ thống con)
-    model = ElectroMagneticPINN(
-        sampler_config=sampler_config,
-        pinn_config=pinn_config,
-        training_config=training_config
+    # 1. ĐỊNH NGHĨA CÁC ĐỐI TƯỢNG CẤU HÌNH BẰNG SIMPLENAMESPACE (Gọn gàng & Chuyên nghiệp)
+    sampler_config = SimpleNamespace(
+        x_boundaries_tuple=(-0.05, 0.05),
+        y_boundaries_tuple=(-0.05, 0.05)
     )
     
-    # 3. THAO TÁC TRỰC TIẾP LÊN THUỘC TÍNH CON CỦA LỚP MẸ
+    pinn_config = SimpleNamespace(
+        hidden_layers=4,
+        hidden_neurons=64
+    )
+    
+    training_config = SimpleNamespace(
+        lr_adam=1e-3,
+        target_loss=1e-3,
+        lbfgs_lr=0.8,
+        lbfgs_tolerance_grad=1e-8,
+        lbfgs_tolerance_change=1e-10
+    )
+
+    # 2. KHỞI TẠO LỚP MẸ (Lớp mẹ sẽ tự xây dựng hệ thống con)
+    model = ElectroMagneticPINN(
+        collocation_sampler_configuration=sampler_config,
+        pinn_architecture_configuration=pinn_config,
+        training_manager_configuration=training_config
+    )
+    
+    # 3. THÊM VẬT LIỆU BẰNG CÁCH GỌI THUỘC TÍNH TỪ CLASS MẸ
     top_magnet_vertices = [
         [-0.03, 0.015], [0.03, 0.015], [0.03, 0.025], [-0.03, 0.025]
     ]
     top_magnet = Segment(outline=top_magnet_vertices).set_material_properties(
-        material="top_magnet",
-        relative_permeability=1.05,
-        coercive=[800000.0, 0.0]
+        material="top_magnet", relative_permeability=1.05, coercive=[800000.0, 0.0]
     )
     model.geometry_engine_instance.add_segment(top_magnet)
 
@@ -56,22 +55,18 @@ def main():
         [-0.03, -0.025], [0.03, -0.025], [0.03, -0.015], [-0.03, -0.015]
     ]
     bottom_magnet = Segment(outline=bottom_magnet_vertices).set_material_properties(
-        material="bottom_magnet",
-        relative_permeability=1.05,
-        coercive=[-800000.0, 0.0]
+        material="bottom_magnet", relative_permeability=1.05, coercive=[-800000.0, 0.0]
     )
     model.geometry_engine_instance.add_segment(bottom_magnet)
 
-    # Lấy thông số từ sampler config để vẽ hình
-    xb = model.sampler_config["x_boundaries"]
-    yb = model.sampler_config["y_boundaries"]
+    # 4. KÍCH HOẠT HÌNH ẢNH HỌC (Truy xuất thuộc tính bằng dot notation)
+    xb = model.collocation_sampler_configuration.x_boundaries_tuple
+    yb = model.collocation_sampler_configuration.y_boundaries_tuple
     model.geometry_engine_instance.plot_problem_definition(
-        x_boundaries_tuple=xb,
-        y_boundaries_tuple=yb,
-        resolution=100
+        x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=100
     )
 
-    # 4. KÍCH HOẠT QUÁ TRÌNH HUẤN LUYỆN
+    # 5. BẮT ĐẦU HUẤN LUYỆN
     model.execute_training_process(
         number_of_uniform_points=5000,
         number_of_interface_points=1500,
@@ -80,7 +75,7 @@ def main():
         epochs_lbfgs=1000
     )
     
-    # --- ĐOẠN MÃ VẼ BIỂU ĐỒ (Giữ nguyên) ---
+    # --- Trực quan hóa kết quả (Giữ nguyên) ---
     resolution = 120
     x_coords = np.linspace(-0.05, 0.05, resolution)
     y_coords = np.linspace(-0.05, 0.05, resolution)

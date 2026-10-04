@@ -12,31 +12,28 @@ class Segment:
         
         self.vacuum_reluctivity = 795774.715459
         
-        # 1. Gán các thuộc tính cơ bản từ tham số người dùng
+        
         self.material = material
         self.relative_permeability = relative_permeability
         self.coercive = coercive
         self.current = current
         self.bh_curve = bh_curve
         
-        # 2. Khởi tạo các thuộc tính nội tại (sẽ tự động tính toán)
+        
         self.outline = None
         self.outline_tensor = None
         self.section_area = 0.0
         self.current_density = 0.0
         self.steepness = 1.0  # Mặc định an toàn
         
-        # ==========================================
-        # TỰ ĐỘNG CHẠY CÁC PHƯƠNG THỨC CẦN THIẾT
-        # ==========================================
         
-        # Xử lý hình học và các thông số phụ thuộc (diện tích, dòng điện, độ dốc ranh giới)
+        
         if outline is not None:
-            self.set_outline(outline) # Hàm này đã bao gồm compute_section_area()
+            self.set_outline(outline) 
             self.compute_current_density()
             self.calculate_penetrating_steepness()
             
-        # Tự động tạo hàm nội suy độ từ trở nếu không cung cấp bh_curve (vật liệu tuyến tính)
+        
         if self.bh_curve is None:
             self.compute_constant_bh_curve()
 
@@ -55,7 +52,7 @@ class Segment:
         return self.section_area
 
     def compute_current_density(self):
-        area = self.compute_section_area() # Đảm bảo area luôn được cập nhật mới nhất
+        area = self.compute_section_area() 
         if area > 0.0:
             self.current_density = self.current / area
         else:
