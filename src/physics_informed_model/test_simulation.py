@@ -7,6 +7,7 @@ if current_directory not in sys.path:
     sys.path.insert(0, current_directory)
 
 import torch
+import torch.nn as nn
 if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
 
@@ -16,69 +17,63 @@ from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    # 1. ĐỊNH NGHĨA CÁC ĐỐI TƯỢNG CẤU HÌNH BẰNG SIMPLENAMESPACE (Gọn gàng & Chuyên nghiệp)
-    sampler_config = SimpleNamespace(
-        x_boundaries_tuple=(-0.05, 0.05),
-        y_boundaries_tuple=(-0.05, 0.05)
+    print("version 04.20")
+    # 1. KHỞI TẠO MÔ HÌNH VỚI TEMPLATE MẶC ĐỊNH
+    model = ElectroMagneticPINN()
+    
+    # 2. ĐỊNH NGHĨA CÁC ĐỐI TƯỢNG CẤU HÌNH CẦN CẬP NHẬT
+    new_sampler_config = SimpleNamespace(
+        x_boundaries_tuple=(-0.08, 0.08),  # Mở rộng biên theo yêu cầu
+        y_boundaries_tuple=(-0.08, 0.08)
     )
     
-    pinn_config = SimpleNamespace(
-        hidden_layers=4,
-        hidden_neurons=64
+    new_pinn_config = SimpleNamespace(
+        hidden_neurons=512,                # Tăng chiều rộng mạng lên 512 nơ-ron
+        activation_function=nn.SiLU()      # Sử dụng SiLU
     )
     
-    training_config = SimpleNamespace(
-        lr_adam=1e-3,
-        target_loss=1e-3,
-        lbfgs_lr=0.8,
-        lbfgs_tolerance_grad=1e-8,
-        lbfgs_tolerance_change=1e-10
-    )
-
-    # 2. KHỞI TẠO LỚP MẸ (Lớp mẹ sẽ tự xây dựng hệ thống con)
-    model = ElectroMagneticPINN(
-        collocation_sampler_configuration=sampler_config,
-        pinn_architecture_configuration=pinn_config,
-        training_manager_configuration=training_config
+    # Kích hoạt update để hệ thống tự động rebuild lại các class lõi
+    model.update_configuration(
+        sampler_config=new_sampler_config,
+        pinn_config=new_pinn_config
     )
     
-    # 3. THÊM VẬT LIỆU BẰNG CÁCH GỌI THUỘC TÍNH TỪ CLASS MẸ
-    top_magnet_vertices = [
-        [-0.03, 0.015], [0.03, 0.015], [0.03, 0.025], [-0.03, 0.025]
-    ]
-    top_magnet = Segment(outline=top_magnet_vertices).set_material_properties(
-        material="top_magnet", relative_permeability=1.05, coercive=[800000.0, 0.0]
-    )
-    model.geometry_engine_instance.add_segment(top_magnet)
+    # 3. THIẾT KẾ NAM CHÂM CHỮ U (Ghép từ 3 khối Segment để tạo mạch từ vòng)
+    # Khối 1: Chân trái (Từ hóa hướng lên -> Cực Bắc)
+    left_leg = Segment(outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]])
+    left_leg.set_material_properties(material="u_left", relative_permeability=1.05, coercive=[0.0, 800000.0])
+    model.geometry_engine_instance.add_segment(left_leg)
 
-    bottom_magnet_vertices = [
-        [-0.03, -0.025], [0.03, -0.025], [0.03, -0.015], [-0.03, -0.015]
-    ]
-    bottom_magnet = Segment(outline=bottom_magnet_vertices).set_material_properties(
-        material="bottom_magnet", relative_permeability=1.05, coercive=[-800000.0, 0.0]
-    )
-    model.geometry_engine_instance.add_segment(bottom_magnet)
+    # Khối 2: Thanh đáy nối (Từ hóa hướng sang trái để đẩy mạch từ từ phải qua trái bên trong sắt)
+    yoke = Segment(outline=[[-0.02, -0.03], [0.02, -0.03], [0.02, -0.01], [-0.02, -0.01]])
+    yoke.set_material_properties(material="u_yoke", relative_permeability=1.05, coercive=[-800000.0, 0.0])
+    model.geometry_engine_instance.add_segment(yoke)
+    
+    # Khối 3: Chân phải (Từ hóa hướng xuống -> Cực Nam)
+    right_leg = Segment(outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]])
+    right_leg.set_material_properties(material="u_right", relative_permeability=1.05, coercive=[0.0, -800000.0])
+    model.geometry_engine_instance.add_segment(right_leg)
 
-    # 4. KÍCH HOẠT HÌNH ẢNH HỌC (Truy xuất thuộc tính bằng dot notation)
-    xb = model.collocation_sampler_configuration.x_boundaries_tuple
-    yb = model.collocation_sampler_configuration.y_boundaries_tuple
+    # 4. KÍCH HOẠT HÌNH ẢNH HỌC TỰ ĐỘNG THEO BIÊN MỚI
+    xb = model.sampler_config.x_boundaries_tuple
+    yb = model.sampler_config.y_boundaries_tuple
     model.geometry_engine_instance.plot_problem_definition(
-        x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=100
+        x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
     )
 
-    # 5. BẮT ĐẦU HUẤN LUYỆN
+    # 5. BẮT ĐẦU HUẤN LUYỆN (Tăng mạnh số điểm lấy mẫu theo yêu cầu)
     model.execute_training_process(
-        number_of_uniform_points=5000,
-        number_of_interface_points=1500,
+        number_of_uniform_points=15000,    # Tăng điểm phân bố đều
+        number_of_interface_points=5000,   # Tăng điểm tại ranh giới
         distance_threshold=0.005,
         epochs_adam=4000,
         epochs_lbfgs=1000
     )
     
-    # --- Trực quan hóa kết quả (Giữ nguyên) ---
+    # --- TRỰC QUAN HÓA KẾT QUẢ ---
     resolution = 120
-    x_coords = np.linspace(-0.05, 0.05, resolution)
-    y_coords = np.linspace(-0.05, 0.05, resolution)
+    x_coords = np.linspace(xb[0], xb[1], resolution)
+    y_coords = np.linspace(yb[0], yb[1], resolution)
     X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
     
     xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
@@ -98,7 +93,7 @@ def main():
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
+    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($ert{}Bert{}$)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
