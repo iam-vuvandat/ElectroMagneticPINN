@@ -2,32 +2,52 @@ import torch
 from pinn_architecture import PINNArchitecture
 from training_manager import TrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
+from geometry_engine.geometry import Geometry
+from physics_domain.collocation_sampler import CollocationSampler
 
 class ElectroMagneticPINN:
-    def __init__(self, geometry_engine_instance, collocation_sampler_instance, lr_adam=1e-3, lbfgs_lr=0.8, lbfgs_max_iter=1000, lbfgs_max_eval=1250):
-        self.geometry_engine_instance = geometry_engine_instance
-        self.collocation_sampler_instance = collocation_sampler_instance
+    def __init__(
+        self, 
+        geometry_config=None,
+        sampler_config=None,
+        pinn_config=None,
+        training_config=None
+    ):
+        # 1. LƯU TRỮ CÁC CẤU HÌNH NHƯ LÀ THUỘC TÍNH CỦA CLASS MẸ
+        self.geometry_config = geometry_config if geometry_config is not None else {}
+        self.sampler_config = sampler_config if sampler_config is not None else {
+            "x_boundaries": (-0.05, 0.05),
+            "y_boundaries": (-0.05, 0.05)
+        }
+        self.pinn_config = pinn_config if pinn_config is not None else {}
+        self.training_config = training_config if training_config is not None else {}
         
+        # 2. KHỞI TẠO TRỰC TIẾP CÁC LỚP CON (LOẠI BỎ TIÊM PHỤ THUỘC)
+        self.geometry_engine_instance = Geometry(**self.geometry_config)
+        
+        self.collocation_sampler_instance = CollocationSampler(
+            x_boundaries_tuple=self.sampler_config.get("x_boundaries", (-0.05, 0.05)),
+            y_boundaries_tuple=self.sampler_config.get("y_boundaries", (-0.05, 0.05))
+        )
+        
+        # Thiết lập hằng số quy chuẩn
         self.L0 = self.collocation_sampler_instance.x_maximum
         self.H0 = 800000.0
-        self.nu0 = self.geometry_engine_instance.vacuum_reluctivity
+        self.nu0 = 795774.715459  # Hằng số chân không (vì đã bị gỡ khỏi Geometry)
         self.A0 = (self.H0 * self.L0) / self.nu0
         
-        self.pinn_architecture_instance = PINNArchitecture(domain_scale=self.L0)
-        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
+        # 3. TRUYỀN CẤU HÌNH VÀO CÁC LỚP LÕI THÔNG QUA **KWARGS
+        self.pinn_architecture_instance = PINNArchitecture(
+            domain_scale=self.L0,
+            **self.pinn_config
+        )
         
-        self.lr_adam = lr_adam
-        self.lbfgs_lr = lbfgs_lr
-        self.lbfgs_max_iter = lbfgs_max_iter
-        self.lbfgs_max_eval = lbfgs_max_eval
+        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
         self.training_manager_instance = TrainingManager(
             model=self.pinn_architecture_instance,
             pde_evaluator=self.maxwell_pde_loss_instance,
-            lr_adam=self.lr_adam,
-            lbfgs_lr=self.lbfgs_lr,
-            lbfgs_max_iter=self.lbfgs_max_iter,
-            lbfgs_max_eval=self.lbfgs_max_eval
+            **self.training_config
         )
 
     def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
