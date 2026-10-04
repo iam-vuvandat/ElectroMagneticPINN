@@ -4,26 +4,41 @@ from geometry_engine.segment.polygon_signed_distance_field import compute_polygo
 class Segment:
     def __init__(self, 
                  outline=None,
-                 material = "air",
-                 bh_curve = None,
-                 coercive = [0,0],
-                 current = 0,
-                 steepness = 0.5):
-        self.outline = None
-        self.material = "air"
-        self.bh_curve = None
-        self.coercive = [0.0, 0.0]
-        self.current = 0.0
-        self.current_density = 0.0
-        self.section_area = 0.0
-        self.steepness = 0.0
+                 material="air",
+                 relative_permeability=1.0,
+                 bh_curve=None,
+                 coercive=[0.0, 0.0],
+                 current=0.0):
         
         self.vacuum_reluctivity = 795774.715459
-        self.relative_permeability = 1.0
         
+        # 1. Gán các thuộc tính cơ bản từ tham số người dùng
+        self.material = material
+        self.relative_permeability = relative_permeability
+        self.coercive = coercive
+        self.current = current
+        self.bh_curve = bh_curve
+        
+        # 2. Khởi tạo các thuộc tính nội tại (sẽ tự động tính toán)
+        self.outline = None
         self.outline_tensor = None
+        self.section_area = 0.0
+        self.current_density = 0.0
+        self.steepness = 1.0  # Mặc định an toàn
+        
+        # ==========================================
+        # TỰ ĐỘNG CHẠY CÁC PHƯƠNG THỨC CẦN THIẾT
+        # ==========================================
+        
+        # Xử lý hình học và các thông số phụ thuộc (diện tích, dòng điện, độ dốc ranh giới)
         if outline is not None:
-            self.set_outline(outline)
+            self.set_outline(outline) # Hàm này đã bao gồm compute_section_area()
+            self.compute_current_density()
+            self.calculate_penetrating_steepness()
+            
+        # Tự động tạo hàm nội suy độ từ trở nếu không cung cấp bh_curve (vật liệu tuyến tính)
+        if self.bh_curve is None:
+            self.compute_constant_bh_curve()
 
     def compute_constant_bh_curve(self):
         constant_reluctivity = self.vacuum_reluctivity / self.relative_permeability
@@ -40,7 +55,7 @@ class Segment:
         return self.section_area
 
     def compute_current_density(self):
-        area = self.compute_section_area()
+        area = self.compute_section_area() # Đảm bảo area luôn được cập nhật mới nhất
         if area > 0.0:
             self.current_density = self.current / area
         else:
@@ -88,11 +103,8 @@ class Segment:
         return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
 
     def evaluate_reluctivity(self, points_tensor):
-        if getattr(self, 'bh_curve', None) is not None:
-            return self.bh_curve(points_tensor)
-        
-        constant_reluctivity = self.vacuum_reluctivity / self.relative_permeability
-        return torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
+        # Hàm bh_curve đã được đảm bảo luôn tồn tại nhờ quá trình tự động ở __init__
+        return self.bh_curve(points_tensor)
 
     def evaluate_magnetization_vector(self, points_tensor):
         hx_tensor = torch.full((points_tensor.shape[0], 1), self.coercive[0], dtype=torch.float32, device=points_tensor.device)
