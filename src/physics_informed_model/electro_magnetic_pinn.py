@@ -6,10 +6,10 @@ from training_manager import TrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 from geometry_engine.geometry import Geometry
 from physics_domain.collocation_sampler import CollocationSampler
+from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
 class ElectroMagneticPINN:
     def __init__(self):
-        # 1. KHỞI TẠO CẤU HÌNH TEMPLATE MẶC ĐỊNH
         self.sampler_config = SimpleNamespace(
             x_boundaries_tuple=(-0.05, 0.05),
             y_boundaries_tuple=(-0.05, 0.05)
@@ -32,14 +32,10 @@ class ElectroMagneticPINN:
             lbfgs_history_size=50
         )
         
-        # Geometry độc lập với các thông số vật lý nên chỉ cần tạo 1 lần
         self.geometry_engine_instance = Geometry()
-        
-        # Xây dựng hệ thống lần đầu
         self._build_system()
 
     def update_configuration(self, sampler_config=None, pinn_config=None, training_config=None):
-        # 2. HÀM UPDATE: Ghi đè cấu hình mới vào template và xây dựng lại hệ thống
         if sampler_config:
             for key, value in vars(sampler_config).items():
                 setattr(self.sampler_config, key, value)
@@ -52,32 +48,26 @@ class ElectroMagneticPINN:
             for key, value in vars(training_config).items():
                 setattr(self.training_config, key, value)
                 
-        # Khởi tạo lại các thành phần con dựa trên cấu hình đã cập nhật
         self._build_system()
 
     def _build_system(self):
-        # Khởi tạo Sampler
         self.collocation_sampler_instance = CollocationSampler(
             x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
             y_boundaries_tuple=self.sampler_config.y_boundaries_tuple
         )
         
-        # Tính toán các hằng số quy chuẩn
         self.L0 = self.collocation_sampler_instance.x_maximum
         self.H0 = 800000.0
-        self.nu0 = 795774.715459
+        self.nu0 = VACUUM_RELUCTIVITY
         self.A0 = (self.H0 * self.L0) / self.nu0
         
-        # Khởi tạo Mạng Neural (truyền kwargs từ SimpleNamespace)
         self.pinn_architecture_instance = PINNArchitecture(
             domain_scale=self.L0,
             **vars(self.pinn_config)
         )
         
-        # Khởi tạo Động cơ PDE
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
-        # Khởi tạo Training Manager
         self.training_manager_instance = TrainingManager(
             model=self.pinn_architecture_instance,
             pde_evaluator=self.maxwell_pde_loss_instance,

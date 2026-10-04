@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
 def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
     x_coords = np.linspace(x_boundaries_tuple[0], x_boundaries_tuple[1], resolution)
@@ -15,7 +16,9 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
     sdf_grid = sdf_values_tensor.numpy().reshape(resolution, resolution)
     
     reluctivity_tensor = physical_properties_dictionary["reluctivity"]
-    mu_r_tensor = geometry_instance.vacuum_reluctivity / reluctivity_tensor
+    
+    # SỬ DỤNG HẰNG SỐ TOÀN CỤC ĐÃ ĐƯỢC IMPORT
+    mu_r_tensor = VACUUM_RELUCTIVITY / reluctivity_tensor
     mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
     
     hx_tensor = physical_properties_dictionary["coercive_field_x"]

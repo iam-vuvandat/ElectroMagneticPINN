@@ -7,7 +7,6 @@ from geometry_engine.geometry_visualizer import plot_geometry_problem
 class Geometry:
     def __init__(self):
         self.segments_list = []
-        
 
     def add_segment(self, segment_object):
         self.segments_list.append(segment_object)
@@ -17,7 +16,6 @@ class Geometry:
         return compute_global_signed_distance_field(self.segments_list, points_tensor)
 
     def evaluate_global_physical_properties(self, points_tensor):
-        
         return evaluate_global_physical_properties(self.segments_list, points_tensor)
 
     def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):

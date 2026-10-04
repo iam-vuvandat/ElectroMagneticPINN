@@ -17,60 +17,69 @@ from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    print("version 04.20")
-    # 1. KHỞI TẠO MÔ HÌNH VỚI TEMPLATE MẶC ĐỊNH
+    print("version 5.3 - U-Magnet with 100% Full Overlap Corners")
+    
     model = ElectroMagneticPINN()
     
-    # 2. ĐỊNH NGHĨA CÁC ĐỐI TƯỢNG CẤU HÌNH CẦN CẬP NHẬT
     new_sampler_config = SimpleNamespace(
-        x_boundaries_tuple=(-0.08, 0.08),  # Mở rộng biên theo yêu cầu
+        x_boundaries_tuple=(-0.08, 0.08),  
         y_boundaries_tuple=(-0.08, 0.08)
     )
     
     new_pinn_config = SimpleNamespace(
-        hidden_neurons=512,                # Tăng chiều rộng mạng lên 512 nơ-ron
-        activation_function=nn.SiLU()      # Sử dụng SiLU
+        hidden_neurons=256,                
+        activation_function=nn.SiLU()      
     )
     
-    # Kích hoạt update để hệ thống tự động rebuild lại các class lõi
     model.update_configuration(
         sampler_config=new_sampler_config,
         pinn_config=new_pinn_config
     )
     
-    # 3. THIẾT KẾ NAM CHÂM CHỮ U (Ghép từ 3 khối Segment để tạo mạch từ vòng)
-    # Khối 1: Chân trái (Từ hóa hướng lên -> Cực Bắc)
-    left_leg = Segment(outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]])
-    left_leg.set_material_properties(material="u_left", relative_permeability=1.05, coercive=[0.0, 800000.0])
-    model.geometry_engine_instance.add_segment(left_leg)
+    # CHÂN TRÁI
+    left_leg = Segment(
+        outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]],
+        material="u_left", 
+        relative_permeability=1.05, 
+        coercive=[0.0, 800000.0]  # Từ hóa hướng lên
+    )
 
-    # Khối 2: Thanh đáy nối (Từ hóa hướng sang trái để đẩy mạch từ từ phải qua trái bên trong sắt)
-    yoke = Segment(outline=[[-0.02, -0.03], [0.02, -0.03], [0.02, -0.01], [-0.02, -0.01]])
-    yoke.set_material_properties(material="u_yoke", relative_permeability=1.05, coercive=[-800000.0, 0.0])
-    model.geometry_engine_instance.add_segment(yoke)
+    # GÔNG TỪ KÉO DÀI TOÀN PHẦN (Phủ kín X từ -0.04 đến 0.04)
+    # Tạo ra ô vuông giao nhau 20x20mm ở mỗi góc giúp Vector tự uốn cong 45 độ mượt mà
+    yoke = Segment(
+        outline=[[-0.04, -0.03], [0.04, -0.03], [0.04, -0.01], [-0.04, -0.01]],
+        material="u_yoke", 
+        relative_permeability=1.05, 
+        coercive=[-800000.0, 0.0] # Từ hóa hướng sang trái
+    )
     
-    # Khối 3: Chân phải (Từ hóa hướng xuống -> Cực Nam)
-    right_leg = Segment(outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]])
-    right_leg.set_material_properties(material="u_right", relative_permeability=1.05, coercive=[0.0, -800000.0])
+    # CHÂN PHẢI
+    right_leg = Segment(
+        outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]],
+        material="u_right", 
+        relative_permeability=1.05, 
+        coercive=[0.0, -800000.0] # Từ hóa hướng xuống
+    )
+
+    # Nạp độc lập các segment
+    model.geometry_engine_instance.add_segment(left_leg)
+    model.geometry_engine_instance.add_segment(yoke)
     model.geometry_engine_instance.add_segment(right_leg)
 
-    # 4. KÍCH HOẠT HÌNH ẢNH HỌC TỰ ĐỘNG THEO BIÊN MỚI
     xb = model.sampler_config.x_boundaries_tuple
     yb = model.sampler_config.y_boundaries_tuple
     model.geometry_engine_instance.plot_problem_definition(
         x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
     )
 
-    # 5. BẮT ĐẦU HUẤN LUYỆN (Tăng mạnh số điểm lấy mẫu theo yêu cầu)
     model.execute_training_process(
-        number_of_uniform_points=15000,    # Tăng điểm phân bố đều
-        number_of_interface_points=5000,   # Tăng điểm tại ranh giới
+        number_of_uniform_points=15000,    
+        number_of_interface_points=5000,   
         distance_threshold=0.005,
         epochs_adam=4000,
         epochs_lbfgs=1000
     )
     
-    # --- TRỰC QUAN HÓA KẾT QUẢ ---
     resolution = 120
     x_coords = np.linspace(xb[0], xb[1], resolution)
     y_coords = np.linspace(yb[0], yb[1], resolution)
@@ -93,7 +102,7 @@ def main():
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($ert{}Bert{}$)")
+    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
@@ -119,5 +128,5 @@ def main():
     
     plt.show()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

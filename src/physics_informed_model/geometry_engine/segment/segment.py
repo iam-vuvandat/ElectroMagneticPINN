@@ -1,5 +1,6 @@
 import torch
 from geometry_engine.segment.polygon_signed_distance_field import compute_polygon_signed_distance_field
+from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
 class Segment:
     def __init__(self, 
@@ -10,35 +11,28 @@ class Segment:
                  coercive=[0.0, 0.0],
                  current=0.0):
         
-        self.vacuum_reluctivity = 795774.715459
-        
-        
         self.material = material
         self.relative_permeability = relative_permeability
         self.coercive = coercive
         self.current = current
         self.bh_curve = bh_curve
         
-        
         self.outline = None
         self.outline_tensor = None
         self.section_area = 0.0
         self.current_density = 0.0
-        self.steepness = 1.0  # Mặc định an toàn
-        
-        
+        self.steepness = 1.0 
         
         if outline is not None:
             self.set_outline(outline) 
             self.compute_current_density()
             self.calculate_penetrating_steepness()
             
-        
         if self.bh_curve is None:
             self.compute_constant_bh_curve()
 
     def compute_constant_bh_curve(self):
-        constant_reluctivity = self.vacuum_reluctivity / self.relative_permeability
+        constant_reluctivity = VACUUM_RELUCTIVITY / self.relative_permeability
         self.bh_curve = lambda points_tensor: torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
         return self.bh_curve
 
@@ -100,7 +94,6 @@ class Segment:
         return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
 
     def evaluate_reluctivity(self, points_tensor):
-        # Hàm bh_curve đã được đảm bảo luôn tồn tại nhờ quá trình tự động ở __init__
         return self.bh_curve(points_tensor)
 
     def evaluate_magnetization_vector(self, points_tensor):
