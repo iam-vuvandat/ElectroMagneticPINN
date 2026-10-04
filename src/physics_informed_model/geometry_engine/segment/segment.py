@@ -17,7 +17,7 @@ class Segment:
             self.set_outline(outline)
 
     def compute_constant_bh_curve(self):
-        
+        pass
 
     def set_outline(self, outline):
         self.outline_tensor = torch.tensor(outline, dtype=torch.float32)
