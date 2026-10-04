@@ -20,6 +20,12 @@ class Segment:
     def compute_constant_bh_curve(self):
         pass
 
+    def compute_section_area(self):
+        pass
+
+    def compute_current_density(self):
+        pass
+
     def set_outline(self, outline):
         self.outline_tensor = torch.tensor(outline, dtype=torch.float32)
         return self
