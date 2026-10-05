@@ -46,9 +46,12 @@ class TrainingManager:
         self.visualizer_update_interval = visualizer_update_interval
 
     def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        A_z_star = self.model(points_tensor)
+        # TẠO BẢN SAO ĐỘC LẬP CHO TỪNG EPOCH ĐỂ CẮT ĐỨT XUNG ĐỘT ĐỒ THỊ TÍNH TOÁN
+        xy = points_tensor.detach().clone().requires_grad_(True)
+        
+        A_z_star = self.model(xy)
         residual_star = self.pde_evaluator.compute_residual(
-            xy=points_tensor, A_z_star=A_z_star, nu=reluctivity_tensor,
+            xy=xy, A_z_star=A_z_star, nu=reluctivity_tensor,
             J_z=current_density_z_tensor, H_cx=coercive_field_x_tensor, H_cy=coercive_field_y_tensor
         )
         return torch.mean(residual_star**2)
@@ -74,8 +77,8 @@ class TrainingManager:
                     param_group['lr'] *= 0.8
                 continue
                 
-            # Bắt buộc giữ lại retain_graph=True đối với cấu trúc PINN đạo hàm bậc cao
-            loss.backward(retain_graph=True)
+            # ĐÃ CÔ LẬP ĐỒ THỊ NÊN KHÔNG CẦN RETAIN_GRAPH NỮA, GIÚP TIẾT KIỆM VRAM TỐI ĐA
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
             scheduler_adam.step()
@@ -107,7 +110,7 @@ class TrainingManager:
             nonlocal early_stop_triggered
             self.optimizer_lbfgs.zero_grad(set_to_none=True)
             loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
-            loss.backward(retain_graph=True)
+            loss.backward()
             
             lbfgs_counter[0] += 1
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
