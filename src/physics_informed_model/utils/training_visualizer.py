@@ -40,42 +40,75 @@ class TrainingVisualizer:
         
         eval_points = self.eval_points_tensor.to(computation_device).clone().requires_grad_(True)
         
+        # Mảng thông số vật lý tĩnh để tính toán PDE Residual
         nu_grid = torch.full((eval_points.shape[0], 1), pde_evaluator.nu0, device=computation_device)
         jz_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
         hcx_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
         hcy_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
         
-        A_z_pred = model(eval_points)
-        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_pred, nu_grid, jz_grid, hcx_grid, hcy_grid)
+        # Tính PDE Residual (dựa trên raw prediction A_z_star)
+        A_z_star = model(eval_points)
+        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
         
-        A_z_numpy = A_z_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        # Tính các thông số Vật lý thực tế (A_z_phys, B_x, B_y) thông qua evaluate_fields
+        A_z_phys, B_x_phys, B_y_phys = self.parent_pinn.evaluate_fields(eval_points)
+        
+        # Chuyển đổi sang Numpy để vẽ
+        A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
+        
         residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
         points_numpy = training_points_tensor.detach().cpu().numpy()
         
-        fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+        # Mở rộng layout thành 2 hàng x 3 cột (Kích thước 18x10)
+        fig, axs = plt.subplots(2, 3, figsize=(18, 10))
         
+        # [Hàng 1 - Cột 1]: Collocation Points
         axs[0, 0].scatter(points_numpy[:, 0], points_numpy[:, 1], s=1, c='black', alpha=0.5)
         axs[0, 0].set_title(f"Collocation Points")
         axs[0, 0].set_xlim(self.x_bounds)
         axs[0, 0].set_ylim(self.y_bounds)
         axs[0, 0].set_aspect('equal')
         
-        contour_az = axs[0, 1].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
-        fig.colorbar(contour_az, ax=axs[0, 1])
-        axs[0, 1].set_title("Forward Prediction ($A_z$)")
+        # [Hàng 1 - Cột 2]: PDE Residual Error
+        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
+        fig.colorbar(contour_res, ax=axs[0, 1])
+        axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
         
-        contour_res = axs[1, 0].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
-        fig.colorbar(contour_res, ax=axs[1, 0])
-        axs[1, 0].set_title("PDE Residual Error")
-        axs[1, 0].set_aspect('equal')
+        # [Hàng 1 - Cột 3]: Loss Optimization
+        axs[0, 2].plot(self.epoch_history, self.loss_history, 'b-')
+        axs[0, 2].set_yscale('log')
+        axs[0, 2].set_title("Loss Optimization")
+        axs[0, 2].set_xlabel("Epoch")
+        axs[0, 2].set_ylabel("Loss")
+        axs[0, 2].grid(True, which="both", ls="-", alpha=0.2)
         
-        axs[1, 1].plot(self.epoch_history, self.loss_history, 'b-')
-        axs[1, 1].set_yscale('log')
-        axs[1, 1].set_title("Loss Optimization")
-        axs[1, 1].set_xlabel("Epoch")
-        axs[1, 1].set_ylabel("Loss")
-        axs[1, 1].grid(True, which="both", ls="-", alpha=0.2)
+        # [Hàng 2 - Cột 1]: Magnetic Vector Potential (Az)
+        contour_az = axs[1, 0].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
+        fig.colorbar(contour_az, ax=axs[1, 0], label="A_z (Wb/m)")
+        axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
+        axs[1, 0].set_aspect('equal')
+
+        # [Hàng 2 - Cột 2]: Flux Density Magnitude (|B|)
+        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow")
+        fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
+        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
+        axs[1, 1].set_aspect('equal')
+
+        # [Hàng 2 - Cột 3]: Flux Density Vectors (Quiver Plot)
+        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow", alpha=0.4)
+        fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
+        
+        # Tính toán mật độ mũi tên sao cho không bị rối mắt
+        step = max(1, self.resolution // 20)
+        axs[1, 2].quiver(self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
+                         B_x_numpy[::step, ::step], B_y_numpy[::step, ::step], 
+                         color='black', pivot='mid')
+        axs[1, 2].set_title("Flux Density Vectors (B)")
+        axs[1, 2].set_aspect('equal')
         
         fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
         plt.tight_layout()
@@ -83,7 +116,8 @@ class TrainingVisualizer:
         frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
         plt.savefig(frame_name, dpi=100)
         plt.close(fig)
-        self.frame_paths.append(frame_name)
+        
+        # Đưa model quay lại chế độ train
         model.train()
 
     def generate_gif(self):
