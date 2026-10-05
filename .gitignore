@@ -1,9 +1,10 @@
 __pycache__/
 *.py[cod]
-
+*.png
 
 data/
 draft/
 example/
 storage/
 .venv/
+animation_frams/
