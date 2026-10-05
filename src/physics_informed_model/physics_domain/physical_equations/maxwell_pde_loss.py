@@ -40,7 +40,7 @@ class MaxwellPDELoss:
             inputs=xy,
             grad_outputs=torch.ones_like(H_y_star),
             create_graph=True,
-            retain_graph=True
+            retain_graph=False
         )[0]
         dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
         

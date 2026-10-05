@@ -54,9 +54,13 @@ class ElectroMagneticPINN:
         self._build_system()
 
     def _build_system(self):
+        self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[*] Kích hoạt phần cứng: {self.computation_device}")
+
         self.collocation_sampler_instance = CollocationSampler(
             x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
-            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple
+            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple,
+            device=self.computation_device
         )
         
         self.L0 = self.collocation_sampler_instance.x_maximum
@@ -67,7 +71,7 @@ class ElectroMagneticPINN:
         self.pinn_architecture_instance = PINNArchitecture(
             domain_scale=self.L0,
             **vars(self.pinn_config)
-        )
+        ).to(self.computation_device)
         
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
@@ -121,7 +125,7 @@ class ElectroMagneticPINN:
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
-        points_tensor.requires_grad_(True)
+        points_tensor = points_tensor.to(self.computation_device).clone().requires_grad_(True)
         A_z_star = self.pinn_architecture_instance(points_tensor)
         A_z_phys = A_z_star * self.A0
         
