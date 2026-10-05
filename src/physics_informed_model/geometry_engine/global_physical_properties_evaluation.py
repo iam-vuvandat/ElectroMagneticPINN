@@ -21,15 +21,21 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
             "material_classification": global_material_classification_tensor
         }
 
-    sdfs = []
+    global_sdf = segments_list[0].compute_signed_distance_field(points_tensor)
+    for segment_object in segments_list[1:]:
+        current_sdf = segment_object.compute_signed_distance_field(points_tensor)
+        global_sdf = torch.minimum(global_sdf, current_sdf)
+        
+    max_steepness = max([seg.steepness for seg in segments_list])
+    envelope_k = 5000.0 - max_steepness * 4960.0
+    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
+
     masks = []
     reluctivities = []
     hxs, hys, jzs = [], [], []
 
     for segment_object in segments_list:
         sdf = segment_object.compute_signed_distance_field(points_tensor)
-        sdfs.append(sdf)
-        
         actual_k = 5000.0 - segment_object.steepness * 4960.0
         mask = torch.sigmoid(-actual_k * sdf).view(-1, 1)
         
@@ -39,14 +45,6 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         hxs.append(hx)
         hys.append(hy)
         jzs.append(segment_object.evaluate_current_density(points_tensor))
-
-    # Đảm bảo mỗi SDF đều là 1D trước khi xếp chồng, tạo ra shape (N, M) an toàn tuyệt đối
-    stacked_sdfs = torch.stack([s.view(-1) for s in sdfs], dim=1)
-    global_sdf, _ = torch.min(stacked_sdfs, dim=1, keepdim=True)
-    
-    max_steepness = max([seg.steepness for seg in segments_list])
-    envelope_k = 5000.0 - max_steepness * 4960.0
-    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
 
     total_mask = sum(masks)
     safe_total_mask = total_mask + 1e-12 

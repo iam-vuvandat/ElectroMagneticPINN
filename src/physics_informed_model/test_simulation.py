@@ -16,7 +16,7 @@ from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    print("version 6.5 - Fully Integrated Visualization API")
+    print("version 6.6 - Perfect Geometry with Full Overlap PoU")
     
     model = ElectroMagneticPINN()
     
@@ -58,7 +58,7 @@ def main():
     )
 
     yoke = Segment(
-        outline=[[-0.02, -0.03], [0.02, -0.03], [0.02, -0.01], [-0.02, -0.01]],
+        outline=[[-0.04, -0.03], [0.04, -0.03], [0.04, -0.01], [-0.04, -0.01]],
         material="u_yoke", 
         relative_permeability=1.05, 
         coercive=[-800000.0, 0.0]
@@ -71,7 +71,9 @@ def main():
         coercive=[0.0, -800000.0]
     )
 
-    model.geometry_engine_instance.unite([left_leg, yoke, right_leg])
+    model.geometry_engine_instance.add_segment(left_leg)
+    model.geometry_engine_instance.add_segment(yoke)
+    model.geometry_engine_instance.add_segment(right_leg)
 
     xb = model.sampler_config.x_boundaries_tuple
     yb = model.sampler_config.y_boundaries_tuple
@@ -103,7 +105,7 @@ def main():
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($\vert{}B\vert{}$)")
+    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")

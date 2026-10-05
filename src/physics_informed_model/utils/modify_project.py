@@ -1,12 +1,12 @@
 import os
 
-def execute_fix_tensor_dimension_bug():
+def execute_restore_stable_geometry():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
     # ---------------------------------------------------------
-    # 1. CẬP NHẬT FILE: GEOMETRY_ENGINE/GEOMETRY.PY
-    # (Loại bỏ squeeze(-1) và thay bằng view(-1) để an toàn)
+    # 1. KHÔI PHỤC FILE: GEOMETRY.PY
+    # (Chỉ giữ lại add_segment, xóa bỏ hoàn toàn hàm unite lỗi)
     # ---------------------------------------------------------
     geometry_file = os.path.join(project_root, 'geometry_engine', 'geometry.py')
     geometry_code = """import torch
@@ -23,73 +23,6 @@ class Geometry:
         self.segments_list.append(segment_object)
         return self
 
-    def unite(self, segments_collection):
-        united_segment = Segment()
-        united_segment.components = []
-        
-        for item in segments_collection:
-            if isinstance(item, Segment):
-                united_segment.components.append(item)
-            else:
-                united_segment.components.append(Segment(outline=item))
-
-        def compute_united_sdf(points_tensor):
-            if not united_segment.components:
-                return torch.ones((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            res_sdf = united_segment.components[0].compute_signed_distance_field(points_tensor)
-            for comp in united_segment.components[1:]:
-                res_sdf = torch.minimum(res_sdf, comp.compute_signed_distance_field(points_tensor))
-            return res_sdf
-
-        united_segment.compute_signed_distance_field = compute_united_sdf
-
-        def evaluate_united_reluctivity(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor).view(-1) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_nu = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                blended_nu += w_i * comp.evaluate_reluctivity(points_tensor)
-            return blended_nu
-
-        united_segment.evaluate_reluctivity = evaluate_united_reluctivity
-
-        def evaluate_united_magnetization(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor).view(-1) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_hx = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            blended_hy = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                hx, hy = comp.evaluate_magnetization_vector(points_tensor)
-                blended_hx += w_i * hx
-                blended_hy += w_i * hy
-            return blended_hx, blended_hy
-
-        united_segment.evaluate_magnetization_vector = evaluate_united_magnetization
-
-        def evaluate_united_current_density(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor).view(-1) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_jz = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                blended_jz += w_i * comp.evaluate_current_density(points_tensor)
-            return blended_jz
-
-        united_segment.evaluate_current_density = evaluate_united_current_density
-
-        united_segment.steepness = max([comp.steepness for comp in united_segment.components]) if united_segment.components else 1.0
-
-        self.segments_list.append(united_segment)
-        return self
-
     def compute_global_signed_distance_field(self, points_tensor):
         return compute_global_signed_distance_field(self.segments_list, points_tensor)
 
@@ -101,8 +34,8 @@ class Geometry:
 """
 
     # ---------------------------------------------------------
-    # 2. CẬP NHẬT FILE: GEOMETRY_ENGINE/GLOBAL_PHYSICAL_PROPERTIES_EVALUATION.PY
-    # (Loại bỏ squeeze(-1) ở phần tạo stacked_sdfs)
+    # 2. KHÔI PHỤC FILE: GLOBAL_PHYSICAL_PROPERTIES_EVALUATION.PY
+    # (Sử dụng đúng thuật toán torch.minimum cho CSG Union SDF)
     # ---------------------------------------------------------
     eval_file = os.path.join(project_root, 'geometry_engine', 'global_physical_properties_evaluation.py')
     eval_code = """import torch
@@ -128,15 +61,21 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
             "material_classification": global_material_classification_tensor
         }
 
-    sdfs = []
+    global_sdf = segments_list[0].compute_signed_distance_field(points_tensor)
+    for segment_object in segments_list[1:]:
+        current_sdf = segment_object.compute_signed_distance_field(points_tensor)
+        global_sdf = torch.minimum(global_sdf, current_sdf)
+        
+    max_steepness = max([seg.steepness for seg in segments_list])
+    envelope_k = 5000.0 - max_steepness * 4960.0
+    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
+
     masks = []
     reluctivities = []
     hxs, hys, jzs = [], [], []
 
     for segment_object in segments_list:
         sdf = segment_object.compute_signed_distance_field(points_tensor)
-        sdfs.append(sdf)
-        
         actual_k = 5000.0 - segment_object.steepness * 4960.0
         mask = torch.sigmoid(-actual_k * sdf).view(-1, 1)
         
@@ -146,14 +85,6 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         hxs.append(hx)
         hys.append(hy)
         jzs.append(segment_object.evaluate_current_density(points_tensor))
-
-    # Đảm bảo mỗi SDF đều là 1D trước khi xếp chồng, tạo ra shape (N, M) an toàn tuyệt đối
-    stacked_sdfs = torch.stack([s.view(-1) for s in sdfs], dim=1)
-    global_sdf, _ = torch.min(stacked_sdfs, dim=1, keepdim=True)
-    
-    max_steepness = max([seg.steepness for seg in segments_list])
-    envelope_k = 5000.0 - max_steepness * 4960.0
-    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
 
     total_mask = sum(masks)
     safe_total_mask = total_mask + 1e-12 
@@ -207,4 +138,4 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         f.write(eval_code)
 
 if __name__ == '__main__':
-    execute_fix_tensor_dimension_bug()
+    execute_restore_stable_geometry()
