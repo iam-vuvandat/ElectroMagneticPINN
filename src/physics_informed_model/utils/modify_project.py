@@ -1,142 +1,139 @@
 import os
 
-def execute_gpu_and_vram_optimization():
+def fix_training_manager():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
+    training_file = os.path.join(project_root, 'training_manager.py')
     
-    # ---------------------------------------------------------
-    # 1. TỐI ƯU HÓA SAMPLER (Sinh điểm Natively trên GPU)
-    # ---------------------------------------------------------
-    sampler_file = os.path.join(project_root, 'physics_domain', 'collocation_sampler.py')
-    sampler_code = """import torch
+    training_code = """import torch
+import torch.optim as optim
 
-class CollocationSampler:
-    def __init__(self, x_boundaries_tuple, y_boundaries_tuple, device=torch.device('cpu')):
-        self.x_minimum = x_boundaries_tuple[0]
-        self.x_maximum = x_boundaries_tuple[1]
-        self.y_minimum = y_boundaries_tuple[0]
-        self.y_maximum = y_boundaries_tuple[1]
-        self.device = device
-
-    def generate_uniform_points_tensor(self, number_of_points):
-        # Sinh trực tiếp trên GPU
-        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32, device=self.device)
-        points_tensor[:, 0] = points_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-        points_tensor[:, 1] = points_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
-        points_tensor.requires_grad_(True)
-        return points_tensor
-
-    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
-        collected_points = []
-        collected_count = 0
-        pool_size_value = number_of_points * 20
+class TrainingManager:
+    def __init__(
+        self, 
+        model, 
+        pde_evaluator, 
+        learning_rate_adam=1e-3, 
+        target_loss=0.0,
+        lbfgs_learning_rate=0.8, 
+        lbfgs_maximum_iterations=1000, 
+        lbfgs_maximum_evaluations=1250,
+        lbfgs_tolerance_gradient=1e-8,
+        lbfgs_tolerance_change=1e-10,
+        lbfgs_history_size=50,
+        visualizer=None,
+        visualizer_update_interval=100
+    ):
+        self.model = model
+        self.pde_evaluator = pde_evaluator
         
-        while collected_count < number_of_points:
-            # Quét ranh giới siêu tốc bằng GPU
-            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
-            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+        self.base_learning_rate_adam = learning_rate_adam
+        self.target_loss = target_loss
+        self.lbfgs_learning_rate = lbfgs_learning_rate
+        self.lbfgs_maximum_iterations = lbfgs_maximum_iterations
+        self.lbfgs_maximum_evaluations = lbfgs_maximum_evaluations
+        self.lbfgs_tolerance_gradient = lbfgs_tolerance_gradient
+        self.lbfgs_tolerance_change = lbfgs_tolerance_change
+        self.lbfgs_history_size = lbfgs_history_size
+        
+        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_learning_rate_adam)
+        
+        self.optimizer_lbfgs = optim.LBFGS(
+            self.model.parameters(),
+            lr=self.lbfgs_learning_rate,
+            max_iter=self.lbfgs_maximum_iterations,
+            max_eval=self.lbfgs_maximum_evaluations,
+            tolerance_grad=self.lbfgs_tolerance_gradient,
+            tolerance_change=self.lbfgs_tolerance_change,
+            history_size=self.lbfgs_history_size,
+            line_search_fn="strong_wolfe"
+        )
+        
+        self.visualizer = visualizer
+        self.visualizer_update_interval = visualizer_update_interval
+
+    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        A_z_star = self.model(points_tensor)
+        residual_star = self.pde_evaluator.compute_residual(
+            xy=points_tensor, A_z_star=A_z_star, nu=reluctivity_tensor,
+            J_z=current_density_z_tensor, H_cx=coercive_field_x_tensor, H_cy=coercive_field_y_tensor
+        )
+        return torch.mean(residual_star**2)
+
+    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        self.model.train()
+        best_loss = float('inf')
+        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
+        
+        for param_group in self.optimizer_adam.param_groups:
+            param_group['initial_lr'] = self.base_learning_rate_adam
+            param_group['lr'] = self.base_learning_rate_adam
             
-            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
-            mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
-            mask_1d = mask_tensor.squeeze()
+        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
+        
+        for epoch in range(epochs):
+            self.optimizer_adam.zero_grad(set_to_none=True)
+            loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
             
-            if mask_1d.any():
-                valid_points = points_pool_tensor[mask_1d]
-                collected_points.append(valid_points)
-                collected_count += valid_points.shape[0]
+            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
+                self.model.load_state_dict(best_model_state)
+                for param_group in self.optimizer_adam.param_groups:
+                    param_group['lr'] *= 0.8
+                continue
                 
-        interface_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        interface_points_tensor = interface_points_tensor.detach().clone()
-        interface_points_tensor.requires_grad_(True)
-        return interface_points_tensor
+            # Bắt buộc giữ lại retain_graph=True đối với cấu trúc PINN đạo hàm bậc cao
+            loss.backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer_adam.step()
+            scheduler_adam.step()
+            
+            current_loss_value = loss.item()
+            if current_loss_value < best_loss:
+                best_loss = current_loss_value
+                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
+                
+            if self.target_loss > 0 and current_loss_value <= self.target_loss:
+                print(f"Adam Epoch {epoch + 1}: Đạt ngưỡng target_loss. KẾT THÚC ADAM SỚM!")
+                break
+            
+            if (epoch + 1) % 100 == 0:
+                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {self.optimizer_adam.param_groups[0]['lr']:.3e}")
+                
+            if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
+                self.visualizer.save_frame(
+                    epoch + 1, current_loss_value, 
+                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
 
-    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
-        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
-        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
+    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+        self.model.train()
+        lbfgs_counter = [0]
+        early_stop_triggered = False 
         
-        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
-        
-        combined_points_tensor = combined_points_tensor.detach().clone()
-        combined_points_tensor.requires_grad_(True)
-        return combined_points_tensor
+        def closure():
+            nonlocal early_stop_triggered
+            self.optimizer_lbfgs.zero_grad(set_to_none=True)
+            loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
+            loss.backward(retain_graph=True)
+            
+            lbfgs_counter[0] += 1
+            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
+                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
+                
+            if self.target_loss > 0 and loss.item() <= self.target_loss:
+                early_stop_triggered = True
+            return loss
+            
+        for epoch in range(epochs):
+            if early_stop_triggered:
+                print(f"L-BFGS Epoch {epoch + 1}: Đạt ngưỡng target_loss. KẾT THÚC L-BFGS SỚM!")
+                break
+            self.optimizer_lbfgs.step(closure)
 """
 
-    # ---------------------------------------------------------
-    # 2. TỐI ƯU HÓA LỚP BỌC CHÍNH (Gán Device cho hệ thống)
-    # ---------------------------------------------------------
-    emp_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
-    with open(emp_file, 'r', encoding='utf-8') as f:
-        emp_content = f.read()
-    
-    old_sampler_init = """        self.collocation_sampler_instance = CollocationSampler(
-            x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
-            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple
-        )"""
-    new_sampler_init = """        self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[*] Kích hoạt phần cứng: {self.computation_device}")
-
-        self.collocation_sampler_instance = CollocationSampler(
-            x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
-            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple,
-            device=self.computation_device
-        )"""
-    emp_content = emp_content.replace(old_sampler_init, new_sampler_init)
-    
-    old_pinn_init = """        self.pinn_architecture_instance = PINNArchitecture(
-            domain_scale=self.L0,
-            **vars(self.pinn_config)
-        )"""
-    new_pinn_init = """        self.pinn_architecture_instance = PINNArchitecture(
-            domain_scale=self.L0,
-            **vars(self.pinn_config)
-        ).to(self.computation_device)"""
-    emp_content = emp_content.replace(old_pinn_init, new_pinn_init)
-
-    old_eval_fields = """    def evaluate_fields(self, points_tensor):
-        self.pinn_architecture_instance.eval()
-        points_tensor.requires_grad_(True)"""
-    new_eval_fields = """    def evaluate_fields(self, points_tensor):
-        self.pinn_architecture_instance.eval()
-        points_tensor = points_tensor.to(self.computation_device).clone().requires_grad_(True)"""
-    emp_content = emp_content.replace(old_eval_fields, new_eval_fields)
-
-    # ---------------------------------------------------------
-    # 3. TỐI ƯU HÓA BỘ NHỚ VRAM (Xóa retain_graph=True)
-    # ---------------------------------------------------------
-    training_file = os.path.join(project_root, 'training_manager.py')
-    with open(training_file, 'r', encoding='utf-8') as f:
-        training_content = f.read()
-    # Chữa lỗi Adam
-    training_content = training_content.replace("loss.backward(retain_graph=True)", "loss.backward()")
-
-    pde_file = os.path.join(project_root, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
-    with open(pde_file, 'r', encoding='utf-8') as f:
-        pde_content = f.read()
-    
-    old_grad_hy = """        grad_Hy_star = torch.autograd.grad(
-            outputs=H_y_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_y_star),
-            create_graph=True,
-            retain_graph=True
-        )[0]"""
-    new_grad_hy = """        grad_Hy_star = torch.autograd.grad(
-            outputs=H_y_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_y_star),
-            create_graph=True,
-            retain_graph=False
-        )[0]"""
-    pde_content = pde_content.replace(old_grad_hy, new_grad_hy)
-
-    # Ghi lại toàn bộ các file
-    with open(sampler_file, 'w', encoding='utf-8') as f: f.write(sampler_code)
-    with open(emp_file, 'w', encoding='utf-8') as f: f.write(emp_content)
-    with open(training_file, 'w', encoding='utf-8') as f: f.write(training_content)
-    with open(pde_file, 'w', encoding='utf-8') as f: f.write(pde_content)
-
-    print("Hoàn tất tối ưu hóa GPU & VRAM! Hiệu năng hệ thống sẽ tăng vọt.")
+    with open(training_file, 'w', encoding='utf-8') as f:
+        f.write(training_code.strip() + "\n")
+    print("Đã khôi phục retain_graph=True thành công trong training_manager.py!")
 
 if __name__ == "__main__":
-    execute_gpu_and_vram_optimization()
+    fix_training_manager()
