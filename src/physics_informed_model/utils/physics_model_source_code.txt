@@ -22,6 +22,7 @@ physics_informed_model/
     utils/
         extract_project.py
         modify_project.py
+        training_visualizer.py
 
 ========================================
 SOURCE CODE
@@ -38,6 +39,7 @@ from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 from geometry_engine.geometry import Geometry
 from physics_domain.collocation_sampler import CollocationSampler
 from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+from utils.training_visualizer import TrainingVisualizer
 
 class ElectroMagneticPINN:
     def __init__(self):
@@ -53,32 +55,29 @@ class ElectroMagneticPINN:
         )
         
         self.training_config = SimpleNamespace(
-            lr_adam=1e-3,
+            learning_rate_adam=1e-3,
             target_loss=1e-3,
-            lbfgs_lr=0.8,
-            lbfgs_max_iter=1000,
-            lbfgs_max_eval=1250,
-            lbfgs_tolerance_grad=1e-8,
+            lbfgs_learning_rate=0.8,
+            lbfgs_maximum_iterations=1000,
+            lbfgs_maximum_evaluations=1250,
+            lbfgs_tolerance_gradient=1e-8,
             lbfgs_tolerance_change=1e-10,
             lbfgs_history_size=50
+        )
+        
+        self.visualization_config = SimpleNamespace(
+            active=False,
+            update_interval=100,
+            output_directory="animation_frames",
+            resolution=100,
+            gif_filename="training_process.gif",
+            gif_fps=10
         )
         
         self.geometry_engine_instance = Geometry()
         self._build_system()
 
-    def update_configuration(self, sampler_config=None, pinn_config=None, training_config=None):
-        if sampler_config:
-            for key, value in vars(sampler_config).items():
-                setattr(self.sampler_config, key, value)
-                
-        if pinn_config:
-            for key, value in vars(pinn_config).items():
-                setattr(self.pinn_config, key, value)
-                
-        if training_config:
-            for key, value in vars(training_config).items():
-                setattr(self.training_config, key, value)
-                
+    def update_electromagnetic_pinn(self):
         self._build_system()
 
     def _build_system(self):
@@ -99,9 +98,15 @@ class ElectroMagneticPINN:
         
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
+        self.visualizer_instance = None
+        if self.visualization_config.active:
+            self.visualizer_instance = TrainingVisualizer(parent_pinn=self)
+            
         self.training_manager_instance = TrainingManager(
             model=self.pinn_architecture_instance,
             pde_evaluator=self.maxwell_pde_loss_instance,
+            visualizer=self.visualizer_instance,
+            visualizer_update_interval=self.visualization_config.update_interval,
             **vars(self.training_config)
         )
 
@@ -132,6 +137,10 @@ class ElectroMagneticPINN:
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
             coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
         )
+        
+        if self.visualizer_instance:
+            print("Đang xuất file GIF Animation...")
+            self.visualizer_instance.generate_gif()
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
@@ -218,7 +227,6 @@ class PINNArchitecture(nn.Module):
 
 import os
 import sys
-from types import SimpleNamespace
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 if current_directory not in sys.path:
@@ -235,69 +243,71 @@ from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    print("version 5.0 - U-Magnet with Unite CSG")
+    print("version 6.5 - Fully Integrated Visualization API")
     
-    # 1. KHỞI TẠO MÔ HÌNH VỚI TEMPLATE MẶC ĐỊNH
     model = ElectroMagneticPINN()
     
-    # 2. CẤU HÌNH THAM SÔ MẠNG VÀ MIỀN LẤY MẪU
-    new_sampler_config = SimpleNamespace(
-        x_boundaries_tuple=(-0.08, 0.08),  
-        y_boundaries_tuple=(-0.08, 0.08)
-    )
+    model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
+    model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
+    model.sampler_config.number_of_uniform_points = 5000
+    model.sampler_config.number_of_interface_points = 2000
+    model.sampler_config.distance_threshold = 0.005
     
-    new_pinn_config = SimpleNamespace(
-        hidden_neurons=512,                
-        activation_function=nn.SiLU()      
-    )
+    model.pinn_config.hidden_layers = 3
+    model.pinn_config.hidden_neurons = 64
+    model.pinn_config.activation_function = nn.SiLU()
     
-    model.update_configuration(
-        sampler_config=new_sampler_config,
-        pinn_config=new_pinn_config
-    )
+    model.training_config.epochs_adam = 1000
+    model.training_config.epochs_lbfgs = 500
+    model.training_config.learning_rate_adam = 1e-3
+    model.training_config.target_loss = 1e-3
+    model.training_config.lbfgs_learning_rate = 0.8
+    model.training_config.lbfgs_maximum_iterations = 1000
+    model.training_config.lbfgs_maximum_evaluations = 1250
+    model.training_config.lbfgs_tolerance_gradient = 1e-8
+    model.training_config.lbfgs_tolerance_change = 1e-10
+    model.training_config.lbfgs_history_size = 50
     
-    # 3. ĐỊNH NGHĨA CÁC ĐOẠN THÀNH PHẦN CỦA NAM CHÂM CHỮ U
+    model.visualization_config.active = True
+    model.visualization_config.update_interval = 50 
+    model.visualization_config.output_directory = "animation_frames"
+    model.visualization_config.resolution = 80
+    model.visualization_config.gif_filename = "training_process.gif"
+    model.visualization_config.gif_fps = 15
+    
+    model.update_electromagnetic_pinn()
+    
     left_leg = Segment(
         outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]],
         material="u_left", 
         relative_permeability=1.05, 
-        coercive=[0.0, 800000.0]  # Từ hóa hướng lên
+        coercive=[0.0, 800000.0]
     )
 
     yoke = Segment(
         outline=[[-0.02, -0.03], [0.02, -0.03], [0.02, -0.01], [-0.02, -0.01]],
         material="u_yoke", 
         relative_permeability=1.05, 
-        coercive=[-800000.0, 0.0] # Từ hóa hướng sang trái để dẫn từ thông
+        coercive=[-800000.0, 0.0]
     )
     
     right_leg = Segment(
         outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]],
         material="u_right", 
         relative_permeability=1.05, 
-        coercive=[0.0, -800000.0] # Từ hóa hướng xuống
+        coercive=[0.0, -800000.0]
     )
 
-    # 4. SỬ DỤNG HÀM UNITE ĐỂ GOM NHÓM THÀNH MỘT KHỐI THỐNG NHẤT
     model.geometry_engine_instance.unite([left_leg, yoke, right_leg])
 
-    # 5. HIỂN THỊ ĐỊNH NGHĨA BÀI TOÁN
     xb = model.sampler_config.x_boundaries_tuple
     yb = model.sampler_config.y_boundaries_tuple
     model.geometry_engine_instance.plot_problem_definition(
         x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
     )
 
-    # 6. BẮT ĐẦU HUẤN LUYỆN PINN
-    model.execute_training_process(
-        number_of_uniform_points=15000,    
-        number_of_interface_points=5000,   
-        distance_threshold=0.005,
-        epochs_adam=4000,
-        epochs_lbfgs=1000
-    )
+    model.execute_training_process()
     
-    # --- TRỰC QUAN HÓA KẾT QUẢ ĐẦU RA ---
     resolution = 120
     x_coords = np.linspace(xb[0], xb[1], resolution)
     y_coords = np.linspace(yb[0], yb[1], resolution)
@@ -320,7 +330,7 @@ def main():
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($ert{}Bert{}$)")
+    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($\vert{}B\vert{}$)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
@@ -359,40 +369,44 @@ class TrainingManager:
         self, 
         model, 
         pde_evaluator, 
-        lr_adam=1e-3, 
+        learning_rate_adam=1e-3, 
         target_loss=0.0,
-        lbfgs_lr=0.8, 
-        lbfgs_max_iter=1000, 
-        lbfgs_max_eval=1250,
-        lbfgs_tolerance_grad=1e-8,
+        lbfgs_learning_rate=0.8, 
+        lbfgs_maximum_iterations=1000, 
+        lbfgs_maximum_evaluations=1250,
+        lbfgs_tolerance_gradient=1e-8,
         lbfgs_tolerance_change=1e-10,
-        lbfgs_history_size=50
+        lbfgs_history_size=50,
+        visualizer=None,
+        visualizer_update_interval=100
     ):
         self.model = model
         self.pde_evaluator = pde_evaluator
         
-        # ĐƯA RA LÀM THUỘC TÍNH
-        self.base_lr_adam = lr_adam
+        self.base_learning_rate_adam = learning_rate_adam
         self.target_loss = target_loss
-        self.lbfgs_lr = lbfgs_lr
-        self.lbfgs_max_iter = lbfgs_max_iter
-        self.lbfgs_max_eval = lbfgs_max_eval
-        self.lbfgs_tolerance_grad = lbfgs_tolerance_grad
+        self.lbfgs_learning_rate = lbfgs_learning_rate
+        self.lbfgs_maximum_iterations = lbfgs_maximum_iterations
+        self.lbfgs_maximum_evaluations = lbfgs_maximum_evaluations
+        self.lbfgs_tolerance_gradient = lbfgs_tolerance_gradient
         self.lbfgs_tolerance_change = lbfgs_tolerance_change
         self.lbfgs_history_size = lbfgs_history_size
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_lr_adam)
+        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
             self.model.parameters(),
-            lr=self.lbfgs_lr,
-            max_iter=self.lbfgs_max_iter,
-            max_eval=self.lbfgs_max_eval,
-            tolerance_grad=self.lbfgs_tolerance_grad,
+            lr=self.lbfgs_learning_rate,
+            max_iter=self.lbfgs_maximum_iterations,
+            max_eval=self.lbfgs_maximum_evaluations,
+            tolerance_grad=self.lbfgs_tolerance_gradient,
             tolerance_change=self.lbfgs_tolerance_change,
             history_size=self.lbfgs_history_size,
             line_search_fn="strong_wolfe"
         )
+        
+        self.visualizer = visualizer
+        self.visualizer_update_interval = visualizer_update_interval
 
     def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         A_z_star = self.model(points_tensor)
@@ -408,8 +422,8 @@ class TrainingManager:
         best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
         
         for param_group in self.optimizer_adam.param_groups:
-            param_group['initial_lr'] = self.base_lr_adam
-            param_group['lr'] = self.base_lr_adam
+            param_group['initial_lr'] = self.base_learning_rate_adam
+            param_group['lr'] = self.base_learning_rate_adam
             
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
         
@@ -439,6 +453,12 @@ class TrainingManager:
             
             if (epoch + 1) % 100 == 0:
                 print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {self.optimizer_adam.param_groups[0]['lr']:.3e}")
+                
+            if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
+                self.visualizer.save_frame(
+                    epoch + 1, current_loss_value, 
+                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
 
     def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
@@ -481,83 +501,6 @@ class Geometry:
 
     def add_segment(self, segment_object):
         self.segments_list.append(segment_object)
-        return self
-
-    def unite(self, segments_collection):
-        """
-        Hàm unite: Gom nhóm nhiều Segment thành một thực thể CSG Union duy nhất.
-        Mỗi Segment thành phần vẫn giữ nguyên tính chất vật liệu riêng của nó 
-        và được pha trộn mượt mà bên trong khối hợp nhất bằng thuật toán Softmax.
-        """
-        united_segment = Segment()
-        united_segment.components = []
-        
-        for item in segments_collection:
-            if isinstance(item, Segment):
-                united_segment.components.append(item)
-            else:
-                united_segment.components.append(Segment(outline=item))
-
-        # 1. Phép toán CSG Union cho Hình học (Signed Distance Field)
-        def compute_united_sdf(points_tensor):
-            if not united_segment.components:
-                return torch.ones((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            res_sdf = united_segment.components[0].compute_signed_distance_field(points_tensor)
-            for comp in united_segment.components[1:]:
-                res_sdf = torch.minimum(res_sdf, comp.compute_signed_distance_field(points_tensor))
-            return res_sdf
-
-        united_segment.compute_signed_distance_field = compute_united_sdf
-
-        # 2. Nội suy mượt độ từ trở (Reluctivity) bên trong khối hợp nhất
-        def evaluate_united_reluctivity(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_nu = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                blended_nu += w_i * comp.evaluate_reluctivity(points_tensor)
-            return blended_nu
-
-        united_segment.evaluate_reluctivity = evaluate_united_reluctivity
-
-        # 3. Nội suy mượt Vector Từ hóa (Coercive Field Hc) bên trong khối hợp nhất
-        def evaluate_united_magnetization(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_hx = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            blended_hy = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                hx, hy = comp.evaluate_magnetization_vector(points_tensor)
-                blended_hx += w_i * hx
-                blended_hy += w_i * hy
-            return blended_hx, blended_hy
-
-        united_segment.evaluate_magnetization_vector = evaluate_united_magnetization
-
-        # 4. Nội suy mượt Mật độ dòng điện (Current Density Jz)
-        def evaluate_united_current_density(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_jz = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                blended_jz += w_i * comp.evaluate_current_density(points_tensor)
-            return blended_jz
-
-        united_segment.evaluate_current_density = evaluate_united_current_density
-
-        # Lấy độ dốc ranh giới lớn nhất làm đại diện an toàn
-        united_segment.steepness = max([comp.steepness for comp in united_segment.components]) if united_segment.components else 1.0
-
-        self.segments_list.append(united_segment)
         return self
 
     def compute_global_signed_distance_field(self, points_tensor):
@@ -644,14 +587,12 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
 
 import torch
 
-# Đưa hằng số vật lý ra làm hằng số module (Module-level constant)
 VACUUM_RELUCTIVITY = 795774.715459
 
 def evaluate_global_physical_properties(segments_list, points_tensor):
     number_of_points = points_tensor.shape[0]
     computation_device = points_tensor.device
     
-    # 1. Khởi tạo mảng nền chân không
     global_reluctivity_tensor = torch.full((number_of_points, 1), VACUUM_RELUCTIVITY, dtype=torch.float32, device=computation_device)
     global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
     global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
@@ -667,13 +608,15 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
             "material_classification": global_material_classification_tensor
         }
 
+    sdfs = []
     masks = []
     reluctivities = []
     hxs, hys, jzs = [], [], []
 
-    # 2. Thu thập dữ liệu nội bộ của từng khối vật liệu độc lập
     for segment_object in segments_list:
         sdf = segment_object.compute_signed_distance_field(points_tensor)
+        sdfs.append(sdf)
+        
         actual_k = 5000.0 - segment_object.steepness * 4960.0
         mask = torch.sigmoid(-actual_k * sdf).view(-1, 1)
         
@@ -684,12 +627,15 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         hys.append(hy)
         jzs.append(segment_object.evaluate_current_density(points_tensor))
 
-    # 3. Tạo Mặt nạ bao bọc toàn cục (Global Envelope)
-    # Tổng của các sigmoids (sum(masks)) qua một điểm nối (joint) luôn duy trì chính xác = 1.0. 
-    # Cắt giới hạn (clamp) từ 0 đến 1 sẽ triệt tiêu hoàn toàn các ranh giới ảo.
+    stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
+    global_sdf, _ = torch.min(stacked_sdfs, dim=1, keepdim=True)
+    
+    max_steepness = max([seg.steepness for seg in segments_list])
+    envelope_k = 5000.0 - max_steepness * 4960.0
+    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
+
     total_mask = sum(masks)
-    global_envelope_mask = torch.clamp(total_mask, 0.0, 1.0)
-    safe_total_mask = total_mask + 1e-12 # Tránh chia cho 0 ngoài không khí
+    safe_total_mask = total_mask + 1e-12 
 
     blended_reluctivity = torch.zeros_like(global_reluctivity_tensor)
     blended_hx = torch.zeros_like(global_coercive_field_x_tensor)
@@ -699,7 +645,6 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
     
     target_h_mag = torch.zeros_like(global_coercive_field_x_tensor)
 
-    # 4. Trộn các thuộc tính bằng Trọng số chuẩn hóa (Partition of Unity)
     for i in range(len(segments_list)):
         weight = masks[i] / safe_total_mask
         
@@ -709,21 +654,17 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         blended_jz += weight * jzs[i]
         blended_mat += weight * (i + 1.0)
         
-        # Tính cường độ mục tiêu để phục hồi biên độ Vector Hc
         seg_h_mag = torch.sqrt(hxs[i]**2 + hys[i]**2)
         target_h_mag += weight * seg_h_mag
 
-    # 5. Phục hồi cường độ Vector Từ hóa (Vector Magnitude Restoration)
-    # Khắc phục hiện tượng sụt giảm Hc do pha trộn vector vuông góc
-    blended_h_mag = torch.sqrt(blended_hx**2 + blended_hy**2 + 1e-12)
-    scale_factor = target_h_mag / blended_h_mag
+    blended_h_mag = torch.sqrt(blended_hx**2 + blended_hy**2)
+    safe_blended_h_mag = torch.where(blended_h_mag < 1e-6, torch.full_like(blended_h_mag, 1.0), blended_h_mag)
+    scale_factor = target_h_mag / safe_blended_h_mag
     
-    # Chỉ khuếch đại ở những vùng thực sự có từ tính (target_h_mag > 1) để tránh nhiễu
     has_field_mask = (target_h_mag > 1.0).float()
     blended_hx = blended_hx * (1.0 - has_field_mask) + (blended_hx * scale_factor) * has_field_mask
     blended_hy = blended_hy * (1.0 - has_field_mask) + (blended_hy * scale_factor) * has_field_mask
 
-    # 6. Áp dụng Mũ trùm tổng (Envelope) để tạo ranh giới sắc nét với không khí
     global_reluctivity_tensor = VACUUM_RELUCTIVITY + global_envelope_mask * (blended_reluctivity - VACUUM_RELUCTIVITY)
     global_coercive_field_x_tensor = global_envelope_mask * blended_hx
     global_coercive_field_y_tensor = global_envelope_mask * blended_hy
@@ -1057,122 +998,148 @@ class MaxwellPDELoss:
 
 import os
 
-def execute_add_unite_feature():
+def execute_speed_optimization_and_active_flag():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
     # ---------------------------------------------------------
-    # 1. CẬP NHẬT FILE GEOMETRY_ENGINE/GEOMETRY.PY (Thêm hàm unite)
+    # 1. CẬP NHẬT FILE ELECTRO_MAGNETIC_PINN.PY 
+    # (Thay thế enable_animation bằng active)
     # ---------------------------------------------------------
-    geometry_file = os.path.join(project_root, 'geometry_engine', 'geometry.py')
-    geometry_code = """import torch
-from geometry_engine.segment.segment import Segment
-from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
-from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
-from geometry_engine.geometry_visualizer import plot_geometry_problem
+    pinn_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
+    pinn_code = """import torch
+import torch.nn as nn
+from types import SimpleNamespace
+from pinn_architecture import PINNArchitecture
+from training_manager import TrainingManager
+from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
+from geometry_engine.geometry import Geometry
+from physics_domain.collocation_sampler import CollocationSampler
+from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+from utils.training_visualizer import TrainingVisualizer
 
-class Geometry:
+class ElectroMagneticPINN:
     def __init__(self):
-        self.segments_list = []
-
-    def add_segment(self, segment_object):
-        self.segments_list.append(segment_object)
-        return self
-
-    def unite(self, segments_collection):
-        ""\"
-        Hàm unite: Gom nhóm nhiều Segment thành một thực thể CSG Union duy nhất.
-        Mỗi Segment thành phần vẫn giữ nguyên tính chất vật liệu riêng của nó 
-        và được pha trộn mượt mà bên trong khối hợp nhất bằng thuật toán Softmax.
-        ""\"
-        united_segment = Segment()
-        united_segment.components = []
+        self.sampler_config = SimpleNamespace(
+            x_boundaries_tuple=(-0.05, 0.05),
+            y_boundaries_tuple=(-0.05, 0.05)
+        )
         
-        for item in segments_collection:
-            if isinstance(item, Segment):
-                united_segment.components.append(item)
-            else:
-                united_segment.components.append(Segment(outline=item))
+        self.pinn_config = SimpleNamespace(
+            hidden_layers=4,
+            hidden_neurons=64,
+            activation_function=nn.SiLU()
+        )
+        
+        self.training_config = SimpleNamespace(
+            learning_rate_adam=1e-3,
+            target_loss=1e-3,
+            lbfgs_learning_rate=0.8,
+            lbfgs_maximum_iterations=1000,
+            lbfgs_maximum_evaluations=1250,
+            lbfgs_tolerance_gradient=1e-8,
+            lbfgs_tolerance_change=1e-10,
+            lbfgs_history_size=50
+        )
+        
+        self.visualization_config = SimpleNamespace(
+            active=False,
+            update_interval=100,
+            output_directory="animation_frames",
+            resolution=100,
+            gif_filename="training_process.gif",
+            gif_fps=10
+        )
+        
+        self.geometry_engine_instance = Geometry()
+        self._build_system()
 
-        # 1. Phép toán CSG Union cho Hình học (Signed Distance Field)
-        def compute_united_sdf(points_tensor):
-            if not united_segment.components:
-                return torch.ones((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            res_sdf = united_segment.components[0].compute_signed_distance_field(points_tensor)
-            for comp in united_segment.components[1:]:
-                res_sdf = torch.minimum(res_sdf, comp.compute_signed_distance_field(points_tensor))
-            return res_sdf
+    def update_electromagnetic_pinn(self):
+        self._build_system()
 
-        united_segment.compute_signed_distance_field = compute_united_sdf
-
-        # 2. Nội suy mượt độ từ trở (Reluctivity) bên trong khối hợp nhất
-        def evaluate_united_reluctivity(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
+    def _build_system(self):
+        self.collocation_sampler_instance = CollocationSampler(
+            x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
+            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple
+        )
+        
+        self.L0 = self.collocation_sampler_instance.x_maximum
+        self.H0 = 800000.0
+        self.nu0 = VACUUM_RELUCTIVITY
+        self.A0 = (self.H0 * self.L0) / self.nu0
+        
+        self.pinn_architecture_instance = PINNArchitecture(
+            domain_scale=self.L0,
+            **vars(self.pinn_config)
+        )
+        
+        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
+        
+        self.visualizer_instance = None
+        if self.visualization_config.active:
+            self.visualizer_instance = TrainingVisualizer(parent_pinn=self)
             
-            blended_nu = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                blended_nu += w_i * comp.evaluate_reluctivity(points_tensor)
-            return blended_nu
+        self.training_manager_instance = TrainingManager(
+            model=self.pinn_architecture_instance,
+            pde_evaluator=self.maxwell_pde_loss_instance,
+            visualizer=self.visualizer_instance,
+            visualizer_update_interval=self.visualization_config.update_interval,
+            **vars(self.training_config)
+        )
 
-        united_segment.evaluate_reluctivity = evaluate_united_reluctivity
+    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
+        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
+            geometry_object=self.geometry_engine_instance,
+            number_of_uniform_points=number_of_uniform_points,
+            number_of_interface_points=number_of_interface_points,
+            distance_threshold=distance_threshold
+        )
+        
+        physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
+        
+        print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
+        self.training_manager_instance.train_adam(
+            epochs=epochs_adam, points_tensor=points_tensor,
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+        
+        print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
+        self.training_manager_instance.train_lbfgs(
+            epochs=epochs_lbfgs, points_tensor=points_tensor,
+            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
+            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
+            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
+            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+        )
+        
+        if self.visualizer_instance:
+            print("Đang xuất file GIF Animation...")
+            self.visualizer_instance.generate_gif()
 
-        # 3. Nội suy mượt Vector Từ hóa (Coercive Field Hc) bên trong khối hợp nhất
-        def evaluate_united_magnetization(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_hx = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            blended_hy = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                hx, hy = comp.evaluate_magnetization_vector(points_tensor)
-                blended_hx += w_i * hx
-                blended_hy += w_i * hy
-            return blended_hx, blended_hy
-
-        united_segment.evaluate_magnetization_vector = evaluate_united_magnetization
-
-        # 4. Nội suy mượt Mật độ dòng điện (Current Density Jz)
-        def evaluate_united_current_density(points_tensor):
-            sdfs = [comp.compute_signed_distance_field(points_tensor) for comp in united_segment.components]
-            stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
-            weights = torch.softmax(-100.0 * stacked_sdfs, dim=1)
-            
-            blended_jz = torch.zeros((points_tensor.shape[0], 1), dtype=torch.float32, device=points_tensor.device)
-            for i, comp in enumerate(united_segment.components):
-                w_i = weights[:, i:i+1]
-                blended_jz += w_i * comp.evaluate_current_density(points_tensor)
-            return blended_jz
-
-        united_segment.evaluate_current_density = evaluate_united_current_density
-
-        # Lấy độ dốc ranh giới lớn nhất làm đại diện an toàn
-        united_segment.steepness = max([comp.steepness for comp in united_segment.components]) if united_segment.components else 1.0
-
-        self.segments_list.append(united_segment)
-        return self
-
-    def compute_global_signed_distance_field(self, points_tensor):
-        return compute_global_signed_distance_field(self.segments_list, points_tensor)
-
-    def evaluate_global_physical_properties(self, points_tensor):
-        return evaluate_global_physical_properties(self.segments_list, points_tensor)
-
-    def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
-        plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
+    def evaluate_fields(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        points_tensor.requires_grad_(True)
+        A_z_star = self.pinn_architecture_instance(points_tensor)
+        A_z_phys = A_z_star * self.A0
+        
+        grad_A = torch.autograd.grad(
+            outputs=A_z_phys, inputs=points_tensor,
+            grad_outputs=torch.ones_like(A_z_phys), create_graph=False
+        )[0]
+        
+        return A_z_phys.detach(), grad_A[:, 1:2].detach(), (-grad_A[:, 0:1]).detach()
 """
 
     # ---------------------------------------------------------
-    # 2. CẬP NHẬT FILE TEST_SIMULATION.PY (Sử dụng hàm unite)
+    # 2. CẬP NHẬT FILE TEST_SIMULATION.PY 
+    # (Sử dụng active=True và giảm thiểu chi phí tính toán)
     # ---------------------------------------------------------
     test_file = os.path.join(project_root, 'test_simulation.py')
     test_code = """import os
 import sys
-from types import SimpleNamespace
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 if current_directory not in sys.path:
@@ -1189,47 +1156,67 @@ from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    print("version 5.0 - U-Magnet with Unite CSG")
+    print("version 6.3 - Fast Prototyping Configuration")
     
     # 1. KHỞI TẠO MÔ HÌNH VỚI TEMPLATE MẶC ĐỊNH
     model = ElectroMagneticPINN()
     
-    # 2. CẤU HÌNH THAM SÔ MẠNG VÀ MIỀN LẤY MẪU
-    new_sampler_config = SimpleNamespace(
-        x_boundaries_tuple=(-0.08, 0.08),  
-        y_boundaries_tuple=(-0.08, 0.08)
-    )
+    # ==============================================================================
+    # 2. CHỈNH SỬA TRỰC TIẾP TẤT CẢ CÁC THUỘC TÍNH CẤU HÌNH (API BOILERPLATE)
+    # ==============================================================================
     
-    new_pinn_config = SimpleNamespace(
-        hidden_neurons=512,                
-        activation_function=nn.SiLU()      
-    )
+    # [A] Cấu hình vùng không gian lấy mẫu (Sampler Configuration)
+    model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
+    model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
     
-    model.update_configuration(
-        sampler_config=new_sampler_config,
-        pinn_config=new_pinn_config
-    )
+    # [B] Cấu hình kiến trúc mạng Nơ-ron (Thu nhỏ để tăng tốc)
+    model.pinn_config.hidden_layers = 3
+    model.pinn_config.hidden_neurons = 64
+    model.pinn_config.activation_function = nn.SiLU()
+    
+    # [C] Cấu hình chiến lược huấn luyện (Training Configuration)
+    model.training_config.learning_rate_adam = 1e-3
+    model.training_config.target_loss = 1e-3
+    model.training_config.lbfgs_learning_rate = 0.8
+    model.training_config.lbfgs_maximum_iterations = 1000
+    model.training_config.lbfgs_maximum_evaluations = 1250
+    model.training_config.lbfgs_tolerance_gradient = 1e-8
+    model.training_config.lbfgs_tolerance_change = 1e-10
+    model.training_config.lbfgs_history_size = 50
+    
+    # [D] Cấu hình Bảng điều khiển Ảnh động (Animation Visualizer Configuration)
+    model.visualization_config.active = True
+    model.visualization_config.update_interval = 50 
+    model.visualization_config.output_directory = "animation_frames"
+    model.visualization_config.resolution = 80
+    model.visualization_config.gif_filename = "training_process.gif"
+    model.visualization_config.gif_fps = 15
+    
+    # Áp dụng toàn bộ cấu hình mới và build lại hệ thống
+    model.update_electromagnetic_pinn()
+    
+    # ==============================================================================
     
     # 3. ĐỊNH NGHĨA CÁC ĐOẠN THÀNH PHẦN CỦA NAM CHÂM CHỮ U
     left_leg = Segment(
         outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]],
         material="u_left", 
         relative_permeability=1.05, 
-        coercive=[0.0, 800000.0]  # Từ hóa hướng lên
+        coercive=[0.0, 800000.0]
     )
 
     yoke = Segment(
         outline=[[-0.02, -0.03], [0.02, -0.03], [0.02, -0.01], [-0.02, -0.01]],
         material="u_yoke", 
         relative_permeability=1.05, 
-        coercive=[-800000.0, 0.0] # Từ hóa hướng sang trái để dẫn từ thông
+        coercive=[-800000.0, 0.0]
     )
     
     right_leg = Segment(
         outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]],
         material="u_right", 
         relative_permeability=1.05, 
-        coercive=[0.0, -800000.0] # Từ hóa hướng xuống
+        coercive=[0.0, -800000.0]
     )
 
     # 4. SỬ DỤNG HÀM UNITE ĐỂ GOM NHÓM THÀNH MỘT KHỐI THỐNG NHẤT
@@ -1242,13 +1229,13 @@ def main():
         x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
     )
 
-    # 6. BẮT ĐẦU HUẤN LUYỆN PINN
+    # 6. BẮT ĐẦU HUẤN LUYỆN PINN (Giảm điểm lấy mẫu và số vòng lặp)
     model.execute_training_process(
-        number_of_uniform_points=15000,    
-        number_of_interface_points=5000,   
+        number_of_uniform_points=5000,    
+        number_of_interface_points=2000,   
         distance_threshold=0.005,
-        epochs_adam=4000,
-        epochs_lbfgs=1000
+        epochs_adam=1000,
+        epochs_lbfgs=500
     )
     
     # --- TRỰC QUAN HÓA KẾT QUẢ ĐẦU RA ---
@@ -1300,5 +1287,107 @@ def main():
     
     plt.show()
 
+
+========================================
+
+--- FILE: utils\training_visualizer.py ---
+
+import os
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+import imageio
+
+class TrainingVisualizer:
+    def __init__(self, parent_pinn):
+        self.parent_pinn = parent_pinn
+        self.output_directory = self.parent_pinn.visualization_config.output_directory
+        self.x_bounds = self.parent_pinn.sampler_config.x_boundaries_tuple
+        self.y_bounds = self.parent_pinn.sampler_config.y_boundaries_tuple
+        self.resolution = self.parent_pinn.visualization_config.resolution
+        
+        self.frame_paths = []
+        self.loss_history = []
+        self.epoch_history = []
+        
+        if not os.path.exists(self.output_directory):
+            os.makedirs(self.output_directory)
+            
+        x_coords = np.linspace(self.x_bounds[0], self.x_bounds[1], self.resolution)
+        y_coords = np.linspace(self.y_bounds[0], self.y_bounds[1], self.resolution)
+        self.X_grid, self.Y_grid = np.meshgrid(x_coords, y_coords)
+        self.eval_points_tensor = torch.tensor(
+            np.column_stack((self.X_grid.ravel(), self.Y_grid.ravel())), 
+            dtype=torch.float32
+        )
+
+    def save_frame(self, epoch, loss_value, training_points_tensor, nu_tensor, jz_tensor, hcx_tensor, hcy_tensor):
+        self.loss_history.append(loss_value)
+        self.epoch_history.append(epoch)
+        
+        model = self.parent_pinn.pinn_architecture_instance
+        pde_evaluator = self.parent_pinn.maxwell_pde_loss_instance
+        
+        model.eval()
+        computation_device = next(model.parameters()).device
+        
+        eval_points = self.eval_points_tensor.to(computation_device).clone().requires_grad_(True)
+        
+        nu_grid = torch.full((eval_points.shape[0], 1), pde_evaluator.nu0, device=computation_device)
+        jz_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        hcx_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        hcy_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        
+        A_z_pred = model(eval_points)
+        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_pred, nu_grid, jz_grid, hcx_grid, hcy_grid)
+        
+        A_z_numpy = A_z_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        points_numpy = training_points_tensor.detach().cpu().numpy()
+        
+        fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+        
+        axs[0, 0].scatter(points_numpy[:, 0], points_numpy[:, 1], s=1, c='black', alpha=0.5)
+        axs[0, 0].set_title(f"Collocation Points")
+        axs[0, 0].set_xlim(self.x_bounds)
+        axs[0, 0].set_ylim(self.y_bounds)
+        axs[0, 0].set_aspect('equal')
+        
+        contour_az = axs[0, 1].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
+        fig.colorbar(contour_az, ax=axs[0, 1])
+        axs[0, 1].set_title("Forward Prediction ($A_z$)")
+        axs[0, 1].set_aspect('equal')
+        
+        contour_res = axs[1, 0].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
+        fig.colorbar(contour_res, ax=axs[1, 0])
+        axs[1, 0].set_title("PDE Residual Error")
+        axs[1, 0].set_aspect('equal')
+        
+        axs[1, 1].plot(self.epoch_history, self.loss_history, 'b-')
+        axs[1, 1].set_yscale('log')
+        axs[1, 1].set_title("Loss Optimization")
+        axs[1, 1].set_xlabel("Epoch")
+        axs[1, 1].set_ylabel("Loss")
+        axs[1, 1].grid(True, which="both", ls="-", alpha=0.2)
+        
+        fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
+        plt.tight_layout()
+        
+        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
+        plt.savefig(frame_name, dpi=100)
+        plt.close(fig)
+        self.frame_paths.append(frame_name)
+        model.train()
+
+    def generate_gif(self):
+        output_filename = self.parent_pinn.visualization_config.gif_filename
+        fps = self.parent_pinn.visualization_config.gif_fps
+        if not self.frame_paths:
+            return
+        images = []
+        for filename in self.frame_paths:
+            images.append(imageio.imread(filename))
+        imageio.mimsave(output_filename, images, fps=fps)
 
 ========================================

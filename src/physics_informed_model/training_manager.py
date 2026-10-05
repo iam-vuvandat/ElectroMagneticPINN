@@ -6,40 +6,44 @@ class TrainingManager:
         self, 
         model, 
         pde_evaluator, 
-        lr_adam=1e-3, 
+        learning_rate_adam=1e-3, 
         target_loss=0.0,
-        lbfgs_lr=0.8, 
-        lbfgs_max_iter=1000, 
-        lbfgs_max_eval=1250,
-        lbfgs_tolerance_grad=1e-8,
+        lbfgs_learning_rate=0.8, 
+        lbfgs_maximum_iterations=1000, 
+        lbfgs_maximum_evaluations=1250,
+        lbfgs_tolerance_gradient=1e-8,
         lbfgs_tolerance_change=1e-10,
-        lbfgs_history_size=50
+        lbfgs_history_size=50,
+        visualizer=None,
+        visualizer_update_interval=100
     ):
         self.model = model
         self.pde_evaluator = pde_evaluator
         
-        # ĐƯA RA LÀM THUỘC TÍNH
-        self.base_lr_adam = lr_adam
+        self.base_learning_rate_adam = learning_rate_adam
         self.target_loss = target_loss
-        self.lbfgs_lr = lbfgs_lr
-        self.lbfgs_max_iter = lbfgs_max_iter
-        self.lbfgs_max_eval = lbfgs_max_eval
-        self.lbfgs_tolerance_grad = lbfgs_tolerance_grad
+        self.lbfgs_learning_rate = lbfgs_learning_rate
+        self.lbfgs_maximum_iterations = lbfgs_maximum_iterations
+        self.lbfgs_maximum_evaluations = lbfgs_maximum_evaluations
+        self.lbfgs_tolerance_gradient = lbfgs_tolerance_gradient
         self.lbfgs_tolerance_change = lbfgs_tolerance_change
         self.lbfgs_history_size = lbfgs_history_size
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_lr_adam)
+        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
             self.model.parameters(),
-            lr=self.lbfgs_lr,
-            max_iter=self.lbfgs_max_iter,
-            max_eval=self.lbfgs_max_eval,
-            tolerance_grad=self.lbfgs_tolerance_grad,
+            lr=self.lbfgs_learning_rate,
+            max_iter=self.lbfgs_maximum_iterations,
+            max_eval=self.lbfgs_maximum_evaluations,
+            tolerance_grad=self.lbfgs_tolerance_gradient,
             tolerance_change=self.lbfgs_tolerance_change,
             history_size=self.lbfgs_history_size,
             line_search_fn="strong_wolfe"
         )
+        
+        self.visualizer = visualizer
+        self.visualizer_update_interval = visualizer_update_interval
 
     def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         A_z_star = self.model(points_tensor)
@@ -55,8 +59,8 @@ class TrainingManager:
         best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
         
         for param_group in self.optimizer_adam.param_groups:
-            param_group['initial_lr'] = self.base_lr_adam
-            param_group['lr'] = self.base_lr_adam
+            param_group['initial_lr'] = self.base_learning_rate_adam
+            param_group['lr'] = self.base_learning_rate_adam
             
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
         
@@ -86,6 +90,12 @@ class TrainingManager:
             
             if (epoch + 1) % 100 == 0:
                 print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {self.optimizer_adam.param_groups[0]['lr']:.3e}")
+                
+            if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
+                self.visualizer.save_frame(
+                    epoch + 1, current_loss_value, 
+                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
 
     def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()

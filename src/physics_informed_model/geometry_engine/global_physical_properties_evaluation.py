@@ -40,7 +40,8 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         hys.append(hy)
         jzs.append(segment_object.evaluate_current_density(points_tensor))
 
-    stacked_sdfs = torch.stack(sdfs, dim=1).squeeze(-1)
+    # Đảm bảo mỗi SDF đều là 1D trước khi xếp chồng, tạo ra shape (N, M) an toàn tuyệt đối
+    stacked_sdfs = torch.stack([s.view(-1) for s in sdfs], dim=1)
     global_sdf, _ = torch.min(stacked_sdfs, dim=1, keepdim=True)
     
     max_steepness = max([seg.steepness for seg in segments_list])

@@ -7,12 +7,16 @@ from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 from geometry_engine.geometry import Geometry
 from physics_domain.collocation_sampler import CollocationSampler
 from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+from utils.training_visualizer import TrainingVisualizer
 
 class ElectroMagneticPINN:
     def __init__(self):
         self.sampler_config = SimpleNamespace(
             x_boundaries_tuple=(-0.05, 0.05),
-            y_boundaries_tuple=(-0.05, 0.05)
+            y_boundaries_tuple=(-0.05, 0.05),
+            number_of_uniform_points=15000,
+            number_of_interface_points=5000,
+            distance_threshold=0.005
         )
         
         self.pinn_config = SimpleNamespace(
@@ -22,32 +26,31 @@ class ElectroMagneticPINN:
         )
         
         self.training_config = SimpleNamespace(
-            lr_adam=1e-3,
+            learning_rate_adam=1e-3,
             target_loss=1e-3,
-            lbfgs_lr=0.8,
-            lbfgs_max_iter=1000,
-            lbfgs_max_eval=1250,
-            lbfgs_tolerance_grad=1e-8,
+            epochs_adam=4000,
+            epochs_lbfgs=1000,
+            lbfgs_learning_rate=0.8,
+            lbfgs_maximum_iterations=1000,
+            lbfgs_maximum_evaluations=1250,
+            lbfgs_tolerance_gradient=1e-8,
             lbfgs_tolerance_change=1e-10,
             lbfgs_history_size=50
+        )
+        
+        self.visualization_config = SimpleNamespace(
+            active=False,
+            update_interval=100,
+            output_directory="animation_frames",
+            resolution=100,
+            gif_filename="training_process.gif",
+            gif_fps=10
         )
         
         self.geometry_engine_instance = Geometry()
         self._build_system()
 
-    def update_configuration(self, sampler_config=None, pinn_config=None, training_config=None):
-        if sampler_config:
-            for key, value in vars(sampler_config).items():
-                setattr(self.sampler_config, key, value)
-                
-        if pinn_config:
-            for key, value in vars(pinn_config).items():
-                setattr(self.pinn_config, key, value)
-                
-        if training_config:
-            for key, value in vars(training_config).items():
-                setattr(self.training_config, key, value)
-                
+    def update_electromagnetic_pinn(self):
         self._build_system()
 
     def _build_system(self):
@@ -68,39 +71,53 @@ class ElectroMagneticPINN:
         
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
+        self.visualizer_instance = None
+        if self.visualization_config.active:
+            self.visualizer_instance = TrainingVisualizer(parent_pinn=self)
+            
+        manager_kwargs = vars(self.training_config).copy()
+        manager_kwargs.pop('epochs_adam', None)
+        manager_kwargs.pop('epochs_lbfgs', None)
+            
         self.training_manager_instance = TrainingManager(
             model=self.pinn_architecture_instance,
             pde_evaluator=self.maxwell_pde_loss_instance,
-            **vars(self.training_config)
+            visualizer=self.visualizer_instance,
+            visualizer_update_interval=self.visualization_config.update_interval,
+            **manager_kwargs
         )
 
-    def execute_training_process(self, number_of_uniform_points, number_of_interface_points, distance_threshold, epochs_adam, epochs_lbfgs):
+    def execute_training_process(self):
         points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
             geometry_object=self.geometry_engine_instance,
-            number_of_uniform_points=number_of_uniform_points,
-            number_of_interface_points=number_of_interface_points,
-            distance_threshold=distance_threshold
+            number_of_uniform_points=self.sampler_config.number_of_uniform_points,
+            number_of_interface_points=self.sampler_config.number_of_interface_points,
+            distance_threshold=self.sampler_config.distance_threshold
         )
         
         physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
         
-        print(f"--- Standard Adam Training ({epochs_adam} Epochs) ---")
+        print(f"--- Standard Adam Training ({self.training_config.epochs_adam} Epochs) ---")
         self.training_manager_instance.train_adam(
-            epochs=epochs_adam, points_tensor=points_tensor,
+            epochs=self.training_config.epochs_adam, points_tensor=points_tensor,
             reluctivity_tensor=physical_properties_dictionary["reluctivity"],
             current_density_z_tensor=physical_properties_dictionary["current_density_z"],
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
             coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
         )
         
-        print(f"--- L-BFGS Refinement ({epochs_lbfgs} Epochs) ---")
+        print(f"--- L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
         self.training_manager_instance.train_lbfgs(
-            epochs=epochs_lbfgs, points_tensor=points_tensor,
+            epochs=self.training_config.epochs_lbfgs, points_tensor=points_tensor,
             reluctivity_tensor=physical_properties_dictionary["reluctivity"],
             current_density_z_tensor=physical_properties_dictionary["current_density_z"],
             coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
             coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
         )
+        
+        if self.visualizer_instance:
+            print("Đang xuất file GIF Animation...")
+            self.visualizer_instance.generate_gif()
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()

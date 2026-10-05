@@ -1,6 +1,5 @@
 import os
 import sys
-from types import SimpleNamespace
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 if current_directory not in sys.path:
@@ -17,54 +16,62 @@ from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 def main():
-    print("version 5.3 - U-Magnet with 100% Full Overlap Corners")
+    print("version 6.5 - Fully Integrated Visualization API")
     
     model = ElectroMagneticPINN()
     
-    new_sampler_config = SimpleNamespace(
-        x_boundaries_tuple=(-0.08, 0.08),  
-        y_boundaries_tuple=(-0.08, 0.08)
-    )
+    model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
+    model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
+    model.sampler_config.number_of_uniform_points = 5000
+    model.sampler_config.number_of_interface_points = 2000
+    model.sampler_config.distance_threshold = 0.005
     
-    new_pinn_config = SimpleNamespace(
-        hidden_neurons=256,                
-        activation_function=nn.SiLU()      
-    )
+    model.pinn_config.hidden_layers = 3
+    model.pinn_config.hidden_neurons = 64
+    model.pinn_config.activation_function = nn.SiLU()
     
-    model.update_configuration(
-        sampler_config=new_sampler_config,
-        pinn_config=new_pinn_config
-    )
+    model.training_config.epochs_adam = 1000
+    model.training_config.epochs_lbfgs = 500
+    model.training_config.learning_rate_adam = 1e-3
+    model.training_config.target_loss = 1e-3
+    model.training_config.lbfgs_learning_rate = 0.8
+    model.training_config.lbfgs_maximum_iterations = 1000
+    model.training_config.lbfgs_maximum_evaluations = 1250
+    model.training_config.lbfgs_tolerance_gradient = 1e-8
+    model.training_config.lbfgs_tolerance_change = 1e-10
+    model.training_config.lbfgs_history_size = 50
     
-    # CHÂN TRÁI
+    model.visualization_config.active = True
+    model.visualization_config.update_interval = 50 
+    model.visualization_config.output_directory = "animation_frames"
+    model.visualization_config.resolution = 80
+    model.visualization_config.gif_filename = "training_process.gif"
+    model.visualization_config.gif_fps = 15
+    
+    model.update_electromagnetic_pinn()
+    
     left_leg = Segment(
         outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]],
         material="u_left", 
         relative_permeability=1.05, 
-        coercive=[0.0, 800000.0]  # Từ hóa hướng lên
+        coercive=[0.0, 800000.0]
     )
 
-    # GÔNG TỪ KÉO DÀI TOÀN PHẦN (Phủ kín X từ -0.04 đến 0.04)
-    # Tạo ra ô vuông giao nhau 20x20mm ở mỗi góc giúp Vector tự uốn cong 45 độ mượt mà
     yoke = Segment(
-        outline=[[-0.04, -0.03], [0.04, -0.03], [0.04, -0.01], [-0.04, -0.01]],
+        outline=[[-0.02, -0.03], [0.02, -0.03], [0.02, -0.01], [-0.02, -0.01]],
         material="u_yoke", 
         relative_permeability=1.05, 
-        coercive=[-800000.0, 0.0] # Từ hóa hướng sang trái
+        coercive=[-800000.0, 0.0]
     )
     
-    # CHÂN PHẢI
     right_leg = Segment(
         outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]],
         material="u_right", 
         relative_permeability=1.05, 
-        coercive=[0.0, -800000.0] # Từ hóa hướng xuống
+        coercive=[0.0, -800000.0]
     )
 
-    # Nạp độc lập các segment
-    model.geometry_engine_instance.add_segment(left_leg)
-    model.geometry_engine_instance.add_segment(yoke)
-    model.geometry_engine_instance.add_segment(right_leg)
+    model.geometry_engine_instance.unite([left_leg, yoke, right_leg])
 
     xb = model.sampler_config.x_boundaries_tuple
     yb = model.sampler_config.y_boundaries_tuple
@@ -72,13 +79,7 @@ def main():
         x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
     )
 
-    model.execute_training_process(
-        number_of_uniform_points=15000,    
-        number_of_interface_points=5000,   
-        distance_threshold=0.005,
-        epochs_adam=4000,
-        epochs_lbfgs=1000
-    )
+    model.execute_training_process()
     
     resolution = 120
     x_coords = np.linspace(xb[0], xb[1], resolution)
@@ -102,7 +103,7 @@ def main():
     
     contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
     fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
+    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($\vert{}B\vert{}$)")
     axs[0, 1].set_aspect('equal')
     
     contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
