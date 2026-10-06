@@ -35,12 +35,14 @@ class MaxwellPDELoss:
         )[0]
         dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
         
+        # BẮT BUỘC retain_graph=True ở đây để đồ thị mạng Nơ-ron sống sót 
+        # cho đến khi lệnh loss.backward() ở file training_manager.py được gọi.
         grad_Hy_star = torch.autograd.grad(
             outputs=H_y_star,
             inputs=xy,
             grad_outputs=torch.ones_like(H_y_star),
             create_graph=True,
-            retain_graph=False
+            retain_graph=True
         )[0]
         dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
         
