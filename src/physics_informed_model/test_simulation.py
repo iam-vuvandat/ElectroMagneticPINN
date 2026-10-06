@@ -1,6 +1,9 @@
 import os
 import sys
 
+# Cấu hình chống phân mảnh VRAM
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 current_directory = os.path.dirname(os.path.abspath(__file__))
 if current_directory not in sys.path:
     sys.path.insert(0, current_directory)
@@ -29,20 +32,20 @@ def main():
     
     model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
     model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
-    # Tăng cường mật độ điểm lấy mẫu để xử lý vùng viền tốt hơn
-    model.sampler_config.number_of_uniform_points = 25000
-    model.sampler_config.number_of_interface_points = 10000
+    # Mật độ điểm lấy mẫu tối ưu, cân bằng tải VRAM
+    model.sampler_config.number_of_uniform_points = 15000
+    model.sampler_config.number_of_interface_points = 5000
     model.sampler_config.distance_threshold = 0.005
     
-    # Cấu hình mạng rộng và sâu tối ưu
+    # Cấu hình mạng an toàn VRAM: 6 lớp ẩn, 256 nơ-ron
     model.pinn_config.hidden_layers = 6
-    model.pinn_config.hidden_neurons = 512
+    model.pinn_config.hidden_neurons = 256
     model.pinn_config.activation_function = nn.SiLU()
     
-    model.training_config.epochs_adam = 12000      # Cho Adam chạy dài hơi hơn[cite: 7]
-    model.training_config.epochs_lbfgs = 300       # Giảm bớt L-BFGS để tránh đi ngang lâu[cite: 7]
+    model.training_config.epochs_adam = 12000
+    model.training_config.epochs_lbfgs = 300
     model.training_config.learning_rate_adam = 1e-3
-    model.training_config.target_loss = 0.0        # Tắt dừng sớm để Adam chạy tối đa[cite: 7]
+    model.training_config.target_loss = 0.0
     model.training_config.lbfgs_learning_rate = 0.8
     model.training_config.lbfgs_maximum_iterations = 1000
     model.training_config.lbfgs_maximum_evaluations = 1250
