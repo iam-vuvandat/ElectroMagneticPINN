@@ -11,6 +11,8 @@ if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
@@ -71,9 +73,7 @@ def main():
         coercive=[0.0, -800000.0]
     )
 
-    model.geometry_engine_instance.add_segment(left_leg)
-    model.geometry_engine_instance.add_segment(yoke)
-    model.geometry_engine_instance.add_segment(right_leg)
+    model.geometry_engine_instance.unite([left_leg, yoke, right_leg])
 
     xb = model.sampler_config.x_boundaries_tuple
     yb = model.sampler_config.y_boundaries_tuple
@@ -129,7 +129,9 @@ def main():
     ax2.set_aspect('equal')
     fig2.tight_layout()
     
-    plt.show()
+    plt.savefig('final_results.png', dpi=150)
+    plt.close('all')
+    print('[*] Đã lưu kết quả vào final_results.png')
 
 if __name__ == '__main__':
     main()
