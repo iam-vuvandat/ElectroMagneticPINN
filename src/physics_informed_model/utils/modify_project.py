@@ -1,146 +1,145 @@
 import os
 
-def execute_update_visualizer():
+def execute_hardware_and_viz_optimization():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
-    
-    visualizer_file = os.path.join(project_root, 'utils', 'training_visualizer.py')
-    visualizer_code = """import os
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
-import imageio
 
-class TrainingVisualizer:
-    def __init__(self, parent_pinn):
-        self.parent_pinn = parent_pinn
-        self.output_directory = self.parent_pinn.visualization_config.output_directory
-        self.x_bounds = self.parent_pinn.sampler_config.x_boundaries_tuple
-        self.y_bounds = self.parent_pinn.sampler_config.y_boundaries_tuple
-        self.resolution = self.parent_pinn.visualization_config.resolution
+    # =====================================================================
+    # 1. TỐI ƯU HÓA COLLOCATION SAMPLER (Sinh điểm trực tiếp trên GPU)
+    # =====================================================================
+    sampler_file = os.path.join(project_root, 'physics_domain', 'collocation_sampler.py')
+    sampler_code = """import torch
+
+class CollocationSampler:
+    def __init__(self, x_boundaries_tuple, y_boundaries_tuple, device=torch.device('cpu')):
+        self.x_minimum = x_boundaries_tuple[0]
+        self.x_maximum = x_boundaries_tuple[1]
+        self.y_minimum = y_boundaries_tuple[0]
+        self.y_maximum = y_boundaries_tuple[1]
+        self.device = device # Nhận cấu hình thiết bị từ hệ thống
+
+    def generate_uniform_points_tensor(self, number_of_points):
+        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32, device=self.device)
+        points_tensor[:, 0] = points_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+        points_tensor[:, 1] = points_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+        points_tensor.requires_grad_(True)
+        return points_tensor
+
+    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+        collected_points = []
+        collected_count = 0
+        pool_size_value = number_of_points * 20
         
-        self.frame_paths = []
-        self.loss_history = []
-        self.epoch_history = []
-        
-        if not os.path.exists(self.output_directory):
-            os.makedirs(self.output_directory)
+        while collected_count < number_of_points:
+            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
+            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
             
-        x_coords = np.linspace(self.x_bounds[0], self.x_bounds[1], self.resolution)
-        y_coords = np.linspace(self.y_bounds[0], self.y_bounds[1], self.resolution)
-        self.X_grid, self.Y_grid = np.meshgrid(x_coords, y_coords)
-        self.eval_points_tensor = torch.tensor(
-            np.column_stack((self.X_grid.ravel(), self.Y_grid.ravel())), 
-            dtype=torch.float32
-        )
+            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
+            mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
+            mask_1d = mask_tensor.squeeze()
+            
+            if mask_1d.any():
+                valid_points = points_pool_tensor[mask_1d]
+                collected_points.append(valid_points)
+                collected_count += valid_points.shape[0]
+                
+        interface_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        interface_points_tensor = interface_points_tensor.detach().clone()
+        interface_points_tensor.requires_grad_(True)
+        return interface_points_tensor
 
-    def save_frame(self, epoch, loss_value, training_points_tensor, nu_tensor, jz_tensor, hcx_tensor, hcy_tensor):
-        self.loss_history.append(loss_value)
-        self.epoch_history.append(epoch)
+    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
+        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
+        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
         
-        model = self.parent_pinn.pinn_architecture_instance
-        pde_evaluator = self.parent_pinn.maxwell_pde_loss_instance
+        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
         
-        model.eval()
-        computation_device = next(model.parameters()).device
-        
-        eval_points = self.eval_points_tensor.to(computation_device).clone().requires_grad_(True)
-        
-        # Mảng thông số vật lý tĩnh để tính toán PDE Residual
-        nu_grid = torch.full((eval_points.shape[0], 1), pde_evaluator.nu0, device=computation_device)
-        jz_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
-        hcx_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
-        hcy_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
-        
-        # Tính PDE Residual (dựa trên raw prediction A_z_star)
-        A_z_star = model(eval_points)
-        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
-        
-        # Tính các thông số Vật lý thực tế (A_z_phys, B_x, B_y) thông qua evaluate_fields
-        A_z_phys, B_x_phys, B_y_phys = self.parent_pinn.evaluate_fields(eval_points)
-        
-        # Chuyển đổi sang Numpy để vẽ
-        A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
-        
-        residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        points_numpy = training_points_tensor.detach().cpu().numpy()
-        
-        # Mở rộng layout thành 2 hàng x 3 cột (Kích thước 18x10)
-        fig, axs = plt.subplots(2, 3, figsize=(18, 10))
-        
-        # [Hàng 1 - Cột 1]: Collocation Points
-        axs[0, 0].scatter(points_numpy[:, 0], points_numpy[:, 1], s=1, c='black', alpha=0.5)
-        axs[0, 0].set_title(f"Collocation Points")
-        axs[0, 0].set_xlim(self.x_bounds)
-        axs[0, 0].set_ylim(self.y_bounds)
-        axs[0, 0].set_aspect('equal')
-        
-        # [Hàng 1 - Cột 2]: PDE Residual Error
-        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
-        fig.colorbar(contour_res, ax=axs[0, 1])
-        axs[0, 1].set_title("PDE Residual Error")
-        axs[0, 1].set_aspect('equal')
-        
-        # [Hàng 1 - Cột 3]: Loss Optimization
-        axs[0, 2].plot(self.epoch_history, self.loss_history, 'b-')
-        axs[0, 2].set_yscale('log')
-        axs[0, 2].set_title("Loss Optimization")
-        axs[0, 2].set_xlabel("Epoch")
-        axs[0, 2].set_ylabel("Loss")
-        axs[0, 2].grid(True, which="both", ls="-", alpha=0.2)
-        
-        # [Hàng 2 - Cột 1]: Magnetic Vector Potential (Az)
-        contour_az = axs[1, 0].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
-        fig.colorbar(contour_az, ax=axs[1, 0], label="A_z (Wb/m)")
-        axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
-        axs[1, 0].set_aspect('equal')
-
-        # [Hàng 2 - Cột 2]: Flux Density Magnitude (|B|)
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow")
-        fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
-        axs[1, 1].set_aspect('equal')
-
-        # [Hàng 2 - Cột 3]: Flux Density Vectors (Quiver Plot)
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow", alpha=0.4)
-        fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
-        
-        # Tính toán mật độ mũi tên sao cho không bị rối mắt
-        step = max(1, self.resolution // 20)
-        axs[1, 2].quiver(self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
-                         B_x_numpy[::step, ::step], B_y_numpy[::step, ::step], 
-                         color='black', pivot='mid')
-        axs[1, 2].set_title("Flux Density Vectors (B)")
-        axs[1, 2].set_aspect('equal')
-        
-        fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
-        plt.tight_layout()
-        
-        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
-        plt.savefig(frame_name, dpi=100)
-        plt.close(fig)
-        
-        # Đưa model quay lại chế độ train
-        model.train()
-
-    def generate_gif(self):
-        output_filename = self.parent_pinn.visualization_config.gif_filename
-        fps = self.parent_pinn.visualization_config.gif_fps
-        if not self.frame_paths:
-            return
-        images = []
-        for filename in self.frame_paths:
-            images.append(imageio.imread(filename))
-        imageio.mimsave(output_filename, images, fps=fps)
+        combined_points_tensor = combined_points_tensor.detach().clone()
+        combined_points_tensor.requires_grad_(True)
+        return combined_points_tensor
 """
+    with open(sampler_file, 'w', encoding='utf-8') as f:
+        f.write(sampler_code.strip() + "\n")
 
-    with open(visualizer_file, 'w', encoding='utf-8') as f:
-        f.write(visualizer_code.strip() + "\n")
-    print(f"Đã cập nhật hệ thống Visualizer với 6 biểu đồ: {os.path.basename(visualizer_file)}")
+    # =====================================================================
+    # 2. CẬP NHẬT LỚP BAO CHÍNH (Đẩy mô hình & dữ liệu lên CUDA)
+    # =====================================================================
+    emp_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
+    with open(emp_file, 'r', encoding='utf-8') as f:
+        emp_content = f.read()
+    
+    old_sampler_init = """        self.collocation_sampler_instance = CollocationSampler(
+            x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
+            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple
+        )"""
+    new_sampler_init = """        self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
+        
+        self.collocation_sampler_instance = CollocationSampler(
+            x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
+            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple,
+            device=self.computation_device
+        )"""
+    emp_content = emp_content.replace(old_sampler_init, new_sampler_init)
+    
+    old_pinn_init = """        self.pinn_architecture_instance = PINNArchitecture(
+            domain_scale=self.L0,
+            **vars(self.pinn_config)
+        )"""
+    new_pinn_init = """        self.pinn_architecture_instance = PINNArchitecture(
+            domain_scale=self.L0,
+            **vars(self.pinn_config)
+        ).to(self.computation_device)"""
+    emp_content = emp_content.replace(old_pinn_init, new_pinn_init)
+    
+    old_eval_init = """    def evaluate_fields(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        points_tensor.requires_grad_(True)"""
+    new_eval_init = """    def evaluate_fields(self, points_tensor):
+        self.pinn_architecture_instance.eval()
+        points_tensor = points_tensor.to(self.computation_device).clone().requires_grad_(True)"""
+    emp_content = emp_content.replace(old_eval_init, new_eval_init)
+    
+    with open(emp_file, 'w', encoding='utf-8') as f:
+        f.write(emp_content)
+
+    # =====================================================================
+    # 3. FIX TREO TIẾN TRÌNH MATPLOTLIB TRONG COLAB
+    # =====================================================================
+    # 3a. Sửa geometry_visualizer.py
+    geom_viz_file = os.path.join(project_root, 'geometry_engine', 'geometry_visualizer.py')
+    with open(geom_viz_file, 'r', encoding='utf-8') as f:
+        geom_viz_content = f.read()
+    
+    geom_viz_content = geom_viz_content.replace(
+        "import matplotlib.pyplot as plt", 
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt"
+    )
+    geom_viz_content = geom_viz_content.replace(
+        "plt.show()", 
+        "plt.savefig('geometry_plot.png', dpi=150)\n    plt.close(fig)\n    print('[*] Đã lưu biểu đồ hình học vào geometry_plot.png')"
+    )
+    with open(geom_viz_file, 'w', encoding='utf-8') as f:
+        f.write(geom_viz_content)
+        
+    # 3b. Sửa test_simulation.py
+    test_file = os.path.join(project_root, 'test_simulation.py')
+    with open(test_file, 'r', encoding='utf-8') as f:
+        test_content = f.read()
+        
+    test_content = test_content.replace(
+        "import matplotlib.pyplot as plt", 
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt"
+    )
+    test_content = test_content.replace(
+        "plt.show()", 
+        "plt.savefig('final_results.png', dpi=150)\n    plt.close('all')\n    print('[*] Đã lưu kết quả mô phỏng vào final_results.png')"
+    )
+    with open(test_file, 'w', encoding='utf-8') as f:
+        f.write(test_content)
+
+    print("HOÀN TẤT CẬP NHẬT! Hệ thống đã được hỗ trợ GPU toàn diện và fix lỗi treo Colab.")
 
 if __name__ == "__main__":
-    execute_update_visualizer()
+    execute_hardware_and_viz_optimization()

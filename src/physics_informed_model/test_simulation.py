@@ -11,6 +11,8 @@ if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
@@ -129,7 +131,9 @@ def main():
     ax2.set_aspect('equal')
     fig2.tight_layout()
     
-    plt.show()
+    plt.savefig('final_results.png', dpi=150)
+    plt.close('all')
+    print('[*] Đã lưu kết quả mô phỏng vào final_results.png')
 
 if __name__ == '__main__':
     main()

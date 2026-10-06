@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
@@ -61,4 +63,6 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
     axs[1, 1].set_aspect('equal')
     
     plt.tight_layout()
-    plt.show()
+    plt.savefig('geometry_plot.png', dpi=150)
+    plt.close(fig)
+    print('[*] Đã lưu biểu đồ hình học vào geometry_plot.png')
