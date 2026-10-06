@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Cấu hình chống phân mảnh VRAM
+# Cấu hình chống phân mảnh VRAM trên GPU
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -23,25 +23,29 @@ from electro_magnetic_pinn import ElectroMagneticPINN
 import shutil
 
 def main():
+    # Làm sạch và tạo mới thư mục figure
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 6.6 - Perfect Geometry with Full Overlap PoU")
+    print("version 7.0 - Dual Straight I-Shaped Magnets Simulation")
     
     model = ElectroMagneticPINN()
     
+    # Thiết lập miền không gian tính toán
     model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
     model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
-    # Mật độ điểm lấy mẫu tối ưu, cân bằng tải VRAM
-    model.sampler_config.number_of_uniform_points = 7000
-    model.sampler_config.number_of_interface_points = 7000
+    
+    # Mật độ điểm lấy mẫu cân đối, an toàn VRAM
+    model.sampler_config.number_of_uniform_points = 10000
+    model.sampler_config.number_of_interface_points = 4000
     model.sampler_config.distance_threshold = 0.005
     
-    # Cấu hình mạng an toàn VRAM: s
+    # Cấu hình mạng an toàn VRAM: 6 lớp ẩn, 128 nơ-ron
     model.pinn_config.hidden_layers = 6
     model.pinn_config.hidden_neurons = 128
     model.pinn_config.activation_function = nn.SiLU()
     
+    # Cấu hình huấn luyện tối ưu cho Adam và L-BFGS
     model.training_config.epochs_adam = 12000
     model.training_config.epochs_lbfgs = 300
     model.training_config.learning_rate_adam = 1e-3
@@ -53,6 +57,7 @@ def main():
     model.training_config.lbfgs_tolerance_change = 1e-10
     model.training_config.lbfgs_history_size = 50
     
+    # Cấu hình trực quan hóa và xuất GIF
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50 
     model.visualization_config.output_directory = "figure"
@@ -62,39 +67,42 @@ def main():
     
     model.update_electromagnetic_pinn()
     
-    left_leg = Segment(
-        outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]],
-        material="u_left", 
+    # =========================================================================
+    # ĐỊNH NGHĨA HAI THANH NAM CHÂM CHỮ I THẲNG, SONG SONG
+    # =========================================================================
+    
+    # Thanh chữ I bên trái
+    i_magnet_left = Segment(
+        outline=[[-0.04, -0.04], [-0.02, -0.04], [-0.02, 0.04], [-0.04, 0.04]],
+        material="i_bar_left", 
         relative_permeability=1.05, 
         coercive=[0.0, 800000.0]
     )
 
-    yoke = Segment(
-        outline=[[-0.04, -0.03], [0.04, -0.03], [0.04, -0.01], [-0.04, -0.01]],
-        material="u_yoke", 
-        relative_permeability=1.05, 
-        coercive=[-800000.0, 0.0]
-    )
-    
-    right_leg = Segment(
-        outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]],
-        material="u_right", 
+    # Thanh chữ I bên phải
+    i_magnet_right = Segment(
+        outline=[[0.02, -0.04], [0.04, -0.04], [0.04, 0.04], [0.02, 0.04]],
+        material="i_bar_right", 
         relative_permeability=1.05, 
         coercive=[0.0, -800000.0]
     )
 
-    model.geometry_engine_instance.add_segment(left_leg)
-    model.geometry_engine_instance.add_segment(yoke)
-    model.geometry_engine_instance.add_segment(right_leg)
+    # Thêm các segment vào Geometry Engine
+    model.geometry_engine_instance.add_segment(i_magnet_left)
+    model.geometry_engine_instance.add_segment(i_magnet_right)
 
     xb = model.sampler_config.x_boundaries_tuple
     yb = model.sampler_config.y_boundaries_tuple
+    
+    # Vẽ biểu đồ định nghĩa bài toán hình học
     model.geometry_engine_instance.plot_problem_definition(
         x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
     )
 
+    # Thực thi quá trình huấn luyện
     model.execute_training_process()
     
+    # Hậu xử lý và xuất kết quả cuối cùng
     resolution = 120
     x_coords = np.linspace(xb[0], xb[1], resolution)
     y_coords = np.linspace(yb[0], yb[1], resolution)
@@ -109,6 +117,7 @@ def main():
     B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
     
+    # Vẽ biểu đồ trường thành phần
     fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
     contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
     fig1.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
@@ -131,6 +140,7 @@ def main():
     axs[1, 1].set_aspect('equal')
     fig1.tight_layout()
     
+    # Vẽ biểu đồ Vector cảm ứng từ
     fig2, ax2 = plt.subplots(figsize=(8, 7))
     contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
     fig2.colorbar(contour_b_bg, ax=ax2, label="|B| (T)")
