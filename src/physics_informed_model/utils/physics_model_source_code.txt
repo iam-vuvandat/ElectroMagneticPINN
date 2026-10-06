@@ -241,6 +241,9 @@ class PINNArchitecture(nn.Module):
 import os
 import sys
 
+# Cấu hình chống phân mảnh VRAM trên GPU
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 current_directory = os.path.dirname(os.path.abspath(__file__))
 if current_directory not in sys.path:
     sys.path.insert(0, current_directory)
@@ -260,27 +263,33 @@ from electro_magnetic_pinn import ElectroMagneticPINN
 import shutil
 
 def main():
+    # Làm sạch và tạo mới thư mục figure
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 6.6 - Perfect Geometry with Full Overlap PoU")
+    print("version 7.0 - Dual Straight I-Shaped Magnets Simulation")
     
     model = ElectroMagneticPINN()
     
+    # Thiết lập miền không gian tính toán
     model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
     model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
-    model.sampler_config.number_of_uniform_points = 5000
-    model.sampler_config.number_of_interface_points = 2000
+    
+    # Mật độ điểm lấy mẫu cân đối, an toàn VRAM
+    model.sampler_config.number_of_uniform_points = 10000
+    model.sampler_config.number_of_interface_points = 4000
     model.sampler_config.distance_threshold = 0.005
     
-    model.pinn_config.hidden_layers = 8
-    model.pinn_config.hidden_neurons = 64
+    # Cấu hình mạng an toàn VRAM: 6 lớp ẩn, 128 nơ-ron
+    model.pinn_config.hidden_layers = 6
+    model.pinn_config.hidden_neurons = 128
     model.pinn_config.activation_function = nn.SiLU()
     
-    model.training_config.epochs_adam = 1000
-    model.training_config.epochs_lbfgs = 500
+    # Cấu hình huấn luyện tối ưu cho Adam và L-BFGS
+    model.training_config.epochs_adam = 12000
+    model.training_config.epochs_lbfgs = 300
     model.training_config.learning_rate_adam = 1e-3
-    model.training_config.target_loss = 1e-3
+    model.training_config.target_loss = 0.0
     model.training_config.lbfgs_learning_rate = 0.8
     model.training_config.lbfgs_maximum_iterations = 1000
     model.training_config.lbfgs_maximum_evaluations = 1250
@@ -288,6 +297,7 @@ def main():
     model.training_config.lbfgs_tolerance_change = 1e-10
     model.training_config.lbfgs_history_size = 50
     
+    # Cấu hình trực quan hóa và xuất GIF
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50 
     model.visualization_config.output_directory = "figure"
@@ -297,39 +307,42 @@ def main():
     
     model.update_electromagnetic_pinn()
     
-    left_leg = Segment(
-        outline=[[-0.04, -0.03], [-0.02, -0.03], [-0.02, 0.03], [-0.04, 0.03]],
-        material="u_left", 
+    # =========================================================================
+    # ĐỊNH NGHĨA HAI THANH NAM CHÂM CHỮ I THẲNG, SONG SONG
+    # =========================================================================
+    
+    # Thanh chữ I bên trái
+    i_magnet_left = Segment(
+        outline=[[-0.04, -0.04], [-0.02, -0.04], [-0.02, 0.04], [-0.04, 0.04]],
+        material="i_bar_left", 
         relative_permeability=1.05, 
         coercive=[0.0, 800000.0]
     )
 
-    yoke = Segment(
-        outline=[[-0.04, -0.03], [0.04, -0.03], [0.04, -0.01], [-0.04, -0.01]],
-        material="u_yoke", 
-        relative_permeability=1.05, 
-        coercive=[-800000.0, 0.0]
-    )
-    
-    right_leg = Segment(
-        outline=[[0.02, -0.03], [0.04, -0.03], [0.04, 0.03], [0.02, 0.03]],
-        material="u_right", 
+    # Thanh chữ I bên phải
+    i_magnet_right = Segment(
+        outline=[[0.02, -0.04], [0.04, -0.04], [0.04, 0.04], [0.02, 0.04]],
+        material="i_bar_right", 
         relative_permeability=1.05, 
         coercive=[0.0, -800000.0]
     )
 
-    model.geometry_engine_instance.add_segment(left_leg)
-    model.geometry_engine_instance.add_segment(yoke)
-    model.geometry_engine_instance.add_segment(right_leg)
+    # Thêm các segment vào Geometry Engine
+    model.geometry_engine_instance.add_segment(i_magnet_left)
+    model.geometry_engine_instance.add_segment(i_magnet_right)
 
     xb = model.sampler_config.x_boundaries_tuple
     yb = model.sampler_config.y_boundaries_tuple
+    
+    # Vẽ biểu đồ định nghĩa bài toán hình học
     model.geometry_engine_instance.plot_problem_definition(
         x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
     )
 
+    # Thực thi quá trình huấn luyện
     model.execute_training_process()
     
+    # Hậu xử lý và xuất kết quả cuối cùng
     resolution = 120
     x_coords = np.linspace(xb[0], xb[1], resolution)
     y_coords = np.linspace(yb[0], yb[1], resolution)
@@ -344,6 +357,7 @@ def main():
     B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
     
+    # Vẽ biểu đồ trường thành phần
     fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
     contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
     fig1.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
@@ -366,6 +380,7 @@ def main():
     axs[1, 1].set_aspect('equal')
     fig1.tight_layout()
     
+    # Vẽ biểu đồ Vector cảm ứng từ
     fig2, ax2 = plt.subplots(figsize=(8, 7))
     contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
     fig2.colorbar(contour_b_bg, ax=ax2, label="|B| (T)")
@@ -498,6 +513,13 @@ class TrainingManager:
             lbfgs_counter[0] += 1
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
                 print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
+                
+            # BỔ SUNG: Cho phép L-BFGS chụp ảnh định kỳ vào thư mục chung
+            if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
+                self.visualizer.save_frame(
+                    50000 + lbfgs_counter[0], loss.item(), 
+                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
                 
             if self.target_loss > 0 and loss.item() <= self.target_loss:
                 early_stop_triggered = True
@@ -1025,90 +1047,70 @@ class MaxwellPDELoss:
 --- FILE: utils\modify_project.py ---
 
 import os
-import re
 
-def execute_figure_folder_fix():
+def fix_gif_generation_bugs():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
     # =====================================================================
-    # 1. CẬP NHẬT TEST_SIMULATION.PY (Tạo và dọn dẹp thư mục figure ở đầu)
-    # =====================================================================
-    test_file = os.path.join(project_root, 'test_simulation.py')
-    with open(test_file, 'r', encoding='utf-8') as f:
-        test_content = f.read()
-        
-    # Thêm import shutil và logic dọn thư mục figure ngay đầu hàm main
-    if "shutil.rmtree" not in test_content:
-        test_content = test_content.replace(
-            "def main():",
-            "import shutil\n\ndef main():\n    if os.path.exists('figure'):\n        shutil.rmtree('figure')\n    os.makedirs('figure')"
-        )
-        
-    # Cập nhật cấu hình thư mục đầu ra thành "figure"
-    test_content = re.sub(
-        r'model\.visualization_config\.output_directory\s*=\s*[\'"].*?[\'"]', 
-        'model.visualization_config.output_directory = "figure"', 
-        test_content
-    )
-    
-    # Cập nhật ảnh kết quả cuối
-    test_content = test_content.replace(
-        "plt.savefig('final_results.png'", 
-        "plt.savefig('figure/final_results.png'"
-    )
-    
-    with open(test_file, 'w', encoding='utf-8') as f:
-        f.write(test_content)
-
-    # =====================================================================
-    # 2. CẬP NHẬT GEOMETRY_VISUALIZER.PY (Lưu vào figure)
-    # =====================================================================
-    geom_file = os.path.join(project_root, 'geometry_engine', 'geometry_visualizer.py')
-    with open(geom_file, 'r', encoding='utf-8') as f:
-        geom_content = f.read()
-        
-    geom_content = geom_content.replace(
-        "plt.savefig('geometry_plot.png'", 
-        "plt.savefig('figure/geometry_plot.png'"
-    )
-    
-    with open(geom_file, 'w', encoding='utf-8') as f:
-        f.write(geom_content)
-
-    # =====================================================================
-    # 3. CẬP NHẬT TRAINING_VISUALIZER.PY (Lưu thẳng GIF vào figure, không xóa frame)
+    # 1. SỬA LỖI TRONG TRAINING_VISUALIZER.PY (Thêm self.frame_paths.append)
     # =====================================================================
     viz_file = os.path.join(project_root, 'utils', 'training_visualizer.py')
     with open(viz_file, 'r', encoding='utf-8') as f:
         viz_content = f.read()
-
-    # Viết lại hoàn toàn hàm generate_gif (hàm cuối cùng trong file)
-    new_generate_gif = '''    def generate_gif(self):
-        output_filename = self.parent_pinn.visualization_config.gif_filename
-        fps = self.parent_pinn.visualization_config.gif_fps
-        if not self.frame_paths:
-            print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo GIF.")
-            return
-            
-        full_gif_path = os.path.join(self.output_directory, output_filename)
         
-        images = []
-        for filename in self.frame_paths:
-            if os.path.exists(filename):
-                images.append(imageio.imread(filename))
-                
-        imageio.mimsave(full_gif_path, images, fps=fps)
-        print(f"[*] Đã xuất GIF Animation thành công tại: {full_gif_path}")'''
-
-    # Thay thế hàm generate_gif cũ bằng nội dung mới
-    viz_content = re.sub(r'    def generate_gif\(self\):.*', new_generate_gif, viz_content, flags=re.DOTALL)
-
+    old_save_end = """        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
+        plt.savefig(frame_name, dpi=100)
+        plt.close(fig)
+        
+        # Đưa model quay lại chế độ train
+        model.train()"""
+        
+    new_save_end = """        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
+        plt.savefig(frame_name, dpi=100)
+        plt.close(fig)
+        
+        # BỔ SUNG: Lưu đường dẫn vào danh sách để tạo GIF
+        self.frame_paths.append(frame_name)
+        
+        # Đưa model quay lại chế độ train
+        model.train()"""
+        
+    viz_content = viz_content.replace(old_save_end, new_save_end)
     with open(viz_file, 'w', encoding='utf-8') as f:
         f.write(viz_content)
 
-    print("[*] Đã cấu hình gom toàn bộ file (PNG tĩnh, GIF, Final, Geometry) vào chung thư mục 'figure'.")
-    print("[*] Thư mục 'figure' sẽ bị xóa sạch và tạo mới lại tự động mỗi khi bắt đầu chạy file test_simulation.py.")
+    # =====================================================================
+    # 2. SỬA LỖI TRONG TRAINING_MANAGER.PY (Gắn camera cho L-BFGS)
+    # =====================================================================
+    training_file = os.path.join(project_root, 'training_manager.py')
+    with open(training_file, 'r', encoding='utf-8') as f:
+        training_content = f.read()
+        
+    old_lbfgs_closure = """            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
+                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
+                
+            if self.target_loss > 0 and loss.item() <= self.target_loss:"""
+            
+    new_lbfgs_closure = """            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
+                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
+                
+            # BỔ SUNG: Cho phép L-BFGS chụp ảnh định kỳ vào thư mục chung
+            if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
+                self.visualizer.save_frame(
+                    50000 + lbfgs_counter[0], loss.item(), 
+                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
+                
+            if self.target_loss > 0 and loss.item() <= self.target_loss:"""
+            
+    if "50000 + lbfgs_counter[0]" not in training_content:
+        training_content = training_content.replace(old_lbfgs_closure, new_lbfgs_closure)
+        
+    with open(training_file, 'w', encoding='utf-8') as f:
+        f.write(training_content)
+
+    print("[*] Đã vá thành công lỗi thiếu `frame_paths.append` và tích hợp chụp ảnh cho L-BFGS!")
 
 
 ========================================
@@ -1233,6 +1235,9 @@ class TrainingVisualizer:
         frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
         plt.savefig(frame_name, dpi=100)
         plt.close(fig)
+        
+        # BỔ SUNG: Lưu đường dẫn vào danh sách để tạo GIF
+        self.frame_paths.append(frame_name)
         
         # Đưa model quay lại chế độ train
         model.train()
