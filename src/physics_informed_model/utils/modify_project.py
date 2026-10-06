@@ -1,68 +1,104 @@
 import os
 
-def fix_gif_generation_bugs():
+def extract_physics_config():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
     # =====================================================================
-    # 1. SỬA LỖI TRONG TRAINING_VISUALIZER.PY (Thêm self.frame_paths.append)
+    # 1. CẬP NHẬT TỆP: electro_magnetic_pinn.py
     # =====================================================================
-    viz_file = os.path.join(project_root, 'utils', 'training_visualizer.py')
-    with open(viz_file, 'r', encoding='utf-8') as f:
-        viz_content = f.read()
+    pinn_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
+    with open(pinn_file, 'r', encoding='utf-8') as f:
+        pinn_content = f.read()
+
+    # Thêm physics_config vào hàm khởi tạo
+    old_init_block = """        self.visualization_config = SimpleNamespace(
+            active=False,
+            update_interval=100,
+            output_directory="animation_frames",
+            resolution=100,
+            gif_filename="training_process.gif",
+            gif_fps=10
+        )
         
-    old_save_end = """        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
-        plt.savefig(frame_name, dpi=100)
-        plt.close(fig)
+        self.geometry_engine_instance = Geometry()"""
         
-        # Đưa model quay lại chế độ train
-        model.train()"""
+    new_init_block = """        self.visualization_config = SimpleNamespace(
+            active=False,
+            update_interval=100,
+            output_directory="animation_frames",
+            resolution=100,
+            gif_filename="training_process.gif",
+            gif_fps=10
+        )
         
-    new_save_end = """        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
-        plt.savefig(frame_name, dpi=100)
-        plt.close(fig)
+        # BỔ SUNG: Cấu hình chuẩn hóa vật lý
+        self.physics_config = SimpleNamespace(
+            scale_L0=0.05,
+            scale_H0=1200000.0,
+            scale_nu0=VACUUM_RELUCTIVITY
+        )
         
-        # BỔ SUNG: Lưu đường dẫn vào danh sách để tạo GIF
-        self.frame_paths.append(frame_name)
+        self.geometry_engine_instance = Geometry()"""
+
+    # Loại bỏ giá trị hardcode trong _build_system
+    old_build_block = """        self.L0 = self.collocation_sampler_instance.x_maximum
+        self.H0 = 800000.0
+        self.nu0 = VACUUM_RELUCTIVITY"""
         
-        # Đưa model quay lại chế độ train
-        model.train()"""
-        
-    viz_content = viz_content.replace(old_save_end, new_save_end)
-    with open(viz_file, 'w', encoding='utf-8') as f:
-        f.write(viz_content)
+    new_build_block = """        # SỬ DỤNG GIÁ TRỊ TỪ CONFIG THAY VÌ GÁN CỨNG
+        self.L0 = self.physics_config.scale_L0
+        self.H0 = self.physics_config.scale_H0
+        self.nu0 = self.physics_config.scale_nu0"""
+
+    if "self.physics_config = SimpleNamespace" not in pinn_content:
+        pinn_content = pinn_content.replace(old_init_block, new_init_block)
+        pinn_content = pinn_content.replace(old_build_block, new_build_block)
+        with open(pinn_file, 'w', encoding='utf-8') as f:
+            f.write(pinn_content)
+        print(f"[*] Đã trích xuất cấu hình vật lý vào: {pinn_file}")
 
     # =====================================================================
-    # 2. SỬA LỖI TRONG TRAINING_MANAGER.PY (Gắn camera cho L-BFGS)
+    # 2. CẬP NHẬT TỆP: maxwell_pde_loss.py
     # =====================================================================
-    training_file = os.path.join(project_root, 'training_manager.py')
-    with open(training_file, 'r', encoding='utf-8') as f:
-        training_content = f.read()
-        
-    old_lbfgs_closure = """            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
-                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
-                
-            if self.target_loss > 0 and loss.item() <= self.target_loss:"""
-            
-    new_lbfgs_closure = """            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
-                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
-                
-            # BỔ SUNG: Cho phép L-BFGS chụp ảnh định kỳ vào thư mục chung
-            if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(
-                    50000 + lbfgs_counter[0], loss.item(), 
-                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
-                
-            if self.target_loss > 0 and loss.item() <= self.target_loss:"""
-            
-    if "50000 + lbfgs_counter[0]" not in training_content:
-        training_content = training_content.replace(old_lbfgs_closure, new_lbfgs_closure)
-        
-    with open(training_file, 'w', encoding='utf-8') as f:
-        f.write(training_content)
+    pde_file = os.path.join(project_root, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
+    with open(pde_file, 'r', encoding='utf-8') as f:
+        pde_content = f.read()
 
-    print("[*] Đã vá thành công lỗi thiếu `frame_paths.append` và tích hợp chụp ảnh cho L-BFGS!")
+    old_pde_init = "def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):"
+    new_pde_init = "def __init__(self, L0=0.05, H0=1200000.0, nu0=795774.715459):"
+
+    if old_pde_init in pde_content:
+        pde_content = pde_content.replace(old_pde_init, new_pde_init)
+        with open(pde_file, 'w', encoding='utf-8') as f:
+            f.write(pde_content)
+        print(f"[*] Đã sửa giá trị mặc định H0 trong: {pde_file}")
+
+    # =====================================================================
+    # 3. CẬP NHẬT TỆP: test_simulation.py
+    # =====================================================================
+    test_file = os.path.join(project_root, 'test_simulation.py')
+    with open(test_file, 'r', encoding='utf-8') as f:
+        test_content = f.read()
+
+    # Chèn cấu hình thiết lập H0 bằng 1.5 lần max_coercive_field
+    old_test_setup = """    model = ElectroMagneticPINN()
+    
+    # Thiết lập miền không gian tính toán"""
+    
+    new_test_setup = """    model = ElectroMagneticPINN()
+    
+    # Thiết lập hệ số chuẩn hóa H0 (1.5 lần lực kháng từ cực đại)
+    max_coercive_field = 800000.0
+    model.physics_config.scale_H0 = max_coercive_field * 1.5
+    
+    # Thiết lập miền không gian tính toán"""
+
+    if "model.physics_config.scale_H0" not in test_content:
+        test_content = test_content.replace(old_test_setup, new_test_setup)
+        with open(test_file, 'w', encoding='utf-8') as f:
+            f.write(test_content)
+        print(f"[*] Đã thiết lập H0 động (1.5x) vào: {test_file}")
 
 if __name__ == "__main__":
-    fix_gif_generation_bugs()
+    extract_physics_config()

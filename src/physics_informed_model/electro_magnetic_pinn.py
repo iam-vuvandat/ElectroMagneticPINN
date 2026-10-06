@@ -47,6 +47,13 @@ class ElectroMagneticPINN:
             gif_fps=10
         )
         
+        # BỔ SUNG: Cấu hình chuẩn hóa vật lý
+        self.physics_config = SimpleNamespace(
+            scale_L0=0.05,
+            scale_H0=1200000.0,
+            scale_nu0=VACUUM_RELUCTIVITY
+        )
+        
         self.geometry_engine_instance = Geometry()
         self._build_system()
 
@@ -63,9 +70,10 @@ class ElectroMagneticPINN:
             device=self.computation_device
         )
         
-        self.L0 = self.collocation_sampler_instance.x_maximum
-        self.H0 = 800000.0
-        self.nu0 = VACUUM_RELUCTIVITY
+        # SỬ DỤNG GIÁ TRỊ TỪ CONFIG THAY VÌ GÁN CỨNG
+        self.L0 = self.physics_config.scale_L0
+        self.H0 = self.physics_config.scale_H0
+        self.nu0 = self.physics_config.scale_nu0
         self.A0 = (self.H0 * self.L0) / self.nu0
         
         self.pinn_architecture_instance = PINNArchitecture(

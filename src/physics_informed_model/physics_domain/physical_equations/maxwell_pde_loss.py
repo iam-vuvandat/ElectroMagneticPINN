@@ -1,7 +1,7 @@
 import torch
 
 class MaxwellPDELoss:
-    def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):
+    def __init__(self, L0=0.05, H0=1200000.0, nu0=795774.715459):
         self.L0 = L0
         self.H0 = H0
         self.nu0 = nu0
