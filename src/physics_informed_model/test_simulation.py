@@ -94,9 +94,9 @@ def main():
     
     A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
     
-    A_z_grid = A_z_pred.numpy().reshape(resolution, resolution)
-    B_x_grid = B_x_pred.numpy().reshape(resolution, resolution)
-    B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
+    A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
+    B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
+    B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
     
     fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
