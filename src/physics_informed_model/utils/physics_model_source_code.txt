@@ -86,9 +86,13 @@ class ElectroMagneticPINN:
         self._build_system()
 
     def _build_system(self):
+        self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
+        
         self.collocation_sampler_instance = CollocationSampler(
             x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
-            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple
+            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple,
+            device=self.computation_device
         )
         
         self.L0 = self.collocation_sampler_instance.x_maximum
@@ -99,7 +103,7 @@ class ElectroMagneticPINN:
         self.pinn_architecture_instance = PINNArchitecture(
             domain_scale=self.L0,
             **vars(self.pinn_config)
-        )
+        ).to(self.computation_device)
         
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
         
@@ -153,7 +157,7 @@ class ElectroMagneticPINN:
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
-        points_tensor.requires_grad_(True)
+        points_tensor = points_tensor.to(self.computation_device).clone().requires_grad_(True)
         A_z_star = self.pinn_architecture_instance(points_tensor)
         A_z_phys = A_z_star * self.A0
         
@@ -247,6 +251,8 @@ if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
@@ -262,7 +268,7 @@ def main():
     model.sampler_config.number_of_interface_points = 2000
     model.sampler_config.distance_threshold = 0.005
     
-    model.pinn_config.hidden_layers = 3
+    model.pinn_config.hidden_layers = 8
     model.pinn_config.hidden_neurons = 64
     model.pinn_config.activation_function = nn.SiLU()
     
@@ -328,9 +334,9 @@ def main():
     
     A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
     
-    A_z_grid = A_z_pred.numpy().reshape(resolution, resolution)
-    B_x_grid = B_x_pred.numpy().reshape(resolution, resolution)
-    B_y_grid = B_y_pred.numpy().reshape(resolution, resolution)
+    A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
+    B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
+    B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
     
     fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
@@ -365,7 +371,9 @@ def main():
     ax2.set_aspect('equal')
     fig2.tight_layout()
     
-    plt.show()
+    plt.savefig('final_results.png', dpi=150)
+    plt.close('all')
+    print('[*] Đã lưu kết quả mô phỏng vào final_results.png')
 
 
 ========================================
@@ -529,6 +537,8 @@ class Geometry:
 
 import torch
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
@@ -590,7 +600,9 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
     axs[1, 1].set_aspect('equal')
     
     plt.tight_layout()
-    plt.show()
+    plt.savefig('geometry_plot.png', dpi=150)
+    plt.close(fig)
+    print('[*] Đã lưu biểu đồ hình học vào geometry_plot.png')
 
 ========================================
 
@@ -902,14 +914,15 @@ class Segment:
 import torch
 
 class CollocationSampler:
-    def __init__(self, x_boundaries_tuple, y_boundaries_tuple):
+    def __init__(self, x_boundaries_tuple, y_boundaries_tuple, device=torch.device('cpu')):
         self.x_minimum = x_boundaries_tuple[0]
         self.x_maximum = x_boundaries_tuple[1]
         self.y_minimum = y_boundaries_tuple[0]
         self.y_maximum = y_boundaries_tuple[1]
+        self.device = device # Nhận cấu hình thiết bị từ hệ thống
 
     def generate_uniform_points_tensor(self, number_of_points):
-        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32)
+        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32, device=self.device)
         points_tensor[:, 0] = points_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
         points_tensor[:, 1] = points_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
         points_tensor.requires_grad_(True)
@@ -921,7 +934,7 @@ class CollocationSampler:
         pool_size_value = number_of_points * 20
         
         while collected_count < number_of_points:
-            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32)
+            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
             points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
             points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
             
@@ -1008,142 +1021,33 @@ class MaxwellPDELoss:
 
 import os
 
-def execute_restore_stable_geometry():
+def fix_numpy_cpu_error():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
-    # ---------------------------------------------------------
-    # 1. KHÔI PHỤC FILE: GEOMETRY.PY
-    # (Chỉ giữ lại add_segment, xóa bỏ hoàn toàn hàm unite lỗi)
-    # ---------------------------------------------------------
-    geometry_file = os.path.join(project_root, 'geometry_engine', 'geometry.py')
-    geometry_code = """import torch
-from geometry_engine.segment.segment import Segment
-from geometry_engine.global_signed_distance_field import compute_global_signed_distance_field
-from geometry_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
-from geometry_engine.geometry_visualizer import plot_geometry_problem
-
-class Geometry:
-    def __init__(self):
-        self.segments_list = []
-
-    def add_segment(self, segment_object):
-        self.segments_list.append(segment_object)
-        return self
-
-    def compute_global_signed_distance_field(self, points_tensor):
-        return compute_global_signed_distance_field(self.segments_list, points_tensor)
-
-    def evaluate_global_physical_properties(self, points_tensor):
-        return evaluate_global_physical_properties(self.segments_list, points_tensor)
-
-    def plot_problem_definition(self, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
-        plot_geometry_problem(self, x_boundaries_tuple, y_boundaries_tuple, resolution)
-"""
-
-    # ---------------------------------------------------------
-    # 2. KHÔI PHỤC FILE: GLOBAL_PHYSICAL_PROPERTIES_EVALUATION.PY
-    # (Sử dụng đúng thuật toán torch.minimum cho CSG Union SDF)
-    # ---------------------------------------------------------
-    eval_file = os.path.join(project_root, 'geometry_engine', 'global_physical_properties_evaluation.py')
-    eval_code = """import torch
-
-VACUUM_RELUCTIVITY = 795774.715459
-
-def evaluate_global_physical_properties(segments_list, points_tensor):
-    number_of_points = points_tensor.shape[0]
-    computation_device = points_tensor.device
+    test_file = os.path.join(project_root, 'test_simulation.py')
     
-    global_reluctivity_tensor = torch.full((number_of_points, 1), VACUUM_RELUCTIVITY, dtype=torch.float32, device=computation_device)
-    global_coercive_field_x_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_coercive_field_y_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_current_density_z_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-    global_material_classification_tensor = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-
-    if not segments_list:
-        return {
-            "reluctivity": global_reluctivity_tensor,
-            "coercive_field_x": global_coercive_field_x_tensor,
-            "coercive_field_y": global_coercive_field_y_tensor,
-            "current_density_z": global_current_density_z_tensor,
-            "material_classification": global_material_classification_tensor
-        }
-
-    global_sdf = segments_list[0].compute_signed_distance_field(points_tensor)
-    for segment_object in segments_list[1:]:
-        current_sdf = segment_object.compute_signed_distance_field(points_tensor)
-        global_sdf = torch.minimum(global_sdf, current_sdf)
+    with open(test_file, 'r', encoding='utf-8') as f:
+        test_content = f.read()
         
-    max_steepness = max([seg.steepness for seg in segments_list])
-    envelope_k = 5000.0 - max_steepness * 4960.0
-    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
-
-    masks = []
-    reluctivities = []
-    hxs, hys, jzs = [], [], []
-
-    for segment_object in segments_list:
-        sdf = segment_object.compute_signed_distance_field(points_tensor)
-        actual_k = 5000.0 - segment_object.steepness * 4960.0
-        mask = torch.sigmoid(-actual_k * sdf).view(-1, 1)
-        
-        masks.append(mask)
-        reluctivities.append(segment_object.evaluate_reluctivity(points_tensor))
-        hx, hy = segment_object.evaluate_magnetization_vector(points_tensor)
-        hxs.append(hx)
-        hys.append(hy)
-        jzs.append(segment_object.evaluate_current_density(points_tensor))
-
-    total_mask = sum(masks)
-    safe_total_mask = total_mask + 1e-12 
-
-    blended_reluctivity = torch.zeros_like(global_reluctivity_tensor)
-    blended_hx = torch.zeros_like(global_coercive_field_x_tensor)
-    blended_hy = torch.zeros_like(global_coercive_field_y_tensor)
-    blended_jz = torch.zeros_like(global_current_density_z_tensor)
-    blended_mat = torch.zeros_like(global_material_classification_tensor)
+    # Thêm .cpu() trước .numpy() cho các biến dự đoán đầu ra
+    test_content = test_content.replace(
+        "A_z_grid = A_z_pred.numpy()", 
+        "A_z_grid = A_z_pred.cpu().numpy()"
+    )
+    test_content = test_content.replace(
+        "B_x_grid = B_x_pred.numpy()", 
+        "B_x_grid = B_x_pred.cpu().numpy()"
+    )
+    test_content = test_content.replace(
+        "B_y_grid = B_y_pred.numpy()", 
+        "B_y_grid = B_y_pred.cpu().numpy()"
+    )
     
-    target_h_mag = torch.zeros_like(global_coercive_field_x_tensor)
-
-    for i in range(len(segments_list)):
-        weight = masks[i] / safe_total_mask
+    with open(test_file, 'w', encoding='utf-8') as f:
+        f.write(test_content)
         
-        blended_reluctivity += weight * reluctivities[i]
-        blended_hx += weight * hxs[i]
-        blended_hy += weight * hys[i]
-        blended_jz += weight * jzs[i]
-        blended_mat += weight * (i + 1.0)
-        
-        seg_h_mag = torch.sqrt(hxs[i]**2 + hys[i]**2)
-        target_h_mag += weight * seg_h_mag
-
-    blended_h_mag = torch.sqrt(blended_hx**2 + blended_hy**2)
-    safe_blended_h_mag = torch.where(blended_h_mag < 1e-6, torch.full_like(blended_h_mag, 1.0), blended_h_mag)
-    scale_factor = target_h_mag / safe_blended_h_mag
-    
-    has_field_mask = (target_h_mag > 1.0).float()
-    blended_hx = blended_hx * (1.0 - has_field_mask) + (blended_hx * scale_factor) * has_field_mask
-    blended_hy = blended_hy * (1.0 - has_field_mask) + (blended_hy * scale_factor) * has_field_mask
-
-    global_reluctivity_tensor = VACUUM_RELUCTIVITY + global_envelope_mask * (blended_reluctivity - VACUUM_RELUCTIVITY)
-    global_coercive_field_x_tensor = global_envelope_mask * blended_hx
-    global_coercive_field_y_tensor = global_envelope_mask * blended_hy
-    global_current_density_z_tensor = global_envelope_mask * blended_jz
-    global_material_classification_tensor = global_envelope_mask * blended_mat
-
-    return {
-        "reluctivity": global_reluctivity_tensor,
-        "coercive_field_x": global_coercive_field_x_tensor,
-        "coercive_field_y": global_coercive_field_y_tensor,
-        "current_density_z": global_current_density_z_tensor,
-        "material_classification": global_material_classification_tensor
-    }
-"""
-
-    with open(geometry_file, 'w', encoding='utf-8') as f:
-        f.write(geometry_code)
-    with open(eval_file, 'w', encoding='utf-8') as f:
-        f.write(eval_code)
+    print("[*] Đã sửa lỗi TypeError: Chuyển tensor từ GPU về CPU thành công trước khi dùng NumPy!")
 
 
 ========================================
@@ -1192,42 +1096,75 @@ class TrainingVisualizer:
         
         eval_points = self.eval_points_tensor.to(computation_device).clone().requires_grad_(True)
         
+        # Mảng thông số vật lý tĩnh để tính toán PDE Residual
         nu_grid = torch.full((eval_points.shape[0], 1), pde_evaluator.nu0, device=computation_device)
         jz_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
         hcx_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
         hcy_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
         
-        A_z_pred = model(eval_points)
-        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_pred, nu_grid, jz_grid, hcx_grid, hcy_grid)
+        # Tính PDE Residual (dựa trên raw prediction A_z_star)
+        A_z_star = model(eval_points)
+        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
         
-        A_z_numpy = A_z_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        # Tính các thông số Vật lý thực tế (A_z_phys, B_x, B_y) thông qua evaluate_fields
+        A_z_phys, B_x_phys, B_y_phys = self.parent_pinn.evaluate_fields(eval_points)
+        
+        # Chuyển đổi sang Numpy để vẽ
+        A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
+        
         residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
         points_numpy = training_points_tensor.detach().cpu().numpy()
         
-        fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+        # Mở rộng layout thành 2 hàng x 3 cột (Kích thước 18x10)
+        fig, axs = plt.subplots(2, 3, figsize=(18, 10))
         
+        # [Hàng 1 - Cột 1]: Collocation Points
         axs[0, 0].scatter(points_numpy[:, 0], points_numpy[:, 1], s=1, c='black', alpha=0.5)
         axs[0, 0].set_title(f"Collocation Points")
         axs[0, 0].set_xlim(self.x_bounds)
         axs[0, 0].set_ylim(self.y_bounds)
         axs[0, 0].set_aspect('equal')
         
-        contour_az = axs[0, 1].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
-        fig.colorbar(contour_az, ax=axs[0, 1])
-        axs[0, 1].set_title("Forward Prediction ($A_z$)")
+        # [Hàng 1 - Cột 2]: PDE Residual Error
+        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
+        fig.colorbar(contour_res, ax=axs[0, 1])
+        axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
         
-        contour_res = axs[1, 0].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
-        fig.colorbar(contour_res, ax=axs[1, 0])
-        axs[1, 0].set_title("PDE Residual Error")
-        axs[1, 0].set_aspect('equal')
+        # [Hàng 1 - Cột 3]: Loss Optimization
+        axs[0, 2].plot(self.epoch_history, self.loss_history, 'b-')
+        axs[0, 2].set_yscale('log')
+        axs[0, 2].set_title("Loss Optimization")
+        axs[0, 2].set_xlabel("Epoch")
+        axs[0, 2].set_ylabel("Loss")
+        axs[0, 2].grid(True, which="both", ls="-", alpha=0.2)
         
-        axs[1, 1].plot(self.epoch_history, self.loss_history, 'b-')
-        axs[1, 1].set_yscale('log')
-        axs[1, 1].set_title("Loss Optimization")
-        axs[1, 1].set_xlabel("Epoch")
-        axs[1, 1].set_ylabel("Loss")
-        axs[1, 1].grid(True, which="both", ls="-", alpha=0.2)
+        # [Hàng 2 - Cột 1]: Magnetic Vector Potential (Az)
+        contour_az = axs[1, 0].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
+        fig.colorbar(contour_az, ax=axs[1, 0], label="A_z (Wb/m)")
+        axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
+        axs[1, 0].set_aspect('equal')
+
+        # [Hàng 2 - Cột 2]: Flux Density Magnitude (|B|)
+        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow")
+        fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
+        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
+        axs[1, 1].set_aspect('equal')
+
+        # [Hàng 2 - Cột 3]: Flux Density Vectors (Quiver Plot)
+        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow", alpha=0.4)
+        fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
+        
+        # Tính toán mật độ mũi tên sao cho không bị rối mắt
+        step = max(1, self.resolution // 20)
+        axs[1, 2].quiver(self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
+                         B_x_numpy[::step, ::step], B_y_numpy[::step, ::step], 
+                         color='black', pivot='mid')
+        axs[1, 2].set_title("Flux Density Vectors (B)")
+        axs[1, 2].set_aspect('equal')
         
         fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
         plt.tight_layout()
@@ -1235,7 +1172,8 @@ class TrainingVisualizer:
         frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
         plt.savefig(frame_name, dpi=100)
         plt.close(fig)
-        self.frame_paths.append(frame_name)
+        
+        # Đưa model quay lại chế độ train
         model.train()
 
     def generate_gif(self):

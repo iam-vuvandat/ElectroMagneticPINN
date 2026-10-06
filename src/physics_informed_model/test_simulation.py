@@ -45,7 +45,7 @@ def main():
     
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50 
-    model.visualization_config.output_directory = "animation_frames"
+    model.visualization_config.output_directory = "animation"
     model.visualization_config.resolution = 80
     model.visualization_config.gif_filename = "training_process.gif"
     model.visualization_config.gif_fps = 15
