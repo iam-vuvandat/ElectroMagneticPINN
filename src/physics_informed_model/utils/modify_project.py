@@ -1,146 +1,86 @@
 import os
 
-def execute_update_visualizer():
+def execute_fix_geometry_visualizer():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
-    visualizer_file = os.path.join(project_root, 'utils', 'training_visualizer.py')
-    visualizer_code = """import os
-import torch
+    visualizer_file = os.path.join(project_root, 'geometry_engine', 'geometry_visualizer.py')
+    
+    visualizer_code = """import torch
 import numpy as np
+import matplotlib
+matplotlib.use('Agg') # Sử dụng backend không tương tác để tránh bị treo (KeyboardInterrupt) trong môi trường Colab/Server
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
-import imageio
+from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
-class TrainingVisualizer:
-    def __init__(self, parent_pinn):
-        self.parent_pinn = parent_pinn
-        self.output_directory = self.parent_pinn.visualization_config.output_directory
-        self.x_bounds = self.parent_pinn.sampler_config.x_boundaries_tuple
-        self.y_bounds = self.parent_pinn.sampler_config.y_boundaries_tuple
-        self.resolution = self.parent_pinn.visualization_config.resolution
-        
-        self.frame_paths = []
-        self.loss_history = []
-        self.epoch_history = []
-        
-        if not os.path.exists(self.output_directory):
-            os.makedirs(self.output_directory)
-            
-        x_coords = np.linspace(self.x_bounds[0], self.x_bounds[1], self.resolution)
-        y_coords = np.linspace(self.y_bounds[0], self.y_bounds[1], self.resolution)
-        self.X_grid, self.Y_grid = np.meshgrid(x_coords, y_coords)
-        self.eval_points_tensor = torch.tensor(
-            np.column_stack((self.X_grid.ravel(), self.Y_grid.ravel())), 
-            dtype=torch.float32
-        )
-
-    def save_frame(self, epoch, loss_value, training_points_tensor, nu_tensor, jz_tensor, hcx_tensor, hcy_tensor):
-        self.loss_history.append(loss_value)
-        self.epoch_history.append(epoch)
-        
-        model = self.parent_pinn.pinn_architecture_instance
-        pde_evaluator = self.parent_pinn.maxwell_pde_loss_instance
-        
-        model.eval()
-        computation_device = next(model.parameters()).device
-        
-        eval_points = self.eval_points_tensor.to(computation_device).clone().requires_grad_(True)
-        
-        # Mảng thông số vật lý tĩnh để tính toán PDE Residual
-        nu_grid = torch.full((eval_points.shape[0], 1), pde_evaluator.nu0, device=computation_device)
-        jz_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
-        hcx_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
-        hcy_grid = torch.zeros((eval_points.shape[0], 1), device=computation_device)
-        
-        # Tính PDE Residual (dựa trên raw prediction A_z_star)
-        A_z_star = model(eval_points)
-        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
-        
-        # Tính các thông số Vật lý thực tế (A_z_phys, B_x, B_y) thông qua evaluate_fields
-        A_z_phys, B_x_phys, B_y_phys = self.parent_pinn.evaluate_fields(eval_points)
-        
-        # Chuyển đổi sang Numpy để vẽ
-        A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
-        
-        residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        points_numpy = training_points_tensor.detach().cpu().numpy()
-        
-        # Mở rộng layout thành 2 hàng x 3 cột (Kích thước 18x10)
-        fig, axs = plt.subplots(2, 3, figsize=(18, 10))
-        
-        # [Hàng 1 - Cột 1]: Collocation Points
-        axs[0, 0].scatter(points_numpy[:, 0], points_numpy[:, 1], s=1, c='black', alpha=0.5)
-        axs[0, 0].set_title(f"Collocation Points")
-        axs[0, 0].set_xlim(self.x_bounds)
-        axs[0, 0].set_ylim(self.y_bounds)
-        axs[0, 0].set_aspect('equal')
-        
-        # [Hàng 1 - Cột 2]: PDE Residual Error
-        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
-        fig.colorbar(contour_res, ax=axs[0, 1])
-        axs[0, 1].set_title("PDE Residual Error")
-        axs[0, 1].set_aspect('equal')
-        
-        # [Hàng 1 - Cột 3]: Loss Optimization
-        axs[0, 2].plot(self.epoch_history, self.loss_history, 'b-')
-        axs[0, 2].set_yscale('log')
-        axs[0, 2].set_title("Loss Optimization")
-        axs[0, 2].set_xlabel("Epoch")
-        axs[0, 2].set_ylabel("Loss")
-        axs[0, 2].grid(True, which="both", ls="-", alpha=0.2)
-        
-        # [Hàng 2 - Cột 1]: Magnetic Vector Potential (Az)
-        contour_az = axs[1, 0].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
-        fig.colorbar(contour_az, ax=axs[1, 0], label="A_z (Wb/m)")
-        axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
-        axs[1, 0].set_aspect('equal')
-
-        # [Hàng 2 - Cột 2]: Flux Density Magnitude (|B|)
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow")
-        fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
-        axs[1, 1].set_aspect('equal')
-
-        # [Hàng 2 - Cột 3]: Flux Density Vectors (Quiver Plot)
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow", alpha=0.4)
-        fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
-        
-        # Tính toán mật độ mũi tên sao cho không bị rối mắt
-        step = max(1, self.resolution // 20)
-        axs[1, 2].quiver(self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
-                         B_x_numpy[::step, ::step], B_y_numpy[::step, ::step], 
-                         color='black', pivot='mid')
-        axs[1, 2].set_title("Flux Density Vectors (B)")
-        axs[1, 2].set_aspect('equal')
-        
-        fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
-        plt.tight_layout()
-        
-        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
-        plt.savefig(frame_name, dpi=100)
-        plt.close(fig)
-        
-        # Đưa model quay lại chế độ train
-        model.train()
-
-    def generate_gif(self):
-        output_filename = self.parent_pinn.visualization_config.gif_filename
-        fps = self.parent_pinn.visualization_config.gif_fps
-        if not self.frame_paths:
-            return
-        images = []
-        for filename in self.frame_paths:
-            images.append(imageio.imread(filename))
-        imageio.mimsave(output_filename, images, fps=fps)
+def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tuple, resolution=100):
+    x_coords = np.linspace(x_boundaries_tuple[0], x_boundaries_tuple[1], resolution)
+    y_coords = np.linspace(y_boundaries_tuple[0], y_boundaries_tuple[1], resolution)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    
+    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
+    
+    sdf_values_tensor = geometry_instance.compute_global_signed_distance_field(xy_points_tensor)
+    physical_properties_dictionary = geometry_instance.evaluate_global_physical_properties(xy_points_tensor)
+    
+    sdf_grid = sdf_values_tensor.numpy().reshape(resolution, resolution)
+    
+    reluctivity_tensor = physical_properties_dictionary["reluctivity"]
+    
+    mu_r_tensor = VACUUM_RELUCTIVITY / reluctivity_tensor
+    mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
+    
+    hx_tensor = physical_properties_dictionary["coercive_field_x"]
+    hy_tensor = physical_properties_dictionary["coercive_field_y"]
+    hc_magnitude_tensor = torch.sqrt(hx_tensor**2 + hy_tensor**2)
+    hc_grid = hc_magnitude_tensor.numpy().reshape(resolution, resolution)
+    
+    jz_tensor = physical_properties_dictionary["current_density_z"]
+    jz_grid = jz_tensor.numpy().reshape(resolution, resolution)
+    
+    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+    
+    contour_sdf = axs[0, 0].contourf(X_grid, Y_grid, sdf_grid, levels=50, cmap="coolwarm")
+    axs[0, 0].contour(X_grid, Y_grid, sdf_grid, levels=[0.0], colors="black", linewidths=1.5)
+    fig.colorbar(contour_sdf, ax=axs[0, 0])
+    axs[0, 0].set_title("Signed Distance Field (SDF)")
+    axs[0, 0].set_xlabel("x (m)")
+    axs[0, 0].set_ylabel("y (m)")
+    axs[0, 0].set_aspect('equal')
+    
+    contour_mur = axs[0, 1].contourf(X_grid, Y_grid, mu_r_grid, levels=50, cmap="viridis")
+    fig.colorbar(contour_mur, ax=axs[0, 1])
+    axs[0, 1].set_title("Relative Permeability (mu_r)")
+    axs[0, 1].set_xlabel("x (m)")
+    axs[0, 1].set_ylabel("y (m)")
+    axs[0, 1].set_aspect('equal')
+    
+    contour_hc = axs[1, 0].contourf(X_grid, Y_grid, hc_grid, levels=50, cmap="plasma")
+    fig.colorbar(contour_hc, ax=axs[1, 0])
+    axs[1, 0].set_title("Magnetization Magnitude (Hc)")
+    axs[1, 0].set_xlabel("x (m)")
+    axs[1, 0].set_ylabel("y (m)")
+    axs[1, 0].set_aspect('equal')
+    
+    contour_jz = axs[1, 1].contourf(X_grid, Y_grid, jz_grid, levels=50, cmap="inferno")
+    fig.colorbar(contour_jz, ax=axs[1, 1])
+    axs[1, 1].set_title("Current Density (Jz)")
+    axs[1, 1].set_xlabel("x (m)")
+    axs[1, 1].set_ylabel("y (m)")
+    axs[1, 1].set_aspect('equal')
+    
+    plt.tight_layout()
+    
+    # Thay vì gọi plt.show() làm treo chương trình, tiến hành lưu thành file ảnh
+    output_filename = "geometry_plot.png"
+    plt.savefig(output_filename, dpi=150)
+    plt.close(fig)
+    print(f"[*] Đã xuất thành công biểu đồ hình học vào file: {output_filename}")
 """
 
     with open(visualizer_file, 'w', encoding='utf-8') as f:
         f.write(visualizer_code.strip() + "\n")
-    print(f"Đã cập nhật hệ thống Visualizer với 6 biểu đồ: {os.path.basename(visualizer_file)}")
+    print("Đã vá lỗi `geometry_visualizer.py` thành công!")
 
 if __name__ == "__main__":
-    execute_update_visualizer()
+    execute_fix_geometry_visualizer()

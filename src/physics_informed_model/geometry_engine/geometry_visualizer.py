@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+import matplotlib
+matplotlib.use('Agg') # Sử dụng backend không tương tác để tránh bị treo (KeyboardInterrupt) trong môi trường Colab/Server
 import matplotlib.pyplot as plt
 from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
@@ -17,7 +19,6 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
     
     reluctivity_tensor = physical_properties_dictionary["reluctivity"]
     
-    # SỬ DỤNG HẰNG SỐ TOÀN CỤC ĐÃ ĐƯỢC IMPORT
     mu_r_tensor = VACUUM_RELUCTIVITY / reluctivity_tensor
     mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
     
@@ -61,4 +62,9 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
     axs[1, 1].set_aspect('equal')
     
     plt.tight_layout()
-    plt.show()
+    
+    # Thay vì gọi plt.show() làm treo chương trình, tiến hành lưu thành file ảnh
+    output_filename = "geometry_plot.png"
+    plt.savefig(output_filename, dpi=150)
+    plt.close(fig)
+    print(f"[*] Đã xuất thành công biểu đồ hình học vào file: {output_filename}")
