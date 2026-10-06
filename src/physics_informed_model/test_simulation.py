@@ -30,18 +30,18 @@ def main():
     
     max_coercive_field = 800000.0
     model.physics_config.scale_H0 = max_coercive_field * 1.5
-    model.physics_config.scale_L0 = 0.08
+    model.physics_config.scale_L0 = 0.12
     
-    model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
-    model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
+    model.sampler_config.x_boundaries_tuple = (-0.1, 0.1)
+    model.sampler_config.y_boundaries_tuple = (-0.1, 0.1)
     
-    model.sampler_config.number_of_uniform_points = 10000
+    model.sampler_config.number_of_uniform_points = 4000
     model.sampler_config.number_of_interface_points = 4000
     model.sampler_config.distance_threshold = 0.005
     
-    model.pinn_config.hidden_layers = 6
+    model.pinn_config.hidden_layers = 4
     model.pinn_config.hidden_neurons = 128
-    model.pinn_config.activation_function = nn.SiLU()
+    model.pinn_config.activation_function = nn.Tanh()
     
     model.training_config.epochs_adam = 12000
     model.training_config.epochs_lbfgs = 300
