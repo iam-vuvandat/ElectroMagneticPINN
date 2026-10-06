@@ -63,6 +63,6 @@ def plot_geometry_problem(geometry_instance, x_boundaries_tuple, y_boundaries_tu
     axs[1, 1].set_aspect('equal')
     
     plt.tight_layout()
-    plt.savefig('geometry_plot.png', dpi=150)
+    plt.savefig('figure/geometry_plot.png', dpi=150)
     plt.close(fig)
     print('[*] Đã lưu biểu đồ hình học vào geometry_plot.png')

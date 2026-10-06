@@ -124,9 +124,9 @@ class TrainingVisualizer:
         output_filename = self.parent_pinn.visualization_config.gif_filename
         fps = self.parent_pinn.visualization_config.gif_fps
         if not self.frame_paths:
+            print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo GIF.")
             return
             
-        # Ghép đường dẫn để lưu GIF vào bên trong thư mục animation/
         full_gif_path = os.path.join(self.output_directory, output_filename)
         
         images = []
@@ -134,18 +134,5 @@ class TrainingVisualizer:
             if os.path.exists(filename):
                 images.append(imageio.imread(filename))
                 
-        # Xuất file GIF
         imageio.mimsave(full_gif_path, images, fps=fps)
         print(f"[*] Đã xuất GIF Animation thành công tại: {full_gif_path}")
-        
-        # Dọn dẹp (xóa) các frame tĩnh sau khi tạo GIF thành công
-        print("[*] Đang dọn dẹp các frame tĩnh...")
-        cleaned_count = 0
-        for filename in self.frame_paths:
-            try:
-                if os.path.exists(filename):
-                    os.remove(filename)
-                    cleaned_count += 1
-            except Exception as e:
-                pass
-        print(f"[*] Đã xóa dọn dẹp {cleaned_count} ảnh PNG tĩnh.")

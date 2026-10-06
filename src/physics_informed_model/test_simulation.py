@@ -17,7 +17,12 @@ import matplotlib.pyplot as plt
 from geometry_engine.segment.segment import Segment
 from electro_magnetic_pinn import ElectroMagneticPINN
 
+import shutil
+
 def main():
+    if os.path.exists('figure'):
+        shutil.rmtree('figure')
+    os.makedirs('figure')
     print("version 6.6 - Perfect Geometry with Full Overlap PoU")
     
     model = ElectroMagneticPINN()
@@ -45,7 +50,7 @@ def main():
     
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50 
-    model.visualization_config.output_directory = "animation"
+    model.visualization_config.output_directory = "figure"
     model.visualization_config.resolution = 80
     model.visualization_config.gif_filename = "training_process.gif"
     model.visualization_config.gif_fps = 15
@@ -131,7 +136,7 @@ def main():
     ax2.set_aspect('equal')
     fig2.tight_layout()
     
-    plt.savefig('final_results.png', dpi=150)
+    plt.savefig('figure/final_results.png', dpi=150)
     plt.close('all')
     print('[*] Đã lưu kết quả mô phỏng vào final_results.png')
 
