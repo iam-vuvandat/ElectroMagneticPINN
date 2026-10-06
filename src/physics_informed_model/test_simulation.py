@@ -44,15 +44,15 @@ def main():
     model.pinn_config.activation_function = nn.Tanh()
     
     model.training_config.epochs_adam = 4000
-    #model.training_config.epochs_lbfgs = 300
+    # #model.training_config.epochs_lbfgs = 300 # Đã tự động loại bỏ
     model.training_config.learning_rate_adam = 1e-3
     model.training_config.target_loss = 0.0
-    model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_iterations = 1000
-    model.training_config.lbfgs_maximum_evaluations = 1250
-    model.training_config.lbfgs_tolerance_gradient = 1e-8
-    model.training_config.lbfgs_tolerance_change = 1e-10
-    model.training_config.lbfgs_history_size = 50
+    # model.training_config.lbfgs_learning_rate = 0.8 # Đã tự động loại bỏ
+    # model.training_config.lbfgs_maximum_iterations = 1000 # Đã tự động loại bỏ
+    # model.training_config.lbfgs_maximum_evaluations = 1250 # Đã tự động loại bỏ
+    # model.training_config.lbfgs_tolerance_gradient = 1e-8 # Đã tự động loại bỏ
+    # model.training_config.lbfgs_tolerance_change = 1e-10 # Đã tự động loại bỏ
+    # model.training_config.lbfgs_history_size = 50 # Đã tự động loại bỏ
     
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50 
