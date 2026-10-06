@@ -117,6 +117,9 @@ class TrainingVisualizer:
         plt.savefig(frame_name, dpi=100)
         plt.close(fig)
         
+        # BỔ SUNG: Lưu đường dẫn vào danh sách để tạo GIF
+        self.frame_paths.append(frame_name)
+        
         # Đưa model quay lại chế độ train
         model.train()
 

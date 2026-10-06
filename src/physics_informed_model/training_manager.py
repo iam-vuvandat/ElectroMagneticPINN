@@ -112,6 +112,13 @@ class TrainingManager:
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
                 print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
                 
+            # BỔ SUNG: Cho phép L-BFGS chụp ảnh định kỳ vào thư mục chung
+            if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
+                self.visualizer.save_frame(
+                    50000 + lbfgs_counter[0], loss.item(), 
+                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
+                )
+                
             if self.target_loss > 0 and loss.item() <= self.target_loss:
                 early_stop_triggered = True
             return loss
