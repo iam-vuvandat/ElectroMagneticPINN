@@ -67,14 +67,16 @@ def main():
         outline=[[-0.04, -0.04], [-0.02, -0.04], [-0.02, 0.04], [-0.04, 0.04]],
         material="i_bar_left", 
         relative_permeability=1.05, 
-        coercive=[0.0, 800000.0]
+        coercive=[0.0, 800000.0],
+        steepness=0.1  # BỔ SUNG: Làm mượt ranh giới
     )
 
     i_magnet_right = Segment(
         outline=[[0.02, -0.04], [0.04, -0.04], [0.04, 0.04], [0.02, 0.04]],
         material="i_bar_right", 
         relative_permeability=1.05, 
-        coercive=[0.0, -800000.0]
+        coercive=[0.0, -800000.0],
+        steepness=0.1  # BỔ SUNG: Làm mượt ranh giới
     )
 
     model.geometry_engine_instance.add_segment(i_magnet_left)

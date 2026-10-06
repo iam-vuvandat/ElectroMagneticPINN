@@ -9,7 +9,8 @@ class Segment:
                  relative_permeability=1.0,
                  bh_curve=None,
                  coercive=[0.0, 0.0],
-                 current=0.0):
+                 current=0.0,
+                 steepness=None): # BỔ SUNG: Nhận tham số steepness tùy chỉnh
         
         self.material = material
         self.relative_permeability = relative_permeability
@@ -21,12 +22,17 @@ class Segment:
         self.outline_tensor = None
         self.section_area = 0.0
         self.current_density = 0.0
-        self.steepness = 1.0 
+        
+        # BỔ SUNG: Kiểm tra xem người dùng có gán cứng steepness hay không
+        self.steepness = 1.0 if steepness is None else steepness
+        self._has_custom_steepness = steepness is not None 
         
         if outline is not None:
             self.set_outline(outline) 
             self.compute_current_density()
-            self.calculate_penetrating_steepness()
+            # Chỉ tự động tính steepness nếu người dùng KHÔNG truyền vào
+            if not self._has_custom_steepness:
+                self.calculate_penetrating_steepness()
             
         if self.bh_curve is None:
             self.compute_constant_bh_curve()
