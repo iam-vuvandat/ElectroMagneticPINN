@@ -35,7 +35,13 @@ class ElectroMagneticPINN:
             lbfgs_maximum_evaluations=1250,
             lbfgs_tolerance_gradient=1e-8,
             lbfgs_tolerance_change=1e-10,
-            lbfgs_history_size=50
+            lbfgs_history_size=50,
+            
+            # --- CẤU HÌNH CHIẾN THUẬT ĐỘNG (BỔ SUNG) ---
+            resample_frequency=500,        
+            curriculum_ratio=0.25,         
+            loss_weight_uniform=1.0,       
+            loss_weight_interface=0.1      
         )
         
         self.visualization_config = SimpleNamespace(
@@ -47,7 +53,6 @@ class ElectroMagneticPINN:
             gif_fps=10
         )
         
-        # BỔ SUNG: Cấu hình chuẩn hóa vật lý
         self.physics_config = SimpleNamespace(
             scale_L0=0.05,
             scale_H0=1200000.0,
@@ -62,7 +67,7 @@ class ElectroMagneticPINN:
 
     def _build_system(self):
         self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
+        print(f"[*] Hệ thống vật lý khởi tạo trên: {self.computation_device}")
         
         self.collocation_sampler_instance = CollocationSampler(
             x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
@@ -70,7 +75,6 @@ class ElectroMagneticPINN:
             device=self.computation_device
         )
         
-        # SỬ DỤNG GIÁ TRỊ TỪ CONFIG THAY VÌ GÁN CỨNG
         self.L0 = self.physics_config.scale_L0
         self.H0 = self.physics_config.scale_H0
         self.nu0 = self.physics_config.scale_nu0
@@ -100,31 +104,31 @@ class ElectroMagneticPINN:
         )
 
     def execute_training_process(self):
-        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
-            geometry_object=self.geometry_engine_instance,
-            number_of_uniform_points=self.sampler_config.number_of_uniform_points,
-            number_of_interface_points=self.sampler_config.number_of_interface_points,
-            distance_threshold=self.sampler_config.distance_threshold
-        )
-        
-        physical_properties_dictionary = self.geometry_engine_instance.evaluate_global_physical_properties(points_tensor)
-        
-        print(f"--- Standard Adam Training ({self.training_config.epochs_adam} Epochs) ---")
+        print(f"\n--- [GIAI ĐOẠN 1] Dynamic Curriculum Adam ({self.training_config.epochs_adam} Epochs) ---")
         self.training_manager_instance.train_adam(
-            epochs=self.training_config.epochs_adam, points_tensor=points_tensor,
-            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
-            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
-            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
-            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+            epochs=self.training_config.epochs_adam,
+            sampler=self.collocation_sampler_instance,
+            geometry=self.geometry_engine_instance,
+            sampler_config=self.sampler_config
         )
         
-        print(f"--- L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
+        print(f"\n--- [GIAI ĐOẠN 2] Full-Batch L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
+        pts_u = self.collocation_sampler_instance.generate_uniform_points_tensor(
+            self.sampler_config.number_of_uniform_points
+        )
+        pts_i = self.collocation_sampler_instance.generate_interface_points_tensor(
+            self.geometry_engine_instance,
+            self.sampler_config.number_of_interface_points,
+            self.sampler_config.distance_threshold
+        )
+        
+        props_u = self.geometry_engine_instance.evaluate_global_physical_properties(pts_u)
+        props_i = self.geometry_engine_instance.evaluate_global_physical_properties(pts_i)
+
         self.training_manager_instance.train_lbfgs(
-            epochs=self.training_config.epochs_lbfgs, points_tensor=points_tensor,
-            reluctivity_tensor=physical_properties_dictionary["reluctivity"],
-            current_density_z_tensor=physical_properties_dictionary["current_density_z"],
-            coercive_field_x_tensor=physical_properties_dictionary["coercive_field_x"],
-            coercive_field_y_tensor=physical_properties_dictionary["coercive_field_y"]
+            epochs=self.training_config.epochs_lbfgs,
+            pts_u=pts_u, props_u=props_u,
+            pts_i=pts_i, props_i=props_i
         )
         
         if self.visualizer_instance:
