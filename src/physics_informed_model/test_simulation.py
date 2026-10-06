@@ -33,13 +33,13 @@ def main():
     model.sampler_config.x_boundaries_tuple = (-0.08, 0.08)
     model.sampler_config.y_boundaries_tuple = (-0.08, 0.08)
     # Mật độ điểm lấy mẫu tối ưu, cân bằng tải VRAM
-    model.sampler_config.number_of_uniform_points = 15000
-    model.sampler_config.number_of_interface_points = 5000
+    model.sampler_config.number_of_uniform_points = 7000
+    model.sampler_config.number_of_interface_points = 7000
     model.sampler_config.distance_threshold = 0.005
     
-    # Cấu hình mạng an toàn VRAM: 6 lớp ẩn, 256 nơ-ron
+    # Cấu hình mạng an toàn VRAM: s
     model.pinn_config.hidden_layers = 6
-    model.pinn_config.hidden_neurons = 256
+    model.pinn_config.hidden_neurons = 128
     model.pinn_config.activation_function = nn.SiLU()
     
     model.training_config.epochs_adam = 12000
