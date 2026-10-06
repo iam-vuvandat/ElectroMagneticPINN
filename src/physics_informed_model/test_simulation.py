@@ -28,7 +28,7 @@ def main():
     model.sampler_config.number_of_interface_points = 2000
     model.sampler_config.distance_threshold = 0.005
     
-    model.pinn_config.hidden_layers = 3
+    model.pinn_config.hidden_layers = 8
     model.pinn_config.hidden_neurons = 64
     model.pinn_config.activation_function = nn.SiLU()
     
