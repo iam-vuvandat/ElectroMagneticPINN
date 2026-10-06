@@ -28,16 +28,7 @@ class ElectroMagneticPINN:
         self.training_config = SimpleNamespace(
             learning_rate_adam=1e-3,
             target_loss=1e-3,
-            epochs_adam=4000,
-            epochs_lbfgs=1000,
-            lbfgs_learning_rate=0.8,
-            lbfgs_maximum_iterations=1000,
-            lbfgs_maximum_evaluations=1250,
-            lbfgs_tolerance_gradient=1e-8,
-            lbfgs_tolerance_change=1e-10,
-            lbfgs_history_size=50,
-            
-            # --- CẤU HÌNH CHIẾN THUẬT ĐỘNG (BỔ SUNG) ---
+            epochs_adam=6000,              # Tăng nhẹ số epoch Adam để bù đắp cho L-BFGS
             resample_frequency=500,        
             curriculum_ratio=0.25,         
             loss_weight_uniform=1.0,       
@@ -93,7 +84,6 @@ class ElectroMagneticPINN:
             
         manager_kwargs = vars(self.training_config).copy()
         manager_kwargs.pop('epochs_adam', None)
-        manager_kwargs.pop('epochs_lbfgs', None)
             
         self.training_manager_instance = TrainingManager(
             model=self.pinn_architecture_instance,
@@ -104,31 +94,12 @@ class ElectroMagneticPINN:
         )
 
     def execute_training_process(self):
-        print(f"\n--- [GIAI ĐOẠN 1] Dynamic Curriculum Adam ({self.training_config.epochs_adam} Epochs) ---")
+        print(f"\n--- Robust Dynamic Adam Training ({self.training_config.epochs_adam} Epochs) ---")
         self.training_manager_instance.train_adam(
             epochs=self.training_config.epochs_adam,
             sampler=self.collocation_sampler_instance,
             geometry=self.geometry_engine_instance,
             sampler_config=self.sampler_config
-        )
-        
-        print(f"\n--- [GIAI ĐOẠN 2] Full-Batch L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
-        pts_u = self.collocation_sampler_instance.generate_uniform_points_tensor(
-            self.sampler_config.number_of_uniform_points
-        )
-        pts_i = self.collocation_sampler_instance.generate_interface_points_tensor(
-            self.geometry_engine_instance,
-            self.sampler_config.number_of_interface_points,
-            self.sampler_config.distance_threshold
-        )
-        
-        props_u = self.geometry_engine_instance.evaluate_global_physical_properties(pts_u)
-        props_i = self.geometry_engine_instance.evaluate_global_physical_properties(pts_i)
-
-        self.training_manager_instance.train_lbfgs(
-            epochs=self.training_config.epochs_lbfgs,
-            pts_u=pts_u, props_u=props_u,
-            pts_i=pts_i, props_i=props_i
         )
         
         if self.visualizer_instance:

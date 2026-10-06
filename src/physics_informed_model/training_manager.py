@@ -8,12 +8,6 @@ class TrainingManager:
         pde_evaluator, 
         learning_rate_adam=1e-3, 
         target_loss=0.0,
-        lbfgs_learning_rate=0.8, 
-        lbfgs_maximum_iterations=1000, 
-        lbfgs_maximum_evaluations=1250,
-        lbfgs_tolerance_gradient=1e-8,
-        lbfgs_tolerance_change=1e-10,
-        lbfgs_history_size=50,
         visualizer=None,
         visualizer_update_interval=100,
         resample_frequency=500,
@@ -26,7 +20,6 @@ class TrainingManager:
         self.target_loss = target_loss
         self.base_learning_rate_adam = learning_rate_adam
         
-        # BỔ SUNG: Tham số chiến thuật động
         self.resample_frequency = resample_frequency
         self.curriculum_ratio = curriculum_ratio
         self.loss_weight_uniform = loss_weight_uniform
@@ -34,22 +27,11 @@ class TrainingManager:
         
         self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_learning_rate_adam)
         
-        self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
-            lr=lbfgs_learning_rate,
-            max_iter=lbfgs_maximum_iterations,
-            max_eval=lbfgs_maximum_evaluations,
-            tolerance_grad=lbfgs_tolerance_gradient,
-            tolerance_change=lbfgs_tolerance_change,
-            history_size=lbfgs_history_size,
-            line_search_fn="strong_wolfe"
-        )
-        
         self.visualizer = visualizer
         self.visualizer_update_interval = visualizer_update_interval
 
     def compute_dynamic_loss(self, pts_u, props_u, pts_i, props_i):
-        # 1. Tính Loss Vùng Nền (Uniform)
+        # 1. Loss Vùng Nền
         A_z_u = self.model(pts_u)
         res_u = self.pde_evaluator.compute_residual(
             xy=pts_u, A_z_star=A_z_u, nu=props_u["reluctivity"],
@@ -57,7 +39,7 @@ class TrainingManager:
         )
         loss_u = torch.mean(res_u**2) * self.loss_weight_uniform
 
-        # 2. Tính Loss Ranh Giới (Interface)
+        # 2. Loss Ranh Giới (Được kìm hãm trọng số)
         A_z_i = self.model(pts_i)
         res_i = self.pde_evaluator.compute_residual(
             xy=pts_i, A_z_star=A_z_i, nu=props_i["reluctivity"],
@@ -99,7 +81,8 @@ class TrainingManager:
             self.optimizer_adam.zero_grad(set_to_none=True)
             loss = self.compute_dynamic_loss(pts_u, props_u, pts_i, props_i)
             
-            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
+            # PHÒNG THỦ: Kiểm tra NaN an toàn tuyệt đối
+            if torch.isnan(loss) or torch.isinf(loss) or loss.item() > 1.5 * best_loss:
                 self.model.load_state_dict(best_model_state)
                 for param_group in self.optimizer_adam.param_groups:
                     param_group['lr'] *= 0.8
@@ -124,31 +107,3 @@ class TrainingManager:
                 
             if (epoch + 1) % self.visualizer_update_interval == 0:
                 self._trigger_visualization(epoch + 1, current_loss_value, pts_u, props_u, pts_i, props_i)
-
-    def train_lbfgs(self, epochs, pts_u, props_u, pts_i, props_i):
-        self.model.train()
-        lbfgs_counter = [0]
-        early_stop_triggered = False 
-        
-        def closure():
-            nonlocal early_stop_triggered
-            self.optimizer_lbfgs.zero_grad(set_to_none=True)
-            loss = self.compute_dynamic_loss(pts_u, props_u, pts_i, props_i)
-            loss.backward(retain_graph=True)
-            
-            lbfgs_counter[0] += 1
-            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
-                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
-                
-            if lbfgs_counter[0] % self.visualizer_update_interval == 0:
-                self._trigger_visualization(50000 + lbfgs_counter[0], loss.item(), pts_u, props_u, pts_i, props_i)
-                
-            if self.target_loss > 0 and loss.item() <= self.target_loss:
-                early_stop_triggered = True
-            return loss
-            
-        for epoch in range(epochs):
-            if early_stop_triggered:
-                print(f"L-BFGS Epoch {epoch + 1}: Đạt target_loss. KẾT THÚC SỚM!")
-                break
-            self.optimizer_lbfgs.step(closure)
