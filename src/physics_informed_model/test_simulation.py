@@ -68,7 +68,7 @@ def main():
         material="i_bar_left", 
         relative_permeability=1.05, 
         coercive=[0.0, 800000.0],
-        steepness=500.0
+        steepness=250.0
     )
 
     i_magnet_right = Segment(
@@ -76,7 +76,7 @@ def main():
         material="i_bar_right", 
         relative_permeability=1.05, 
         coercive=[0.0, -800000.0],
-        steepness=500.0
+        steepness=.0
     )
 
     model.geometry_engine_instance.add_segment(i_magnet_left)
