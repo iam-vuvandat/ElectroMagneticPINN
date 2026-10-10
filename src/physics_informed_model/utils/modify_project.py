@@ -1,104 +1,153 @@
 import os
 
-def extract_physics_config():
+def update_point_sampling_strategy():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
-    # =====================================================================
-    # 1. CẬP NHẬT TỆP: electro_magnetic_pinn.py
-    # =====================================================================
+    sampler_file = os.path.join(project_root, 'physics_domain', 'collocation_sampler.py')
+    with open(sampler_file, 'r', encoding='utf-8') as f:
+        sampler_content = f.read()
+
+    old_sampler_block = """    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+        collected_points = []
+        collected_count = 0
+        pool_size_value = number_of_points * 20
+        
+        while collected_count < number_of_points:
+            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
+            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+            
+            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
+            mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
+            mask_1d = mask_tensor.squeeze()
+            
+            if mask_1d.any():
+                valid_points = points_pool_tensor[mask_1d]
+                collected_points.append(valid_points)
+                collected_count += valid_points.shape[0]
+                
+        interface_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        interface_points_tensor = interface_points_tensor.detach().clone()
+        interface_points_tensor.requires_grad_(True)
+        return interface_points_tensor
+
+    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
+        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
+        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
+        
+        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
+        
+        combined_points_tensor = combined_points_tensor.detach().clone()
+        combined_points_tensor.requires_grad_(True)
+        return combined_points_tensor"""
+
+    new_sampler_block = """    def generate_material_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+        if number_of_points <= 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device).requires_grad_(True)
+            
+        collected_points = []
+        collected_count = 0
+        pool_size_value = max(number_of_points * 20, 1000)
+        
+        while collected_count < number_of_points:
+            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
+            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+            
+            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
+            mask_tensor = signed_distance_field_tensor < distance_threshold
+            mask_1d = mask_tensor.squeeze()
+            
+            if mask_1d.any():
+                valid_points = points_pool_tensor[mask_1d]
+                collected_points.append(valid_points)
+                collected_count += valid_points.shape[0]
+                
+        material_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        material_points_tensor = material_points_tensor.detach().clone()
+        material_points_tensor.requires_grad_(True)
+        return material_points_tensor
+
+    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_material_points, distance_threshold):
+        tensors_to_combine = []
+        
+        if number_of_uniform_points > 0:
+            tensors_to_combine.append(self.generate_uniform_points_tensor(number_of_uniform_points))
+            
+        if number_of_material_points > 0:
+            tensors_to_combine.append(self.generate_material_points_tensor(geometry_object, number_of_material_points, distance_threshold))
+            
+        combined_points_tensor = torch.cat(tensors_to_combine, dim=0)
+        
+        combined_points_tensor = combined_points_tensor.detach().clone()
+        combined_points_tensor.requires_grad_(True)
+        return combined_points_tensor"""
+
+    if "def generate_interface_points_tensor" in sampler_content:
+        sampler_content = sampler_content.replace(old_sampler_block, new_sampler_block)
+        with open(sampler_file, 'w', encoding='utf-8') as f:
+            f.write(sampler_content)
+        print(f"[*] Đã cập nhật collocation_sampler.py")
+
     pinn_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
     with open(pinn_file, 'r', encoding='utf-8') as f:
         pinn_content = f.read()
 
-    # Thêm physics_config vào hàm khởi tạo
-    old_init_block = """        self.visualization_config = SimpleNamespace(
-            active=False,
-            update_interval=100,
-            output_directory="animation_frames",
-            resolution=100,
-            gif_filename="training_process.gif",
-            gif_fps=10
-        )
-        
-        self.geometry_engine_instance = Geometry()"""
-        
-    new_init_block = """        self.visualization_config = SimpleNamespace(
-            active=False,
-            update_interval=100,
-            output_directory="animation_frames",
-            resolution=100,
-            gif_filename="training_process.gif",
-            gif_fps=10
-        )
-        
-        # BỔ SUNG: Cấu hình chuẩn hóa vật lý
-        self.physics_config = SimpleNamespace(
-            scale_L0=0.05,
-            scale_H0=1200000.0,
-            scale_nu0=VACUUM_RELUCTIVITY
-        )
-        
-        self.geometry_engine_instance = Geometry()"""
+    old_pinn_config = """        self.sampler_config = SimpleNamespace(
+            x_boundaries_tuple=(-0.05, 0.05),
+            y_boundaries_tuple=(-0.05, 0.05),
+            number_of_uniform_points=15000,
+            number_of_interface_points=5000,
+            distance_threshold=0.005
+        )"""
 
-    # Loại bỏ giá trị hardcode trong _build_system
-    old_build_block = """        self.L0 = self.collocation_sampler_instance.x_maximum
-        self.H0 = 800000.0
-        self.nu0 = VACUUM_RELUCTIVITY"""
-        
-    new_build_block = """        # SỬ DỤNG GIÁ TRỊ TỪ CONFIG THAY VÌ GÁN CỨNG
-        self.L0 = self.physics_config.scale_L0
-        self.H0 = self.physics_config.scale_H0
-        self.nu0 = self.physics_config.scale_nu0"""
+    new_pinn_config = """        self.sampler_config = SimpleNamespace(
+            x_boundaries_tuple=(-0.05, 0.05),
+            y_boundaries_tuple=(-0.05, 0.05),
+            number_of_uniform_points=8000,
+            number_of_material_points=7000,
+            distance_threshold=0.005
+        )"""
 
-    if "self.physics_config = SimpleNamespace" not in pinn_content:
-        pinn_content = pinn_content.replace(old_init_block, new_init_block)
-        pinn_content = pinn_content.replace(old_build_block, new_build_block)
+    old_pinn_execute = """        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
+            geometry_object=self.geometry_engine_instance,
+            number_of_uniform_points=self.sampler_config.number_of_uniform_points,
+            number_of_interface_points=self.sampler_config.number_of_interface_points,
+            distance_threshold=self.sampler_config.distance_threshold
+        )"""
+
+    new_pinn_execute = """        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
+            geometry_object=self.geometry_engine_instance,
+            number_of_uniform_points=self.sampler_config.number_of_uniform_points,
+            number_of_material_points=self.sampler_config.number_of_material_points,
+            distance_threshold=self.sampler_config.distance_threshold
+        )"""
+
+    if "number_of_interface_points" in pinn_content:
+        pinn_content = pinn_content.replace(old_pinn_config, new_pinn_config)
+        pinn_content = pinn_content.replace(old_pinn_execute, new_pinn_execute)
         with open(pinn_file, 'w', encoding='utf-8') as f:
             f.write(pinn_content)
-        print(f"[*] Đã trích xuất cấu hình vật lý vào: {pinn_file}")
+        print(f"[*] Đã cập nhật electro_magnetic_pinn.py")
 
-    # =====================================================================
-    # 2. CẬP NHẬT TỆP: maxwell_pde_loss.py
-    # =====================================================================
-    pde_file = os.path.join(project_root, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
-    with open(pde_file, 'r', encoding='utf-8') as f:
-        pde_content = f.read()
-
-    old_pde_init = "def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):"
-    new_pde_init = "def __init__(self, L0=0.05, H0=1200000.0, nu0=795774.715459):"
-
-    if old_pde_init in pde_content:
-        pde_content = pde_content.replace(old_pde_init, new_pde_init)
-        with open(pde_file, 'w', encoding='utf-8') as f:
-            f.write(pde_content)
-        print(f"[*] Đã sửa giá trị mặc định H0 trong: {pde_file}")
-
-    # =====================================================================
-    # 3. CẬP NHẬT TỆP: test_simulation.py
-    # =====================================================================
     test_file = os.path.join(project_root, 'test_simulation.py')
     with open(test_file, 'r', encoding='utf-8') as f:
         test_content = f.read()
 
-    # Chèn cấu hình thiết lập H0 bằng 1.5 lần max_coercive_field
-    old_test_setup = """    model = ElectroMagneticPINN()
-    
-    # Thiết lập miền không gian tính toán"""
-    
-    new_test_setup = """    model = ElectroMagneticPINN()
-    
-    # Thiết lập hệ số chuẩn hóa H0 (1.5 lần lực kháng từ cực đại)
-    max_coercive_field = 800000.0
-    model.physics_config.scale_H0 = max_coercive_field * 1.5
-    
-    # Thiết lập miền không gian tính toán"""
+    old_test_setup = """    model.sampler_config.number_of_uniform_points = 12000
+    model.sampler_config.number_of_interface_points = 3000
+    model.sampler_config.distance_threshold = 0.005"""
 
-    if "model.physics_config.scale_H0" not in test_content:
+    new_test_setup = """    model.sampler_config.number_of_uniform_points = 8000
+    model.sampler_config.number_of_material_points = 7000
+    model.sampler_config.distance_threshold = 0.005"""
+
+    if "number_of_interface_points" in test_content:
         test_content = test_content.replace(old_test_setup, new_test_setup)
         with open(test_file, 'w', encoding='utf-8') as f:
             f.write(test_content)
-        print(f"[*] Đã thiết lập H0 động (1.5x) vào: {test_file}")
+        print(f"[*] Đã cập nhật test_simulation.py")
 
 if __name__ == "__main__":
-    extract_physics_config()
+    update_point_sampling_strategy()

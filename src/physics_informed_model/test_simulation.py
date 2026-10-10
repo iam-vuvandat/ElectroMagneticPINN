@@ -35,8 +35,8 @@ def main():
     model.sampler_config.x_boundaries_tuple = (-0.1, 0.1)
     model.sampler_config.y_boundaries_tuple = (-0.1, 0.1)
     
-    model.sampler_config.number_of_uniform_points = 12000
-    model.sampler_config.number_of_interface_points = 3000
+    model.sampler_config.number_of_uniform_points = 8000
+    model.sampler_config.number_of_material_points = 7000
     model.sampler_config.distance_threshold = 0.005
     
     model.pinn_config.hidden_layers = 6

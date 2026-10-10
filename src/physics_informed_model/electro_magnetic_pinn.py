@@ -14,8 +14,8 @@ class ElectroMagneticPINN:
         self.sampler_config = SimpleNamespace(
             x_boundaries_tuple=(-0.05, 0.05),
             y_boundaries_tuple=(-0.05, 0.05),
-            number_of_uniform_points=15000,
-            number_of_interface_points=5000,
+            number_of_uniform_points=8000,
+            number_of_material_points=7000,
             distance_threshold=0.005
         )
         
@@ -103,7 +103,7 @@ class ElectroMagneticPINN:
         points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
             geometry_object=self.geometry_engine_instance,
             number_of_uniform_points=self.sampler_config.number_of_uniform_points,
-            number_of_interface_points=self.sampler_config.number_of_interface_points,
+            number_of_material_points=self.sampler_config.number_of_material_points,
             distance_threshold=self.sampler_config.distance_threshold
         )
         
