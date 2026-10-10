@@ -35,15 +35,15 @@ def main():
     model.sampler_config.x_boundaries_tuple = (-0.1, 0.1)
     model.sampler_config.y_boundaries_tuple = (-0.1, 0.1)
     
-    model.sampler_config.number_of_uniform_points = 2000
-    model.sampler_config.number_of_interface_points = 6000
+    model.sampler_config.number_of_uniform_points = 12000
+    model.sampler_config.number_of_interface_points = 3000
     model.sampler_config.distance_threshold = 0.005
     
     model.pinn_config.hidden_layers = 6
     model.pinn_config.hidden_neurons = 64
     model.pinn_config.activation_function = nn.Tanh()
     
-    model.training_config.epochs_adam = 12000
+    model.training_config.epochs_adam = 4000
     model.training_config.epochs_lbfgs = 1000
     model.training_config.learning_rate_adam = 1e-3
     model.training_config.target_loss = 5e-5
