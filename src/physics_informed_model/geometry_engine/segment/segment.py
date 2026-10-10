@@ -9,24 +9,24 @@ class Segment:
                  relative_permeability=1.0,
                  bh_curve=None,
                  coercive=[0.0, 0.0],
-                 current=0.0):
+                 current=0.0,
+                 steepness=5000.0):
         
         self.material = material
         self.relative_permeability = relative_permeability
         self.coercive = coercive
         self.current = current
         self.bh_curve = bh_curve
+        self.steepness = steepness
         
         self.outline = None
         self.outline_tensor = None
         self.section_area = 0.0
         self.current_density = 0.0
-        self.steepness = 1.0 
         
         if outline is not None:
             self.set_outline(outline) 
             self.compute_current_density()
-            self.calculate_penetrating_steepness()
             
         if self.bh_curve is None:
             self.compute_constant_bh_curve()
@@ -55,7 +55,7 @@ class Segment:
 
     def calculate_penetrating_steepness(self, grid_resolution=50):
         if self.outline_tensor is None or self.outline_tensor.shape[0] < 3:
-            self.steepness = 1.0
+            self.steepness = 5000.0
             return self.steepness
             
         x_min = torch.min(self.outline_tensor[:, 0]).item()
@@ -73,15 +73,12 @@ class Segment:
         min_sdf = torch.min(sdf_values).item() 
         
         if min_sdf >= 0.0:
-            self.steepness = 0.0 
+            self.steepness = 5000.0 
             return self.steepness
             
         d_max = abs(min_sdf)
-        
         ideal_k = 6.0 / d_max
-        s = (5000.0 - ideal_k) / 4960.0
-        
-        self.steepness = max(0.0, min(1.0, float(s)))
+        self.steepness = max(1.0, min(5000.0, float(ideal_k)))
         return self.steepness
 
     def set_outline(self, outline):
