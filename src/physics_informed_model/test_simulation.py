@@ -43,10 +43,10 @@ def main():
     model.pinn_config.hidden_neurons = 64
     model.pinn_config.activation_function = nn.Tanh()
     
-    model.training_config.epochs_adam = 12000
-    model.training_config.epochs_lbfgs = 300
+    model.training_config.epochs_adam = 4000
+    model.training_config.epochs_lbfgs = 1000
     model.training_config.learning_rate_adam = 1e-3
-    model.training_config.target_loss = 0.0
+    model.training_config.target_loss = 5e-5
     model.training_config.lbfgs_learning_rate = 0.8
     model.training_config.lbfgs_maximum_iterations = 1000
     model.training_config.lbfgs_maximum_evaluations = 1250
