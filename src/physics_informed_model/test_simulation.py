@@ -43,7 +43,7 @@ def main():
     model.pinn_config.hidden_neurons = 64
     model.pinn_config.activation_function = nn.Tanh()
     
-    model.training_config.epochs_adam = 4000
+    model.training_config.epochs_adam = 12000
     model.training_config.epochs_lbfgs = 1000
     model.training_config.learning_rate_adam = 1e-3
     model.training_config.target_loss = 5e-5
@@ -68,7 +68,7 @@ def main():
         material="i_bar_left", 
         relative_permeability=1.05, 
         coercive=[0.0, 800000.0],
-        steepness=250.0
+        steepness=200.0
     )
 
     i_magnet_right = Segment(
@@ -76,7 +76,7 @@ def main():
         material="i_bar_right", 
         relative_permeability=1.05, 
         coercive=[0.0, -800000.0],
-        steepness=.0
+        steepness=200.0
     )
 
     model.geometry_engine_instance.add_segment(i_magnet_left)
