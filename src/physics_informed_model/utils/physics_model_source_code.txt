@@ -46,15 +46,18 @@ class ElectroMagneticPINN:
         self.sampler_config = SimpleNamespace(
             x_boundaries_tuple=(-0.05, 0.05),
             y_boundaries_tuple=(-0.05, 0.05),
-            number_of_uniform_points=15000,
-            number_of_interface_points=5000,
+            number_of_uniform_points=8000,
+            number_of_material_points=7000,
             distance_threshold=0.005
         )
         
         self.pinn_config = SimpleNamespace(
             hidden_layers=4,
             hidden_neurons=64,
-            activation_function=nn.SiLU()
+            activation_function=nn.SiLU(),
+            fourier_features=False,
+            fourier_sigma=1.0,
+            fourier_mapping_size=256
         )
         
         self.training_config = SimpleNamespace(
@@ -135,7 +138,7 @@ class ElectroMagneticPINN:
         points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
             geometry_object=self.geometry_engine_instance,
             number_of_uniform_points=self.sampler_config.number_of_uniform_points,
-            number_of_interface_points=self.sampler_config.number_of_interface_points,
+            number_of_material_points=self.sampler_config.number_of_material_points,
             distance_threshold=self.sampler_config.distance_threshold
         )
         
@@ -182,9 +185,10 @@ class ElectroMagneticPINN:
 
 import torch
 import torch.nn as nn
+import numpy as np
 
 class PINNArchitecture(nn.Module):
-    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05, activation_function=None):
+    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05, activation_function=None, fourier_features=False, fourier_sigma=1.0, fourier_mapping_size=256):
         super().__init__()
         
         self.input_dim = input_dim
@@ -192,6 +196,17 @@ class PINNArchitecture(nn.Module):
         self.hidden_neurons = hidden_neurons
         self.output_dim = output_dim
         self.domain_scale = domain_scale
+        
+        self.fourier_features = fourier_features
+        self.fourier_sigma = fourier_sigma
+        self.fourier_mapping_size = fourier_mapping_size
+        
+        if self.fourier_features:
+            B_matrix = torch.randn(self.fourier_mapping_size, self.input_dim) * self.fourier_sigma
+            self.register_buffer('B_matrix', B_matrix)
+            actual_input_dim = self.fourier_mapping_size * 2
+        else:
+            actual_input_dim = self.input_dim
         
         
         if activation_function is None:
@@ -210,7 +225,7 @@ class PINNArchitecture(nn.Module):
         layers = []
         
         
-        layers.append(nn.Linear(self.input_dim, self.hidden_neurons))
+        layers.append(nn.Linear(actual_input_dim, self.hidden_neurons))
         layers.append(self.activations[0])
         
         
@@ -237,8 +252,14 @@ class PINNArchitecture(nn.Module):
 
     def forward(self, xy):
         xy_normalized = xy / self.domain_scale
-        raw_output = self.network(xy_normalized)
         
+        if self.fourier_features:
+            projected = (2.0 * np.pi * xy_normalized) @ self.B_matrix.T
+            x_input = torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1)
+        else:
+            x_input = xy_normalized
+            
+        raw_output = self.network(x_input)
         A_z_star = raw_output * self.boundary_factor(xy)
         return A_z_star
 
@@ -247,147 +268,47 @@ class PINNArchitecture(nn.Module):
 --- FILE: test_simulation.py ---
 
 import os
-import sys
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+def maximize_fourier_technique():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(base_dir, '..'))
+    
+    test_file = os.path.join(project_root, 'test_simulation.py')
+    with open(test_file, 'r', encoding='utf-8') as f:
+        test_content = f.read()
 
-current_directory = os.path.dirname(os.path.abspath(__file__))
-if current_directory not in sys.path:
-    sys.path.insert(0, current_directory)
-
-import torch
-import torch.nn as nn
-if torch.cuda.is_available():
-    torch.set_float32_matmul_precision("high")
-
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from geometry_engine.segment.segment import Segment
-from electro_magnetic_pinn import ElectroMagneticPINN
-import shutil
-
-def main():
-    if os.path.exists('figure'):
-        shutil.rmtree('figure')
-    os.makedirs('figure')
-    print("version 7.0 - Dual Straight I-Shaped Magnets Simulation")
-    
-    model = ElectroMagneticPINN()
-    
-    max_coercive_field = 800000.0
-    model.physics_config.scale_H0 = max_coercive_field * 1.5
-    model.physics_config.scale_L0 = 0.12
-    
-    model.sampler_config.x_boundaries_tuple = (-0.1, 0.1)
-    model.sampler_config.y_boundaries_tuple = (-0.1, 0.1)
-    
-    model.sampler_config.number_of_uniform_points = 12000
-    model.sampler_config.number_of_interface_points = 3000
-    model.sampler_config.distance_threshold = 0.005
-    
-    model.pinn_config.hidden_layers = 6
+    old_config = """    model.pinn_config.hidden_layers = 6
     model.pinn_config.hidden_neurons = 64
     model.pinn_config.activation_function = nn.Tanh()
     
+    model.pinn_config.fourier_features = True
+    model.pinn_config.fourier_sigma = 0.5
+    model.pinn_config.fourier_mapping_size = 256
+    
     model.training_config.epochs_adam = 4000
     model.training_config.epochs_lbfgs = 1000
-    model.training_config.learning_rate_adam = 1e-3
-    model.training_config.target_loss = 5e-5
-    model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_iterations = 1000
-    model.training_config.lbfgs_maximum_evaluations = 1250
-    model.training_config.lbfgs_tolerance_gradient = 1e-8
-    model.training_config.lbfgs_tolerance_change = 1e-10
-    model.training_config.lbfgs_history_size = 50
-    
-    model.visualization_config.active = True
-    model.visualization_config.update_interval = 50 
-    model.visualization_config.output_directory = "figure"
-    model.visualization_config.resolution = 80
-    model.visualization_config.gif_filename = "training_process.gif"
-    model.visualization_config.gif_fps = 15
-    
-    model.update_electromagnetic_pinn()
-    
-    i_magnet_left = Segment(
-        outline=[[-0.04, -0.04], [-0.02, -0.04], [-0.02, 0.04], [-0.04, 0.04]],
-        material="i_bar_left", 
-        relative_permeability=1.05, 
-        coercive=[0.0, 800000.0],
-        steepness=200.0
-    )
+    model.training_config.learning_rate_adam = 1e-3"""
 
-    i_magnet_right = Segment(
-        outline=[[0.02, -0.04], [0.04, -0.04], [0.04, 0.04], [0.02, 0.04]],
-        material="i_bar_right", 
-        relative_permeability=1.05, 
-        coercive=[0.0, -800000.0],
-        steepness=200.0
-    )
+    new_config = """    model.pinn_config.hidden_layers = 6
+    model.pinn_config.hidden_neurons = 128
+    model.pinn_config.activation_function = nn.Tanh()
+    
+    model.pinn_config.fourier_features = True
+    model.pinn_config.fourier_sigma = 0.85
+    model.pinn_config.fourier_mapping_size = 512
+    
+    model.training_config.epochs_adam = 5000
+    model.training_config.epochs_lbfgs = 1000
+    model.training_config.learning_rate_adam = 8e-4"""
 
-    model.geometry_engine_instance.add_segment(i_magnet_left)
-    model.geometry_engine_instance.add_segment(i_magnet_right)
-
-    xb = model.sampler_config.x_boundaries_tuple
-    yb = model.sampler_config.y_boundaries_tuple
-    
-    model.geometry_engine_instance.plot_problem_definition(
-        x_boundaries_tuple=xb, y_boundaries_tuple=yb, resolution=120
-    )
-
-    model.execute_training_process()
-    
-    resolution = 120
-    x_coords = np.linspace(xb[0], xb[1], resolution)
-    y_coords = np.linspace(yb[0], yb[1], resolution)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    
-    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
-    
-    A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
-    
-    A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
-    B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
-    B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
-    B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
-    
-    fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
-    contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
-    fig1.colorbar(contour_az, ax=axs[0, 0], label="A_z (Wb/m)")
-    axs[0, 0].set_title("Magnetic Vector Potential ($A_z$)")
-    axs[0, 0].set_aspect('equal')
-    
-    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
-    fig1.colorbar(contour_b, ax=axs[0, 1], label="|B| (T)")
-    axs[0, 1].set_title("Magnetic Flux Density Magnitude ($|B|$)")
-    axs[0, 1].set_aspect('equal')
-    
-    contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
-    fig1.colorbar(contour_bx, ax=axs[1, 0], label="B_x (T)")
-    axs[1, 0].set_title("Magnetic Field Component ($B_x$)")
-    axs[1, 0].set_aspect('equal')
-    
-    contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
-    fig1.colorbar(contour_by, ax=axs[1, 1], label="B_y (T)")
-    axs[1, 1].set_title("Magnetic Field Component ($B_y$)")
-    axs[1, 1].set_aspect('equal')
-    fig1.tight_layout()
-    
-    fig2, ax2 = plt.subplots(figsize=(8, 7))
-    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
-    fig2.colorbar(contour_b_bg, ax=ax2, label="|B| (T)")
-    
-    step = 4
-    ax2.quiver(X_grid[::step, ::step], Y_grid[::step, ::step], B_x_grid[::step, ::step], B_y_grid[::step, ::step], color='black', pivot='mid')
-    ax2.set_title("Magnetic Flux Density Vectors (B)")
-    ax2.set_aspect('equal')
-    fig2.tight_layout()
-    
-    plt.savefig('figure/final_results.png', dpi=150)
-    plt.close('all')
-    print('[*] Đã lưu kết quả mô phỏng vào final_results.png')
+    if "model.pinn_config.fourier_mapping_size = 256" in test_content:
+        test_content = test_content.replace(old_config, new_config)
+        
+        with open(test_file, 'w', encoding='utf-8') as f:
+            f.write(test_content)
+        print("[*] Đã tự động tinh chỉnh siêu tham số tối đa hóa Fourier vào test_simulation.py")
+    else:
+        print("[!] Không tìm thấy cấu hình cũ để thay thế. Hãy kiểm tra lại tệp test_simulation.py.")
 
 
 ========================================
@@ -946,10 +867,13 @@ class CollocationSampler:
         points_tensor.requires_grad_(True)
         return points_tensor
 
-    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+    def generate_material_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+        if number_of_points <= 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device).requires_grad_(True)
+            
         collected_points = []
         collected_count = 0
-        pool_size_value = number_of_points * 20
+        pool_size_value = max(number_of_points * 20, 1000)
         
         while collected_count < number_of_points:
             points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
@@ -957,7 +881,7 @@ class CollocationSampler:
             points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
             
             signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
-            mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
+            mask_tensor = signed_distance_field_tensor < distance_threshold
             mask_1d = mask_tensor.squeeze()
             
             if mask_1d.any():
@@ -965,16 +889,21 @@ class CollocationSampler:
                 collected_points.append(valid_points)
                 collected_count += valid_points.shape[0]
                 
-        interface_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        interface_points_tensor = interface_points_tensor.detach().clone()
-        interface_points_tensor.requires_grad_(True)
-        return interface_points_tensor
+        material_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        material_points_tensor = material_points_tensor.detach().clone()
+        material_points_tensor.requires_grad_(True)
+        return material_points_tensor
 
-    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
-        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
-        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
+    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_material_points, distance_threshold):
+        tensors_to_combine = []
         
-        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
+        if number_of_uniform_points > 0:
+            tensors_to_combine.append(self.generate_uniform_points_tensor(number_of_uniform_points))
+            
+        if number_of_material_points > 0:
+            tensors_to_combine.append(self.generate_material_points_tensor(geometry_object, number_of_material_points, distance_threshold))
+            
+        combined_points_tensor = torch.cat(tensors_to_combine, dim=0)
         
         combined_points_tensor = combined_points_tensor.detach().clone()
         combined_points_tensor.requires_grad_(True)
@@ -1039,105 +968,134 @@ class MaxwellPDELoss:
 
 import os
 
-def extract_physics_config():
+def apply_fourier_feature_encoding():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
-    # =====================================================================
-    # 1. CẬP NHẬT TỆP: electro_magnetic_pinn.py
-    # =====================================================================
+    arch_file = os.path.join(project_root, 'pinn_architecture.py')
+    with open(arch_file, 'r', encoding='utf-8') as f:
+        arch_content = f.read()
+
+    old_arch_import = """import torch
+import torch.nn as nn
+
+class PINNArchitecture(nn.Module):"""
+
+    new_arch_import = """import torch
+import torch.nn as nn
+import numpy as np
+
+class PINNArchitecture(nn.Module):"""
+
+    old_arch_init = """    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05, activation_function=None):
+        super().__init__()
+        
+        self.input_dim = input_dim
+        self.hidden_layers = hidden_layers
+        self.hidden_neurons = hidden_neurons
+        self.output_dim = output_dim
+        self.domain_scale = domain_scale"""
+
+    new_arch_init = """    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05, activation_function=None, fourier_features=False, fourier_sigma=1.0, fourier_mapping_size=256):
+        super().__init__()
+        
+        self.input_dim = input_dim
+        self.hidden_layers = hidden_layers
+        self.hidden_neurons = hidden_neurons
+        self.output_dim = output_dim
+        self.domain_scale = domain_scale
+        
+        self.fourier_features = fourier_features
+        self.fourier_sigma = fourier_sigma
+        self.fourier_mapping_size = fourier_mapping_size
+        
+        if self.fourier_features:
+            B_matrix = torch.randn(self.fourier_mapping_size, self.input_dim) * self.fourier_sigma
+            self.register_buffer('B_matrix', B_matrix)
+            actual_input_dim = self.fourier_mapping_size * 2
+        else:
+            actual_input_dim = self.input_dim"""
+
+    old_arch_layers = """        layers.append(nn.Linear(self.input_dim, self.hidden_neurons))"""
+    new_arch_layers = """        layers.append(nn.Linear(actual_input_dim, self.hidden_neurons))"""
+
+    old_arch_forward = """    def forward(self, xy):
+        xy_normalized = xy / self.domain_scale
+        raw_output = self.network(xy_normalized)
+        
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star"""
+
+    new_arch_forward = """    def forward(self, xy):
+        xy_normalized = xy / self.domain_scale
+        
+        if self.fourier_features:
+            projected = (2.0 * np.pi * xy_normalized) @ self.B_matrix.T
+            x_input = torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1)
+        else:
+            x_input = xy_normalized
+            
+        raw_output = self.network(x_input)
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star"""
+
+    if "fourier_features" not in arch_content:
+        if "import numpy as np" not in arch_content:
+            arch_content = arch_content.replace(old_arch_import, new_arch_import)
+        arch_content = arch_content.replace(old_arch_init, new_arch_init)
+        arch_content = arch_content.replace(old_arch_layers, new_arch_layers)
+        arch_content = arch_content.replace(old_arch_forward, new_arch_forward)
+        with open(arch_file, 'w', encoding='utf-8') as f:
+            f.write(arch_content)
+
     pinn_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
     with open(pinn_file, 'r', encoding='utf-8') as f:
         pinn_content = f.read()
 
-    # Thêm physics_config vào hàm khởi tạo
-    old_init_block = """        self.visualization_config = SimpleNamespace(
-            active=False,
-            update_interval=100,
-            output_directory="animation_frames",
-            resolution=100,
-            gif_filename="training_process.gif",
-            gif_fps=10
-        )
-        
-        self.geometry_engine_instance = Geometry()"""
-        
-    new_init_block = """        self.visualization_config = SimpleNamespace(
-            active=False,
-            update_interval=100,
-            output_directory="animation_frames",
-            resolution=100,
-            gif_filename="training_process.gif",
-            gif_fps=10
-        )
-        
-        # BỔ SUNG: Cấu hình chuẩn hóa vật lý
-        self.physics_config = SimpleNamespace(
-            scale_L0=0.05,
-            scale_H0=1200000.0,
-            scale_nu0=VACUUM_RELUCTIVITY
-        )
-        
-        self.geometry_engine_instance = Geometry()"""
+    old_pinn_config = """        self.pinn_config = SimpleNamespace(
+            hidden_layers=4,
+            hidden_neurons=64,
+            activation_function=nn.SiLU()
+        )"""
 
-    # Loại bỏ giá trị hardcode trong _build_system
-    old_build_block = """        self.L0 = self.collocation_sampler_instance.x_maximum
-        self.H0 = 800000.0
-        self.nu0 = VACUUM_RELUCTIVITY"""
-        
-    new_build_block = """        # SỬ DỤNG GIÁ TRỊ TỪ CONFIG THAY VÌ GÁN CỨNG
-        self.L0 = self.physics_config.scale_L0
-        self.H0 = self.physics_config.scale_H0
-        self.nu0 = self.physics_config.scale_nu0"""
+    new_pinn_config = """        self.pinn_config = SimpleNamespace(
+            hidden_layers=4,
+            hidden_neurons=64,
+            activation_function=nn.SiLU(),
+            fourier_features=False,
+            fourier_sigma=1.0,
+            fourier_mapping_size=256
+        )"""
 
-    if "self.physics_config = SimpleNamespace" not in pinn_content:
-        pinn_content = pinn_content.replace(old_init_block, new_init_block)
-        pinn_content = pinn_content.replace(old_build_block, new_build_block)
+    if "fourier_features" not in pinn_content:
+        pinn_content = pinn_content.replace(old_pinn_config, new_pinn_config)
         with open(pinn_file, 'w', encoding='utf-8') as f:
             f.write(pinn_content)
-        print(f"[*] Đã trích xuất cấu hình vật lý vào: {pinn_file}")
 
-    # =====================================================================
-    # 2. CẬP NHẬT TỆP: maxwell_pde_loss.py
-    # =====================================================================
-    pde_file = os.path.join(project_root, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
-    with open(pde_file, 'r', encoding='utf-8') as f:
-        pde_content = f.read()
-
-    old_pde_init = "def __init__(self, L0=0.05, H0=800000.0, nu0=795774.715459):"
-    new_pde_init = "def __init__(self, L0=0.05, H0=1200000.0, nu0=795774.715459):"
-
-    if old_pde_init in pde_content:
-        pde_content = pde_content.replace(old_pde_init, new_pde_init)
-        with open(pde_file, 'w', encoding='utf-8') as f:
-            f.write(pde_content)
-        print(f"[*] Đã sửa giá trị mặc định H0 trong: {pde_file}")
-
-    # =====================================================================
-    # 3. CẬP NHẬT TỆP: test_simulation.py
-    # =====================================================================
     test_file = os.path.join(project_root, 'test_simulation.py')
     with open(test_file, 'r', encoding='utf-8') as f:
         test_content = f.read()
 
-    # Chèn cấu hình thiết lập H0 bằng 1.5 lần max_coercive_field
-    old_test_setup = """    model = ElectroMagneticPINN()
+    old_test_setup = """    model.pinn_config.hidden_layers = 6
+    model.pinn_config.hidden_neurons = 64
+    model.pinn_config.activation_function = nn.Tanh()
     
-    # Thiết lập miền không gian tính toán"""
-    
-    new_test_setup = """    model = ElectroMagneticPINN()
-    
-    # Thiết lập hệ số chuẩn hóa H0 (1.5 lần lực kháng từ cực đại)
-    max_coercive_field = 800000.0
-    model.physics_config.scale_H0 = max_coercive_field * 1.5
-    
-    # Thiết lập miền không gian tính toán"""
+    model.training_config.epochs_adam = 4000"""
 
-    if "model.physics_config.scale_H0" not in test_content:
+    new_test_setup = """    model.pinn_config.hidden_layers = 6
+    model.pinn_config.hidden_neurons = 64
+    model.pinn_config.activation_function = nn.Tanh()
+    
+    model.pinn_config.fourier_features = True
+    model.pinn_config.fourier_sigma = 2.0
+    model.pinn_config.fourier_mapping_size = 256
+    
+    model.training_config.epochs_adam = 4000"""
+
+    if "model.pinn_config.fourier_features" not in test_content:
         test_content = test_content.replace(old_test_setup, new_test_setup)
         with open(test_file, 'w', encoding='utf-8') as f:
             f.write(test_content)
-        print(f"[*] Đã thiết lập H0 động (1.5x) vào: {test_file}")
 
 
 ========================================

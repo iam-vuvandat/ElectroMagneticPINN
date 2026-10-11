@@ -53,7 +53,7 @@ class TrainingManager:
         )
         return torch.mean(residual_star**2)
 
-    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, dynamic_resampling=False, resample_fn=None, resample_interval=100):
         self.model.train()
         best_loss = float('inf')
         best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
@@ -65,6 +65,9 @@ class TrainingManager:
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
         
         for epoch in range(epochs):
+            if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
+                points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor = resample_fn()
+
             self.optimizer_adam.zero_grad(set_to_none=True)
             loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
             
@@ -112,7 +115,6 @@ class TrainingManager:
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
                 print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
                 
-            # BỔ SUNG: Cho phép L-BFGS chụp ảnh định kỳ vào thư mục chung
             if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
                 self.visualizer.save_frame(
                     50000 + lbfgs_counter[0], loss.item(), 
