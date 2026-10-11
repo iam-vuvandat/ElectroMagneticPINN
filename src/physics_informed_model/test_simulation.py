@@ -43,6 +43,10 @@ def main():
     model.pinn_config.hidden_neurons = 64
     model.pinn_config.activation_function = nn.Tanh()
     
+    model.pinn_config.fourier_features = True
+    model.pinn_config.fourier_sigma = 2.0
+    model.pinn_config.fourier_mapping_size = 256
+    
     model.training_config.epochs_adam = 4000
     model.training_config.epochs_lbfgs = 1000
     model.training_config.learning_rate_adam = 1e-3

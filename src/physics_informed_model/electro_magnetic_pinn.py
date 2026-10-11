@@ -22,7 +22,10 @@ class ElectroMagneticPINN:
         self.pinn_config = SimpleNamespace(
             hidden_layers=4,
             hidden_neurons=64,
-            activation_function=nn.SiLU()
+            activation_function=nn.SiLU(),
+            fourier_features=False,
+            fourier_sigma=1.0,
+            fourier_mapping_size=256
         )
         
         self.training_config = SimpleNamespace(

@@ -1,153 +1,133 @@
 import os
 
-def update_point_sampling_strategy():
+def apply_fourier_feature_encoding():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(base_dir, '..'))
     
-    sampler_file = os.path.join(project_root, 'physics_domain', 'collocation_sampler.py')
-    with open(sampler_file, 'r', encoding='utf-8') as f:
-        sampler_content = f.read()
+    arch_file = os.path.join(project_root, 'pinn_architecture.py')
+    with open(arch_file, 'r', encoding='utf-8') as f:
+        arch_content = f.read()
 
-    old_sampler_block = """    def generate_interface_points_tensor(self, geometry_object, number_of_points, distance_threshold):
-        collected_points = []
-        collected_count = 0
-        pool_size_value = number_of_points * 20
-        
-        while collected_count < number_of_points:
-            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
-            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
-            
-            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
-            mask_tensor = torch.abs(signed_distance_field_tensor) < distance_threshold
-            mask_1d = mask_tensor.squeeze()
-            
-            if mask_1d.any():
-                valid_points = points_pool_tensor[mask_1d]
-                collected_points.append(valid_points)
-                collected_count += valid_points.shape[0]
-                
-        interface_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        interface_points_tensor = interface_points_tensor.detach().clone()
-        interface_points_tensor.requires_grad_(True)
-        return interface_points_tensor
+    old_arch_import = """import torch
+import torch.nn as nn
 
-    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_interface_points, distance_threshold):
-        uniform_points_tensor = self.generate_uniform_points_tensor(number_of_uniform_points)
-        interface_points_tensor = self.generate_interface_points_tensor(geometry_object, number_of_interface_points, distance_threshold)
-        
-        combined_points_tensor = torch.cat([uniform_points_tensor, interface_points_tensor], dim=0)
-        
-        combined_points_tensor = combined_points_tensor.detach().clone()
-        combined_points_tensor.requires_grad_(True)
-        return combined_points_tensor"""
+class PINNArchitecture(nn.Module):"""
 
-    new_sampler_block = """    def generate_material_points_tensor(self, geometry_object, number_of_points, distance_threshold):
-        if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device).requires_grad_(True)
-            
-        collected_points = []
-        collected_count = 0
-        pool_size_value = max(number_of_points * 20, 1000)
-        
-        while collected_count < number_of_points:
-            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
-            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
-            
-            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
-            mask_tensor = signed_distance_field_tensor < distance_threshold
-            mask_1d = mask_tensor.squeeze()
-            
-            if mask_1d.any():
-                valid_points = points_pool_tensor[mask_1d]
-                collected_points.append(valid_points)
-                collected_count += valid_points.shape[0]
-                
-        material_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        material_points_tensor = material_points_tensor.detach().clone()
-        material_points_tensor.requires_grad_(True)
-        return material_points_tensor
+    new_arch_import = """import torch
+import torch.nn as nn
+import numpy as np
 
-    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_material_points, distance_threshold):
-        tensors_to_combine = []
-        
-        if number_of_uniform_points > 0:
-            tensors_to_combine.append(self.generate_uniform_points_tensor(number_of_uniform_points))
-            
-        if number_of_material_points > 0:
-            tensors_to_combine.append(self.generate_material_points_tensor(geometry_object, number_of_material_points, distance_threshold))
-            
-        combined_points_tensor = torch.cat(tensors_to_combine, dim=0)
-        
-        combined_points_tensor = combined_points_tensor.detach().clone()
-        combined_points_tensor.requires_grad_(True)
-        return combined_points_tensor"""
+class PINNArchitecture(nn.Module):"""
 
-    if "def generate_interface_points_tensor" in sampler_content:
-        sampler_content = sampler_content.replace(old_sampler_block, new_sampler_block)
-        with open(sampler_file, 'w', encoding='utf-8') as f:
-            f.write(sampler_content)
-        print(f"[*] Đã cập nhật collocation_sampler.py")
+    old_arch_init = """    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05, activation_function=None):
+        super().__init__()
+        
+        self.input_dim = input_dim
+        self.hidden_layers = hidden_layers
+        self.hidden_neurons = hidden_neurons
+        self.output_dim = output_dim
+        self.domain_scale = domain_scale"""
+
+    new_arch_init = """    def __init__(self, input_dim=2, hidden_layers=4, hidden_neurons=50, output_dim=1, domain_scale=0.05, activation_function=None, fourier_features=False, fourier_sigma=1.0, fourier_mapping_size=256):
+        super().__init__()
+        
+        self.input_dim = input_dim
+        self.hidden_layers = hidden_layers
+        self.hidden_neurons = hidden_neurons
+        self.output_dim = output_dim
+        self.domain_scale = domain_scale
+        
+        self.fourier_features = fourier_features
+        self.fourier_sigma = fourier_sigma
+        self.fourier_mapping_size = fourier_mapping_size
+        
+        if self.fourier_features:
+            B_matrix = torch.randn(self.fourier_mapping_size, self.input_dim) * self.fourier_sigma
+            self.register_buffer('B_matrix', B_matrix)
+            actual_input_dim = self.fourier_mapping_size * 2
+        else:
+            actual_input_dim = self.input_dim"""
+
+    old_arch_layers = """        layers.append(nn.Linear(self.input_dim, self.hidden_neurons))"""
+    new_arch_layers = """        layers.append(nn.Linear(actual_input_dim, self.hidden_neurons))"""
+
+    old_arch_forward = """    def forward(self, xy):
+        xy_normalized = xy / self.domain_scale
+        raw_output = self.network(xy_normalized)
+        
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star"""
+
+    new_arch_forward = """    def forward(self, xy):
+        xy_normalized = xy / self.domain_scale
+        
+        if self.fourier_features:
+            projected = (2.0 * np.pi * xy_normalized) @ self.B_matrix.T
+            x_input = torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1)
+        else:
+            x_input = xy_normalized
+            
+        raw_output = self.network(x_input)
+        A_z_star = raw_output * self.boundary_factor(xy)
+        return A_z_star"""
+
+    if "fourier_features" not in arch_content:
+        if "import numpy as np" not in arch_content:
+            arch_content = arch_content.replace(old_arch_import, new_arch_import)
+        arch_content = arch_content.replace(old_arch_init, new_arch_init)
+        arch_content = arch_content.replace(old_arch_layers, new_arch_layers)
+        arch_content = arch_content.replace(old_arch_forward, new_arch_forward)
+        with open(arch_file, 'w', encoding='utf-8') as f:
+            f.write(arch_content)
 
     pinn_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
     with open(pinn_file, 'r', encoding='utf-8') as f:
         pinn_content = f.read()
 
-    old_pinn_config = """        self.sampler_config = SimpleNamespace(
-            x_boundaries_tuple=(-0.05, 0.05),
-            y_boundaries_tuple=(-0.05, 0.05),
-            number_of_uniform_points=15000,
-            number_of_interface_points=5000,
-            distance_threshold=0.005
+    old_pinn_config = """        self.pinn_config = SimpleNamespace(
+            hidden_layers=4,
+            hidden_neurons=64,
+            activation_function=nn.SiLU()
         )"""
 
-    new_pinn_config = """        self.sampler_config = SimpleNamespace(
-            x_boundaries_tuple=(-0.05, 0.05),
-            y_boundaries_tuple=(-0.05, 0.05),
-            number_of_uniform_points=8000,
-            number_of_material_points=7000,
-            distance_threshold=0.005
+    new_pinn_config = """        self.pinn_config = SimpleNamespace(
+            hidden_layers=4,
+            hidden_neurons=64,
+            activation_function=nn.SiLU(),
+            fourier_features=False,
+            fourier_sigma=1.0,
+            fourier_mapping_size=256
         )"""
 
-    old_pinn_execute = """        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
-            geometry_object=self.geometry_engine_instance,
-            number_of_uniform_points=self.sampler_config.number_of_uniform_points,
-            number_of_interface_points=self.sampler_config.number_of_interface_points,
-            distance_threshold=self.sampler_config.distance_threshold
-        )"""
-
-    new_pinn_execute = """        points_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
-            geometry_object=self.geometry_engine_instance,
-            number_of_uniform_points=self.sampler_config.number_of_uniform_points,
-            number_of_material_points=self.sampler_config.number_of_material_points,
-            distance_threshold=self.sampler_config.distance_threshold
-        )"""
-
-    if "number_of_interface_points" in pinn_content:
+    if "fourier_features" not in pinn_content:
         pinn_content = pinn_content.replace(old_pinn_config, new_pinn_config)
-        pinn_content = pinn_content.replace(old_pinn_execute, new_pinn_execute)
         with open(pinn_file, 'w', encoding='utf-8') as f:
             f.write(pinn_content)
-        print(f"[*] Đã cập nhật electro_magnetic_pinn.py")
 
     test_file = os.path.join(project_root, 'test_simulation.py')
     with open(test_file, 'r', encoding='utf-8') as f:
         test_content = f.read()
 
-    old_test_setup = """    model.sampler_config.number_of_uniform_points = 12000
-    model.sampler_config.number_of_interface_points = 3000
-    model.sampler_config.distance_threshold = 0.005"""
+    old_test_setup = """    model.pinn_config.hidden_layers = 6
+    model.pinn_config.hidden_neurons = 64
+    model.pinn_config.activation_function = nn.Tanh()
+    
+    model.training_config.epochs_adam = 4000"""
 
-    new_test_setup = """    model.sampler_config.number_of_uniform_points = 8000
-    model.sampler_config.number_of_material_points = 7000
-    model.sampler_config.distance_threshold = 0.005"""
+    new_test_setup = """    model.pinn_config.hidden_layers = 6
+    model.pinn_config.hidden_neurons = 64
+    model.pinn_config.activation_function = nn.Tanh()
+    
+    model.pinn_config.fourier_features = True
+    model.pinn_config.fourier_sigma = 2.0
+    model.pinn_config.fourier_mapping_size = 256
+    
+    model.training_config.epochs_adam = 4000"""
 
-    if "number_of_interface_points" in test_content:
+    if "model.pinn_config.fourier_features" not in test_content:
         test_content = test_content.replace(old_test_setup, new_test_setup)
         with open(test_file, 'w', encoding='utf-8') as f:
             f.write(test_content)
-        print(f"[*] Đã cập nhật test_simulation.py")
 
 if __name__ == "__main__":
-    update_point_sampling_strategy()
+    apply_fourier_feature_encoding()
