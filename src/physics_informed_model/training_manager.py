@@ -62,6 +62,8 @@ class TrainingManager:
             
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
         
+        stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
+        
         for epoch in range(epochs):
             if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
                 points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor = resample_fn()
@@ -81,7 +83,8 @@ class TrainingManager:
             current_loss_value = loss.item()
             
             if self.target_loss > 0 and current_loss_value <= self.target_loss:
-                print(f"Adam Epoch {epoch + 1}: Đạt ngưỡng target_loss. KẾT THÚC ADAM SỚM!")
+                stop_reason = f"Đạt ngưỡng target_loss ({self.target_loss}) tại epoch {epoch + 1}."
+                print(f"Adam Epoch {epoch + 1}: {stop_reason} KẾT THÚC ADAM SỚM!")
                 break
             
             if (epoch + 1) % 100 == 0:
@@ -92,6 +95,8 @@ class TrainingManager:
                     epoch + 1, current_loss_value, 
                     points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
                 )
+                
+        print(f"[*] KẾT THÚC HUẤN LUYỆN ADAM. Lý do: {stop_reason}")
 
     def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
         self.model.train()
