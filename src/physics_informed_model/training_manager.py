@@ -55,8 +55,6 @@ class TrainingManager:
 
     def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, dynamic_resampling=False, resample_fn=None, resample_interval=100):
         self.model.train()
-        best_loss = float('inf')
-        best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
         
         for param_group in self.optimizer_adam.param_groups:
             param_group['initial_lr'] = self.base_learning_rate_adam
@@ -71,10 +69,8 @@ class TrainingManager:
             self.optimizer_adam.zero_grad(set_to_none=True)
             loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
             
-            if torch.isnan(loss) or loss.item() > 1.5 * best_loss:
-                self.model.load_state_dict(best_model_state)
-                for param_group in self.optimizer_adam.param_groups:
-                    param_group['lr'] *= 0.8
+            if torch.isnan(loss):
+                print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss bị NaN. Bỏ qua step này.")
                 continue
                 
             loss.backward(retain_graph=True)
@@ -83,10 +79,7 @@ class TrainingManager:
             scheduler_adam.step()
             
             current_loss_value = loss.item()
-            if current_loss_value < best_loss:
-                best_loss = current_loss_value
-                best_model_state = {key: value.cpu().clone() for key, value in self.model.state_dict().items()}
-                
+            
             if self.target_loss > 0 and current_loss_value <= self.target_loss:
                 print(f"Adam Epoch {epoch + 1}: Đạt ngưỡng target_loss. KẾT THÚC ADAM SỚM!")
                 break
