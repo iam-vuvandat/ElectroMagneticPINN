@@ -6,7 +6,7 @@ class CollocationSampler:
         self.x_maximum = x_boundaries_tuple[1]
         self.y_minimum = y_boundaries_tuple[0]
         self.y_maximum = y_boundaries_tuple[1]
-        self.device = device # Nhận cấu hình thiết bị từ hệ thống
+        self.device = device
 
     def generate_uniform_points_tensor(self, number_of_points):
         points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32, device=self.device)
@@ -56,3 +56,40 @@ class CollocationSampler:
         combined_points_tensor = combined_points_tensor.detach().clone()
         combined_points_tensor.requires_grad_(True)
         return combined_points_tensor
+
+    def generate_interface_points_tensor(self, segment_object, number_of_points, projection_threshold=0.15):
+        if number_of_points <= 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device).requires_grad_(True)
+            
+        collected_points = []
+        collected_count = 0
+        pool_size_value = max(number_of_points * 10, 1000)
+        
+        while collected_count < number_of_points:
+            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
+            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
+            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+            
+            signed_distance_field_tensor = segment_object.compute_signed_distance_field(points_pool_tensor)
+            
+            mask_tensor = (signed_distance_field_tensor.squeeze() > -projection_threshold) & (signed_distance_field_tensor.squeeze() < projection_threshold)
+            
+            if mask_tensor.any():
+                valid_points = points_pool_tensor[mask_tensor]
+                collected_points.append(valid_points)
+                collected_count += valid_points.shape[0]
+                
+        close_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        close_points_tensor = close_points_tensor.detach().requires_grad_(True)
+        
+        sdf_close_tensor = segment_object.compute_signed_distance_field(close_points_tensor)
+        grad_close_tensor = torch.autograd.grad(
+            outputs=sdf_close_tensor,
+            inputs=close_points_tensor,
+            grad_outputs=torch.ones_like(sdf_close_tensor),
+            create_graph=False
+        )[0]
+        
+        interface_points_tensor = (close_points_tensor - sdf_close_tensor * grad_close_tensor).detach()
+        interface_points_tensor.requires_grad_(True)
+        return interface_points_tensor

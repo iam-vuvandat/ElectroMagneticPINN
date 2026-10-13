@@ -9,15 +9,14 @@ class Segment:
                  relative_permeability=1.0,
                  bh_curve=None,
                  coercive=[0.0, 0.0],
-                 current=0.0,
-                 steepness=5000.0):
+                 current=0.0):
         
+        self.segment_id = None
         self.material = material
         self.relative_permeability = relative_permeability
         self.coercive = coercive
         self.current = current
         self.bh_curve = bh_curve
-        self.steepness = steepness
         
         self.outline = None
         self.outline_tensor = None
@@ -52,34 +51,6 @@ class Segment:
         else:
             self.current_density = 0.0
         return self.current_density
-
-    def calculate_penetrating_steepness(self, grid_resolution=50):
-        if self.outline_tensor is None or self.outline_tensor.shape[0] < 3:
-            self.steepness = 5000.0
-            return self.steepness
-            
-        x_min = torch.min(self.outline_tensor[:, 0]).item()
-        x_max = torch.max(self.outline_tensor[:, 0]).item()
-        y_min = torch.min(self.outline_tensor[:, 1]).item()
-        y_max = torch.max(self.outline_tensor[:, 1]).item()
-        
-        x_coords = torch.linspace(x_min, x_max, grid_resolution)
-        y_coords = torch.linspace(y_min, y_max, grid_resolution)
-        X_grid, Y_grid = torch.meshgrid(x_coords, y_coords, indexing='ij')
-        
-        grid_points = torch.stack([X_grid.ravel(), Y_grid.ravel()], dim=1).to(self.outline_tensor.device)
-        
-        sdf_values = self.compute_signed_distance_field(grid_points)
-        min_sdf = torch.min(sdf_values).item() 
-        
-        if min_sdf >= 0.0:
-            self.steepness = 5000.0 
-            return self.steepness
-            
-        d_max = abs(min_sdf)
-        ideal_k = 6.0 / d_max
-        self.steepness = max(1.0, min(5000.0, float(ideal_k)))
-        return self.steepness
 
     def set_outline(self, outline):
         self.outline = outline

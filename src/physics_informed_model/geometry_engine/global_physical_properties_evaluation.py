@@ -26,9 +26,7 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
         current_sdf = segment_object.compute_signed_distance_field(points_tensor)
         global_sdf = torch.minimum(global_sdf, current_sdf)
         
-    max_steepness = max([seg.steepness for seg in segments_list])
-    envelope_k = max_steepness
-    global_envelope_mask = torch.sigmoid(-envelope_k * global_sdf).view(-1, 1)
+    global_envelope_mask = (global_sdf <= 0.0).float().view(-1, 1)
 
     masks = []
     reluctivities = []
@@ -36,8 +34,7 @@ def evaluate_global_physical_properties(segments_list, points_tensor):
 
     for segment_object in segments_list:
         sdf = segment_object.compute_signed_distance_field(points_tensor)
-        actual_k = segment_object.steepness
-        mask = torch.sigmoid(-actual_k * sdf).view(-1, 1)
+        mask = (sdf <= 0.0).float().view(-1, 1)
         
         masks.append(mask)
         reluctivities.append(segment_object.evaluate_reluctivity(points_tensor))
