@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 
 SEED = 42
 torch.manual_seed(SEED)
@@ -22,17 +23,45 @@ L0 = 1.0
 A0 = MU0 * M0 * L0
 B0 = MU0 * M0
 
-DOMAIN_EXTENT = 2.0
+DOMAIN_EXTENT = 1.2
 LENGTH_X = 0.30
 WIDTH_Y = 0.12
+RADIUS = 0.03
+CENTER_OFFSET_X = 0.40
+
+POLARITY_L = 1.0
+POLARITY_R = 1.0
+
+def rounded_box_sdf(xy, center_x, center_y, half_w, half_h, r):
+    x = xy[:, 0:1] - center_x
+    y = xy[:, 1:2] - center_y
+    q_x = torch.abs(x) - (half_w - r)
+    q_y = torch.abs(y) - (half_h - r)
+    q_max_x = torch.maximum(q_x, torch.zeros_like(q_x))
+    q_max_y = torch.maximum(q_y, torch.zeros_like(q_y))
+    dist_out = torch.sqrt(q_max_x**2 + q_max_y**2)
+    dist_in = torch.minimum(torch.maximum(q_x, q_y), torch.zeros_like(q_x))
+    return dist_out + dist_in - r
+
+class FourierFeatures(nn.Module):
+    def __init__(self, in_features, mapping_size, sigma):
+        super().__init__()
+        self.register_buffer('B', torch.randn(in_features, mapping_size) * sigma)
+
+    def forward(self, x):
+        x_proj = 2.0 * math.pi * x @ self.B
+        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
 
 class SubNet(nn.Module):
-    def __init__(self, hidden_layers=6, neurons=128):
+    def __init__(self, hidden_layers=8, neurons=128, fourier_mapping_size=256, fourier_sigma=1.5):
         super().__init__()
-        layers = [nn.Linear(2, neurons), nn.Tanh()]
+        self.fourier = FourierFeatures(2, fourier_mapping_size, fourier_sigma)
+
+        layers = [nn.Linear(fourier_mapping_size * 2, neurons), nn.SiLU()]
         for _ in range(hidden_layers - 1):
-            layers += [nn.Linear(neurons, neurons), nn.Tanh()]
+            layers += [nn.Linear(neurons, neurons), nn.SiLU()]
         layers.append(nn.Linear(neurons, 1))
+
         self.net = nn.Sequential(*layers)
         self._initialize_weights()
 
@@ -43,13 +72,15 @@ class SubNet(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def forward(self, xy):
-        return self.net(xy)
+        ff_out = self.fourier(xy)
+        return self.net(ff_out)
 
 class MagneticXPINN(nn.Module):
-    def __init__(self, hidden_layers=6, neurons=128):
+    def __init__(self, hidden_layers=8, neurons=128):
         super().__init__()
-        self.net_air = SubNet(hidden_layers, neurons)
-        self.net_mag = SubNet(hidden_layers, neurons)
+        self.net_air = SubNet(hidden_layers, neurons, fourier_mapping_size=256, fourier_sigma=1.5)
+        self.net_mag_L = SubNet(hidden_layers, neurons, fourier_mapping_size=256, fourier_sigma=1.5)
+        self.net_mag_R = SubNet(hidden_layers, neurons, fourier_mapping_size=256, fourier_sigma=1.5)
 
     def boundary_factor(self, xy):
         x = xy[:, 0:1]
@@ -59,130 +90,153 @@ class MagneticXPINN(nn.Module):
     def forward_air(self, xy):
         return self.boundary_factor(xy) * self.net_air(xy)
 
-    def forward_mag(self, xy):
-        return self.net_mag(xy)
+    def forward_mag_L(self, xy):
+        return self.net_mag_L(xy)
+
+    def forward_mag_R(self, xy):
+        return self.net_mag_R(xy)
 
 def create_sobol_engine(seed=SEED):
     return torch.quasirandom.SobolEngine(dimension=2, scramble=True, seed=seed)
 
+def sample_projected_interface(num_points, engine, center_x, center_y, device=DEVICE):
+    uv = engine.draw(num_points * 6).to(device=device, dtype=DTYPE)
+    xy_rand = (-DOMAIN_EXTENT + (2.0 * DOMAIN_EXTENT) * uv).requires_grad_(True)
+
+    sdf_rand = rounded_box_sdf(xy_rand, center_x, center_y, LENGTH_X, WIDTH_Y, RADIUS)
+    mask_close = (sdf_rand.squeeze() > -0.15) & (sdf_rand.squeeze() < 0.15)
+    xy_close = xy_rand[mask_close]
+
+    if xy_close.shape[0] > num_points:
+        xy_close = xy_close[:num_points]
+
+    sdf_close = rounded_box_sdf(xy_close, center_x, center_y, LENGTH_X, WIDTH_Y, RADIUS)
+    grad_close = torch.autograd.grad(sdf_close, xy_close, grad_outputs=torch.ones_like(sdf_close))[0]
+
+    xy_I = (xy_close - sdf_close * grad_close).detach().requires_grad_(True)
+    return xy_I
+
 def sample_xpinn_points(num_points, engine, device=DEVICE):
     uv = engine.draw(num_points).to(device=device, dtype=DTYPE)
-    x = -DOMAIN_EXTENT + (2.0 * DOMAIN_EXTENT) * uv[:, 0:1]
-    y = -DOMAIN_EXTENT + (2.0 * DOMAIN_EXTENT) * uv[:, 1:2]
-    
-    mask_mag = (x >= -LENGTH_X) & (x <= LENGTH_X) & (y >= -WIDTH_Y) & (y <= WIDTH_Y)
-    xy_all = torch.cat([x, y], dim=1)
-    
-    xy_mag = xy_all[mask_mag.squeeze()].requires_grad_(True)
-    xy_air = xy_all[~mask_mag.squeeze()].requires_grad_(True)
-    
-    num_I = num_points // 10
-    uv_I = engine.draw(num_I).to(device=device, dtype=DTYPE)
-    
-    x_I = -LENGTH_X + (2.0 * LENGTH_X) * uv_I[:, 0:1]
-    I_top = torch.cat([x_I, torch.full_like(x_I, WIDTH_Y)], dim=1).requires_grad_(True)
-    I_bot = torch.cat([x_I, torch.full_like(x_I, -WIDTH_Y)], dim=1).requires_grad_(True)
-    
-    y_I = -WIDTH_Y + (2.0 * WIDTH_Y) * uv_I[:, 1:2]
-    I_left = torch.cat([torch.full_like(y_I, -LENGTH_X), y_I], dim=1).requires_grad_(True)
-    I_right = torch.cat([torch.full_like(y_I, LENGTH_X), y_I], dim=1).requires_grad_(True)
-    
-    return xy_mag, xy_air, I_top, I_bot, I_left, I_right
+    xy_all = (-DOMAIN_EXTENT + (2.0 * DOMAIN_EXTENT) * uv).requires_grad_(True)
 
-def plot_problem_setup(num_points=5000):
-    engine = create_sobol_engine(seed=SEED)
-    xy_mag, xy_air, I_top, I_bot, I_left, I_right = sample_xpinn_points(num_points, engine, device=torch.device("cpu"))
-    
-    xy_mag_np = xy_mag.detach().numpy()
-    xy_air_np = xy_air.detach().numpy()
-    I_top_np = I_top.detach().numpy()
-    I_bot_np = I_bot.detach().numpy()
-    I_left_np = I_left.detach().numpy()
-    I_right_np = I_right.detach().numpy()
-    
-    plt.figure(figsize=(10, 10))
-    plt.scatter(xy_air_np[:, 0], xy_air_np[:, 1], c='lightblue', s=1, label='Air Domain (net_air)')
-    plt.scatter(xy_mag_np[:, 0], xy_mag_np[:, 1], c='salmon', s=5, label='Magnet Domain (net_mag)')
-    
-    plt.scatter(I_top_np[:, 0], I_top_np[:, 1], c='red', s=10, label='Interface')
-    plt.scatter(I_bot_np[:, 0], I_bot_np[:, 1], c='red', s=10)
-    plt.scatter(I_left_np[:, 0], I_left_np[:, 1], c='red', s=10)
-    plt.scatter(I_right_np[:, 0], I_right_np[:, 1], c='red', s=10)
-    
-    plt.axhline(DOMAIN_EXTENT, color='black', linewidth=2, label='Outer Boundary')
-    plt.axhline(-DOMAIN_EXTENT, color='black', linewidth=2)
-    plt.axvline(DOMAIN_EXTENT, color='black', linewidth=2)
-    plt.axvline(-DOMAIN_EXTENT, color='black', linewidth=2)
-    
-    plt.title("Problem Setup: 1 Straight Magnet in Air (Domain Decomposition)")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.legend(loc='upper right')
-    plt.axis('equal')
-    plt.tight_layout()
-    plt.savefig('xpinn_problem_setup.png')
-    print("[*] Đã lưu đồ thị thiết lập ban đầu tại 'xpinn_problem_setup.png'")
-    plt.close()
+    sdf_L = rounded_box_sdf(xy_all, -CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+    sdf_R = rounded_box_sdf(xy_all, CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+
+    mask_mag_L = (sdf_L <= 0.0).squeeze()
+    mask_mag_R = (sdf_R <= 0.0).squeeze()
+    mask_air = ~(mask_mag_L | mask_mag_R)
+
+    xy_mag_L = xy_all[mask_mag_L].detach().requires_grad_(True)
+    xy_mag_R = xy_all[mask_mag_R].detach().requires_grad_(True)
+    xy_air_uniform = xy_all[mask_air].detach()
+
+    uv_gap = engine.draw(num_points // 2).to(device=device, dtype=DTYPE)
+    x_gap = -0.5 + 1.0 * uv_gap[:, 0:1]
+    y_gap = -0.2 + 0.4 * uv_gap[:, 1:2]
+    xy_gap = torch.cat([x_gap, y_gap], dim=1)
+
+    sdf_gap_L = rounded_box_sdf(xy_gap, -CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+    sdf_gap_R = rounded_box_sdf(xy_gap, CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+    mask_gap_air = (sdf_gap_L > 0.0) & (sdf_gap_R > 0.0)
+    xy_gap_air = xy_gap[mask_gap_air.squeeze()].detach()
+
+    xy_air = torch.cat([xy_air_uniform, xy_gap_air], dim=0).requires_grad_(True)
+
+    num_I = num_points // 4
+    xy_I_L = sample_projected_interface(num_I, engine, -CENTER_OFFSET_X, 0.0, device)
+    xy_I_R = sample_projected_interface(num_I, engine, CENTER_OFFSET_X, 0.0, device)
+
+    return xy_mag_L, xy_mag_R, xy_air, xy_I_L, xy_I_R
 
 def compute_gradients(u, x):
     return torch.autograd.grad(outputs=u, inputs=x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
 
-def compute_xpinn_loss(model, xy_mag, xy_air, I_top, I_bot, I_left, I_right):
-    if xy_air.shape[0] > 0:
-        Az_air = model.forward_air(xy_air)
-        grad_air = compute_gradients(Az_air, xy_air)
-        Bx_air = grad_air[:, 1:2]
-        By_air = -grad_air[:, 0:1]
-        Hx_air = 1.0 * Bx_air
-        Hy_air = 1.0 * By_air
-        dHx_dy_air = compute_gradients(Hx_air, xy_air)[:, 1:2]
-        dHy_dx_air = compute_gradients(Hy_air, xy_air)[:, 0:1]
-        loss_pde_air = torch.mean((dHy_dx_air - dHx_dy_air)**2)
-    else:
-        loss_pde_air = torch.tensor(0.0, device=DEVICE)
+def compute_domain_loss(model_fn, xy, mx_val, center_x_mag=None):
+    if xy.shape[0] == 0:
+        return torch.tensor(0.0, device=DEVICE)
+    Az = model_fn(xy)
+    grad = compute_gradients(Az, xy)
+    Bx = grad[:, 1:2]
+    By = -grad[:, 0:1]
 
-    if xy_mag.shape[0] > 0:
-        Az_mag = model.forward_mag(xy_mag)
-        grad_mag = compute_gradients(Az_mag, xy_mag)
-        Bx_mag = grad_mag[:, 1:2]
-        By_mag = -grad_mag[:, 0:1]
+    if mx_val == 0.0:
+        Hx = 1.0 * Bx
+        Hy = 1.0 * By
+        sdf_L = rounded_box_sdf(xy, -CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+        sdf_R = rounded_box_sdf(xy, CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+        abs_sdf = torch.minimum(torch.abs(sdf_L), torch.abs(sdf_R))
+    else:
         nu_mag = 1.0 / MUR_MAGNET
-        Mx = 1.0
-        Hx_mag = nu_mag * Bx_mag - Mx
-        Hy_mag = nu_mag * By_mag
-        dHx_dy_mag = compute_gradients(Hx_mag, xy_mag)[:, 1:2]
-        dHy_dx_mag = compute_gradients(Hy_mag, xy_mag)[:, 0:1]
-        loss_pde_mag = torch.mean((dHy_dx_mag - dHx_dy_mag)**2)
-    else:
-        loss_pde_mag = torch.tensor(0.0, device=DEVICE)
+        Hx = nu_mag * Bx - mx_val
+        Hy = nu_mag * By
+        abs_sdf = torch.abs(rounded_box_sdf(xy, center_x_mag, 0.0, LENGTH_X, WIDTH_Y, RADIUS))
 
-    loss_val = torch.tensor(0.0, device=DEVICE)
-    loss_flux = torch.tensor(0.0, device=DEVICE)
+    dHx_dy = compute_gradients(Hx, xy)[:, 1:2]
+    dHy_dx = compute_gradients(Hy, xy)[:, 0:1]
+    sq_res = (dHy_dx - dHx_dy)**2
+
+    weight = 1.0 * torch.exp(-150.0 * abs_sdf)
+    return torch.mean(sq_res * weight)
+
+def compute_interface_loss(model_air_fn, model_mag_fn, xy_I, center_x, center_y, mx_val):
+    if xy_I.shape[0] == 0:
+        return torch.tensor(0.0, device=DEVICE), torch.tensor(0.0, device=DEVICE), torch.tensor(0.0, device=DEVICE)
+
+    sdf_I = rounded_box_sdf(xy_I, center_x, center_y, LENGTH_X, WIDTH_Y, RADIUS)
+    n_vec = torch.autograd.grad(sdf_I, xy_I, grad_outputs=torch.ones_like(sdf_I), create_graph=True)[0]
+    n_norm = torch.linalg.norm(n_vec, dim=1, keepdim=True)
+    n_vec = n_vec / (n_norm + 1e-8)
+    nx = n_vec[:, 0:1]
+    ny = n_vec[:, 1:2]
+    tx = -ny
+    ty = nx
+
+    Az_air = model_air_fn(xy_I)
+    Az_mag = model_mag_fn(xy_I)
+    loss_val = torch.mean((Az_air - Az_mag)**2)
+
+    grad_air = compute_gradients(Az_air, xy_I)
+    grad_mag = compute_gradients(Az_mag, xy_I)
+
+    Bx_air = grad_air[:, 1:2]
+    By_air = -grad_air[:, 0:1]
+    Bx_mag = grad_mag[:, 1:2]
+    By_mag = -grad_mag[:, 0:1]
+
+    Hx_air = 1.0 * Bx_air
+    Hy_air = 1.0 * By_air
+
     nu_mag = 1.0 / MUR_MAGNET
-    Mx = 1.0
+    Hx_mag = nu_mag * Bx_mag - mx_val
+    Hy_mag = nu_mag * By_mag
 
-    for I_pts, is_horizontal in [(I_top, True), (I_bot, True), (I_left, False), (I_right, False)]:
-        Az_I_air = model.forward_air(I_pts)
-        Az_I_mag = model.forward_mag(I_pts)
-        loss_val += torch.mean((Az_I_air - Az_I_mag)**2)
-        
-        grad_I_air = compute_gradients(Az_I_air, I_pts)
-        grad_I_mag = compute_gradients(Az_I_mag, I_pts)
-        
-        Hx_I_air = 1.0 * grad_I_air[:, 1:2]
-        Hy_I_air = -1.0 * grad_I_air[:, 0:1]
-        Hx_I_mag = nu_mag * grad_I_mag[:, 1:2] - Mx
-        Hy_I_mag = -nu_mag * grad_I_mag[:, 0:1]
-        
-        if is_horizontal:
-            loss_flux += torch.mean((Hx_I_air - Hx_I_mag)**2)
-        else:
-            loss_flux += torch.mean((Hy_I_air - Hy_I_mag)**2)
+    Bn_air = Bx_air * nx + By_air * ny
+    Bn_mag = Bx_mag * nx + By_mag * ny
+    loss_Bn = torch.mean((Bn_air - Bn_mag)**2)
 
-    loss_total = loss_pde_air + loss_pde_mag + loss_val + loss_flux
+    Ht_air = Hx_air * tx + Hy_air * ty
+    Ht_mag = Hx_mag * tx + Hy_mag * ty
+    loss_Ht = torch.mean((Ht_air - Ht_mag)**2)
+
+    return loss_val, loss_Bn, loss_Ht
+
+def compute_xpinn_loss(model, xy_mag_L, xy_mag_R, xy_air, xy_I_L, xy_I_R):
+    loss_pde_air = compute_domain_loss(model.forward_air, xy_air, 0.0)
+    loss_pde_L = compute_domain_loss(model.forward_mag_L, xy_mag_L, POLARITY_L, -CENTER_OFFSET_X)
+    loss_pde_R = compute_domain_loss(model.forward_mag_R, xy_mag_R, POLARITY_R, CENTER_OFFSET_X)
+
+    val_L, Bn_L, Ht_L = compute_interface_loss(model.forward_air, model.forward_mag_L, xy_I_L, -CENTER_OFFSET_X, 0.0, POLARITY_L)
+    val_R, Bn_R, Ht_R = compute_interface_loss(model.forward_air, model.forward_mag_R, xy_I_R, CENTER_OFFSET_X, 0.0, POLARITY_R)
+
+    loss_val = val_L + val_R
+    loss_B_n = Bn_L + Bn_R
+    loss_H_t = Ht_L + Ht_R
+
+    loss_total = loss_pde_air + loss_pde_L + loss_pde_R + 1000.0 * loss_val + 500.0 * loss_H_t + 500.0 * loss_B_n
     return loss_total
 
-def train_xpinn(epochs=4000, num_collocation=10000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, lbfgs_max_iter=1000):
+def train_xpinn(epochs=6000, num_collocation=20000, hidden_layers=8, neurons=128, learning_rate=1.0e-3, lbfgs_max_iter=3000):
     model = MagneticXPINN(hidden_layers=hidden_layers, neurons=neurons).to(DEVICE)
     adam = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(adam, T_max=epochs, eta_min=1.0e-6)
@@ -196,10 +250,11 @@ def train_xpinn(epochs=4000, num_collocation=10000, hidden_layers=6, neurons=128
     print("========================================")
 
     for epoch in range(1, epochs + 1):
+        if epoch == 1 or epoch % 100 == 0:
+            xy_mag_L, xy_mag_R, xy_air, xy_I_L, xy_I_R = sample_xpinn_points(num_collocation, engine)
+
         adam.zero_grad(set_to_none=True)
-        xy_mag, xy_air, I_top, I_bot, I_left, I_right = sample_xpinn_points(num_collocation, engine)
-        
-        loss = compute_xpinn_loss(model, xy_mag, xy_air, I_top, I_bot, I_left, I_right)
+        loss = compute_xpinn_loss(model, xy_mag_L, xy_mag_R, xy_air, xy_I_L, xy_I_R)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         adam.step()
@@ -216,10 +271,10 @@ def train_xpinn(epochs=4000, num_collocation=10000, hidden_layers=6, neurons=128
     print("========================================")
 
     lbfgs_engine = create_sobol_engine(seed=SEED + 1)
-    xy_mag, xy_air, I_top, I_bot, I_left, I_right = sample_xpinn_points(num_collocation, lbfgs_engine)
-    
+    xy_mag_L, xy_mag_R, xy_air, xy_I_L, xy_I_R = sample_xpinn_points(num_collocation, lbfgs_engine)
+
     lbfgs = optim.LBFGS(
-        model.parameters(), lr=0.8, max_iter=lbfgs_max_iter, max_eval=1250,
+        model.parameters(), lr=0.8, max_iter=lbfgs_max_iter, max_eval=int(lbfgs_max_iter * 1.25),
         history_size=50, tolerance_grad=1.0e-8, tolerance_change=1.0e-10, line_search_fn="strong_wolfe"
     )
 
@@ -227,9 +282,9 @@ def train_xpinn(epochs=4000, num_collocation=10000, hidden_layers=6, neurons=128
 
     def closure():
         lbfgs.zero_grad(set_to_none=True)
-        loss = compute_xpinn_loss(model, xy_mag, xy_air, I_top, I_bot, I_left, I_right)
+        loss = compute_xpinn_loss(model, xy_mag_L, xy_mag_R, xy_air, xy_I_L, xy_I_R)
         loss.backward()
-        
+
         lbfgs_counter[0] += 1
         history["lbfgs_step"].append(lbfgs_counter[0])
         history["lbfgs_loss"].append(loss.item())
@@ -246,40 +301,65 @@ def evaluate_fields(model, resolution=160):
     x_star = np.linspace(-DOMAIN_EXTENT, DOMAIN_EXTENT, resolution, dtype=np.float32)
     y_star = np.linspace(-DOMAIN_EXTENT, DOMAIN_EXTENT, resolution, dtype=np.float32)
     X_star, Y_star = np.meshgrid(x_star, y_star)
-    
+
     xy_np = np.column_stack((X_star.ravel(), Y_star.ravel())).astype(np.float32)
     xy = torch.tensor(xy_np, device=DEVICE, dtype=DTYPE, requires_grad=True)
-    
-    x = xy[:, 0:1]
-    y = xy[:, 1:2]
-    mask_mag = (x >= -LENGTH_X) & (x <= LENGTH_X) & (y >= -WIDTH_Y) & (y <= WIDTH_Y)
-    
+
+    sdf_L = rounded_box_sdf(xy, -CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+    sdf_R = rounded_box_sdf(xy, CENTER_OFFSET_X, 0.0, LENGTH_X, WIDTH_Y, RADIUS)
+
+    mask_L = (sdf_L <= 0.0)
+    mask_R = (sdf_R <= 0.0)
+
     Az_air = model.forward_air(xy)
-    Az_mag = model.forward_mag(xy)
-    
+    Az_mag_L = model.forward_mag_L(xy)
+    Az_mag_R = model.forward_mag_R(xy)
+
     grad_air = compute_gradients(Az_air, xy)
-    grad_mag = compute_gradients(Az_mag, xy)
-    
+    grad_L = compute_gradients(Az_mag_L, xy)
+    grad_R = compute_gradients(Az_mag_R, xy)
+
     Bx_air = grad_air[:, 1:2]
     By_air = -grad_air[:, 0:1]
-    Bx_mag = grad_mag[:, 1:2]
-    By_mag = -grad_mag[:, 0:1]
-    
-    Bx_star = torch.where(mask_mag, Bx_mag, Bx_air)
-    By_star = torch.where(mask_mag, By_mag, By_air)
-    
+    Bx_L = grad_L[:, 1:2]
+    By_L = -grad_L[:, 0:1]
+    Bx_R = grad_R[:, 1:2]
+    By_R = -grad_R[:, 0:1]
+
+    dHx_dy_air = compute_gradients(1.0 * Bx_air, xy)[:, 1:2]
+    dHy_dx_air = compute_gradients(1.0 * By_air, xy)[:, 0:1]
+    res_air = (dHy_dx_air - dHx_dy_air)**2
+
+    nu_mag = 1.0 / MUR_MAGNET
+    dHx_dy_L = compute_gradients(nu_mag * Bx_L - POLARITY_L, xy)[:, 1:2]
+    dHy_dx_L = compute_gradients(nu_mag * By_L, xy)[:, 0:1]
+    res_L = (dHy_dx_L - dHx_dy_L)**2
+
+    dHx_dy_R = compute_gradients(nu_mag * Bx_R - POLARITY_R, xy)[:, 1:2]
+    dHy_dx_R = compute_gradients(nu_mag * By_R, xy)[:, 0:1]
+    res_R = (dHy_dx_R - dHx_dy_R)**2
+
+    res_star_sq = torch.where(mask_L, res_L, torch.where(mask_R, res_R, res_air))
+
+    res_star = torch.sqrt(res_star_sq)
+    Residual = res_star.detach().cpu().numpy().reshape(X_star.shape)
+
+    Bx_star = torch.where(mask_L, Bx_L, torch.where(mask_R, Bx_R, Bx_air))
+    By_star = torch.where(mask_L, By_L, torch.where(mask_R, By_R, By_air))
+
     Bx = (B0 * Bx_star).detach().cpu().numpy().reshape(X_star.shape)
     By = (B0 * By_star).detach().cpu().numpy().reshape(X_star.shape)
     Bmag = np.sqrt(Bx**2 + By**2)
-    
-    return {"X": L0 * X_star, "Y": L0 * Y_star, "Bx": Bx, "By": By, "Bmag": Bmag}
+
+    return {"X": L0 * X_star, "Y": L0 * Y_star, "Bx": Bx, "By": By, "Bmag": Bmag, "Residual": Residual}
 
 def plot_results(model, history, resolution=160):
     fields = evaluate_fields(model, resolution=resolution)
     X, Y = fields["X"], fields["Y"]
-    Bx, By, Bmag = fields["Bx"], fields["By"], fields["Bmag"]
+    Bx, By, Bmag, Residual = fields["Bx"], fields["By"], fields["Bmag"], fields["Residual"]
 
-    fig, axes = plt.subplots(1, 3, figsize=(24, 7))
+    fig, axes = plt.subplots(2, 2, figsize=(18, 16))
+    axes = axes.flatten()
 
     adam_loss = np.asarray(history["adam_loss"])
     lbfgs_loss = np.asarray(history["lbfgs_loss"])
@@ -288,39 +368,50 @@ def plot_results(model, history, resolution=160):
     if lbfgs_loss.size > 0:
         start = adam_loss.size + 1
         axes[0].semilogy(np.arange(start, start + lbfgs_loss.size), np.maximum(lbfgs_loss, 1.0e-20), label="L-BFGS", color='red')
-    axes[0].set_title("XPINN Training Loss History")
+    axes[0].set_title("XPINN Training Loss History (2 Magnets)")
     axes[0].set_xlabel("Iterations")
     axes[0].set_ylabel("Total Loss")
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    contour = axes[1].contourf(X, Y, Bmag, levels=80, cmap="jet")
+    levels_B = np.linspace(0.0, 2.0, 17)
+    contour = axes[1].contourf(X, Y, Bmag, levels=levels_B, cmap="jet", extend="max")
     fig.colorbar(contour, ax=axes[1], label="|B| (T)")
     axes[1].set_title("Magnetic Flux Density Magnitude $|B|$")
     axes[1].set_aspect("equal", adjustable="box")
     axes[1].set_xlabel("x (m)")
     axes[1].set_ylabel("y (m)")
 
-    step = max(1, resolution // 25)
+    step = 12
     Bsub = np.sqrt(Bx[::step, ::step]**2 + By[::step, ::step]**2)
     scale = np.maximum(Bsub, 1.0e-12)
-    axes[2].contourf(X, Y, Bmag, levels=40, cmap="jet", alpha=0.25)
-    axes[2].quiver(X[::step, ::step], Y[::step, ::step], Bx[::step, ::step]/scale, By[::step, ::step]/scale, scale=25.0, pivot="mid")
+    axes[2].contourf(X, Y, Bmag, levels=levels_B, cmap="jet", alpha=0.25, extend="max")
+    axes[2].quiver(X[::step, ::step], Y[::step, ::step],
+                   Bx[::step, ::step]/scale, By[::step, ::step]/scale,
+                   scale=40.0, pivot="mid")
     axes[2].set_title("Magnetic Flux Density Vector $\\mathbf{B}$")
     axes[2].set_aspect("equal", adjustable="box")
     axes[2].set_xlabel("x (m)")
     axes[2].set_ylabel("y (m)")
 
+    res_abs = np.abs(Residual) + 1e-8
+    levels = [1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1]
+    contour_res = axes[3].contourf(X, Y, res_abs, levels=levels, cmap="Reds",
+                                   norm=LogNorm(vmin=1e-4, vmax=1e1), extend='both')
+    cbar = fig.colorbar(contour_res, ax=axes[3])
+    cbar.set_ticks(levels)
+    axes[3].set_title("PDE Residual Error")
+    axes[3].set_aspect("equal", adjustable="box")
+    axes[3].set_xlabel("x (m)")
+    axes[3].set_ylabel("y (m)")
+
     plt.tight_layout()
-    plt.savefig('xpinn_straight_magnet_results.png')
-    print("\n[*] Hoàn thành. Kết quả biểu đồ được lưu tại 'xpinn_straight_magnet_results.png'")
-    plt.close()
+    plt.show()
 
 if __name__ == "__main__":
-    plot_problem_setup(num_points=5000)
-    
     trained_model, history = train_xpinn(
-        epochs=4000, num_collocation=10000, hidden_layers=6, neurons=128, learning_rate=1.0e-3, lbfgs_max_iter=1000
+        epochs=6000, num_collocation=20000, hidden_layers=8, neurons=128, learning_rate=1.0e-3, lbfgs_max_iter=3000
     )
-    
+
     plot_results(trained_model, history, resolution=160)
+    
