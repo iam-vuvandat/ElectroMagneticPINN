@@ -30,5 +30,6 @@ def forward_network(self, network_key, xy):
         x_input = xy_normalized
         
     raw_output = self.networks[network_key](x_input)
-    A_z_star = raw_output * self.boundary_factor(xy)
+    b_factor = self.boundary_factor(xy)
+    A_z_star = raw_output * b_factor
     return A_z_star

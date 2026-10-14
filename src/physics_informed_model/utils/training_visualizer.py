@@ -41,10 +41,10 @@ class TrainingVisualizer:
         eval_points = self.eval_points_tensor.to(computation_device).clone().requires_grad_(True)
         
         phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
-        nu_grid = phys_props["reluctivity"]
-        jz_grid = phys_props["current_density_z"]
-        hcx_grid = phys_props["coercive_field_x"]
-        hcy_grid = phys_props["coercive_field_y"]
+        nu_grid = phys_props["reluctivity"].to(computation_device)
+        jz_grid = phys_props["current_density_z"].to(computation_device)
+        hcx_grid = phys_props["coercive_field_x"].to(computation_device)
+        hcy_grid = phys_props["coercive_field_y"].to(computation_device)
         
         A_z_phys, B_x_phys, B_y_phys = self.parent_pinn.evaluate_fields(eval_points)
         A_z_star = A_z_phys / self.parent_pinn.A0

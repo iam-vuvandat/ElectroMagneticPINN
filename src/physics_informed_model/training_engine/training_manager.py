@@ -47,16 +47,17 @@ class TrainingManager:
 
     def compute_loss(self, domains_data):
         device = next(self.model.parameters()).device
-        loss_components = []
+        dummy_param = next(self.model.parameters())
+        total_loss = (dummy_param * 0.0).sum()
 
         for key, data in domains_data.items():
             domain = data["domain_object"]
             pts = data["interior_points"].to(device)
             
-            if not pts.requires_grad:
-                pts = pts.detach().clone().requires_grad_(True)
-            
             if pts.shape[0] > 0:
+                if not pts.requires_grad:
+                    pts = pts.clone().detach().requires_grad_(True)
+                    
                 A_z_star = self.model.forward_network(key, pts)
                 nu = domain.evaluate_reluctivity(pts).to(device)
                 hx, hy = domain.evaluate_magnetization_vector(pts)
@@ -68,24 +69,20 @@ class TrainingManager:
                 )
                 weighted_res = residual_star * domain.training_config.pde_weight
                 pde_loss = torch.mean(weighted_res**2)
-                loss_components.append(pde_loss)
+                total_loss = total_loss + pde_loss
 
             surf_pts = data["surface_points"].to(device)
             if surf_pts.shape[0] > 0 and key != 'background':
                 if not surf_pts.requires_grad:
-                    surf_pts = surf_pts.detach().clone().requires_grad_(True)
+                    surf_pts = surf_pts.clone().detach().requires_grad_(True)
                     
                 Az_mat = self.model.forward_network(key, surf_pts)
                 Az_bg = self.model.forward_network('background', surf_pts)
                 
                 continuity_loss = torch.mean((Az_mat - Az_bg)**2)
-                loss_components.append(domain.training_config.interface_weight * continuity_loss)
+                total_loss = total_loss + domain.training_config.interface_weight * continuity_loss
 
-        if not loss_components:
-            dummy_param = next(self.model.parameters())
-            return (dummy_param * 0.0).sum()
-
-        return sum(loss_components)
+        return total_loss
 
     def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
         self.model.train()
