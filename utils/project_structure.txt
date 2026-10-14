@@ -1,15 +1,22 @@
-Twin_model_pinns/
+ElectroMagneticPINN/
+├── .gitignore
 ├── README.md
 ├── batch.log
 ├── draft
 │   ├── draw1.py
 │   ├── draw2.py
+│   ├── draw3.py
 │   └── pinn_training_process.gif
 ├── examples
 │   ├── demo.py
 │   ├── demo2.py
 │   ├── demo3.py
-│   └── test.py
+│   ├── demo4.py
+│   ├── test.py
+│   └── xpinn_demo.py
+├── figure
+│   └── geometry_plot.png
+├── geometry_plot.png
 ├── main.ipynb
 ├── requirements.txt
 ├── src
@@ -19,31 +26,50 @@ Twin_model_pinns/
 │   │   ├── reluctance_synchronous_motor.py
 │   │   └── reset_ansys_environment.py
 │   └── physics_informed_model
-│       ├── curriculum_training_manager.py
+│       ├── architectures
+│       │   ├── __init__.py
+│       │   ├── boundary_factor.py
+│       │   ├── build_single_network.py
+│       │   ├── forward.py
+│       │   ├── forward_network.py
+│       │   ├── initialize_weights.py
+│       │   └── xpinn_architecture.py
 │       ├── electro_magnetic_pinn.py
-│       ├── extract.py
-│       ├── geometry_engine
-│       │   ├── geometry.py
-│       │   ├── global_physical_properties_evaluation.py
-│       │   ├── global_signed_distance_field.py
-│       │   └── segment
-│       │       ├── __init__.py
-│       │       ├── polygon_signed_distance_field.py
-│       │       └── segment.py
 │       ├── physics_domain
 │       │   ├── collocation_sampler.py
 │       │   └── physical_equations
 │       │       └── maxwell_pde_loss.py
-│       ├── pinn_architecture.py
-│       ├── project_codebase.txt
-│       ├── test_simulation.py
-│       ├── training_manager.py
-│       ├── trial_function_wrapper.py
+│       ├── simulation_domain_engine
+│       │   ├── boundary
+│       │   │   ├── __init__.py
+│       │   │   ├── boundary.py
+│       │   │   ├── build_boundary.py
+│       │   │   └── compute_boundary_factor.py
+│       │   ├── domain_visualizer.py
+│       │   ├── global_physical_properties_evaluation.py
+│       │   ├── global_signed_distance_field.py
+│       │   ├── material_domain
+│       │   │   ├── __init__.py
+│       │   │   ├── material_domain.py
+│       │   │   └── polygon_signed_distance_field.py
+│       │   └── simulation_domain.py
+│       ├── tests
+│       │   ├── __init__.py
+│       │   ├── test_simulation.py
+│       │   └── test_simulation_domain.py
+│       ├── training_engine
+│       │   ├── __init__.py
+│       │   └── training_manager.py
 │       └── utils
 │           ├── extract_project.py
 │           ├── modify_project.py
-│           └── physics_model_source_code.txt
-└── utils
-    ├── extract_project_tree.py
-    ├── generate_project.py
-    └── project_structure.txt
+│           ├── physics_model_source_code.txt
+│           └── training_visualizer.py
+├── storage
+│   └── Phiên bản ổn định .txt
+├── test.py
+├── utils
+│   ├── extract_project_tree.py
+│   ├── generate_project.py
+│   └── project_structure.txt
+└── xpinn_2d_demo.png

@@ -1,33 +1,19 @@
 import torch
 import torch.nn as nn
+from architectures.xpinn_architecture import XPINNArchitecture
 from types import SimpleNamespace
-from pinn_architecture import PINNArchitecture
-from training_manager import TrainingManager
+from training_engine.training_manager import TrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
-from geometry_engine.geometry import Geometry
+from simulation_domain_engine.simulation_domain import SimulationDomain
 from physics_domain.collocation_sampler import CollocationSampler
-from geometry_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from utils.training_visualizer import TrainingVisualizer
 
 class ElectroMagneticPINN:
     def __init__(self):
         self.sampler_config = SimpleNamespace(
-            x_boundaries_tuple=(-0.05, 0.05),
-            y_boundaries_tuple=(-0.05, 0.05),
-            number_of_uniform_points=8000,
-            number_of_material_points=7000,
-            distance_threshold=0.005,
             dynamic_resampling=True,
             resample_interval=100
-        )
-        
-        self.pinn_config = SimpleNamespace(
-            hidden_layers=4,
-            hidden_neurons=64,
-            activation_function=nn.SiLU(),
-            fourier_features=False,
-            fourier_sigma=1.0,
-            fourier_mapping_size=256
         )
         
         self.training_config = SimpleNamespace(
@@ -58,8 +44,12 @@ class ElectroMagneticPINN:
             scale_nu0=VACUUM_RELUCTIVITY
         )
         
-        self.geometry_engine_instance = Geometry()
-        self._build_system()
+        self.simulation_domain_engine_instance = SimulationDomain()
+        self.pinn_architecture_instance = None
+        self.training_manager_instance = None
+        self.maxwell_pde_loss_instance = None
+        self.collocation_sampler_instance = None
+        self.visualizer_instance = None
 
     def update_electromagnetic_pinn(self):
         self._build_system()
@@ -68,20 +58,16 @@ class ElectroMagneticPINN:
         self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
         
-        self.collocation_sampler_instance = CollocationSampler(
-            x_boundaries_tuple=self.sampler_config.x_boundaries_tuple,
-            y_boundaries_tuple=self.sampler_config.y_boundaries_tuple,
-            device=self.computation_device
-        )
+        self.collocation_sampler_instance = CollocationSampler(device=self.computation_device)
         
         self.L0 = self.physics_config.scale_L0
         self.H0 = self.physics_config.scale_H0
         self.nu0 = self.physics_config.scale_nu0
         self.A0 = (self.H0 * self.L0) / self.nu0
         
-        self.pinn_architecture_instance = PINNArchitecture(
-            domain_scale=self.L0,
-            **vars(self.pinn_config)
+        self.pinn_architecture_instance = XPINNArchitecture(
+            electro_magnetic_pinn=self,
+            domain_scale=self.L0
         ).to(self.computation_device)
         
         self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
@@ -103,26 +89,20 @@ class ElectroMagneticPINN:
         )
 
     def execute_training_process(self):
-        def resample_data_fn():
-            pts_tensor = self.collocation_sampler_instance.generate_combined_points_tensor(
-                geometry_object=self.geometry_engine_instance,
-                number_of_uniform_points=self.sampler_config.number_of_uniform_points,
-                number_of_material_points=self.sampler_config.number_of_material_points,
-                distance_threshold=self.sampler_config.distance_threshold
-            )
-            phys_props = self.geometry_engine_instance.evaluate_global_physical_properties(pts_tensor)
-            return pts_tensor, phys_props["reluctivity"], phys_props["current_density_z"], phys_props["coercive_field_x"], phys_props["coercive_field_y"]
+        if self.pinn_architecture_instance is None:
+            self._build_system()
 
-        points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor = resample_data_fn()
+        def resample_data_fn():
+            return self.collocation_sampler_instance.generate_all_domain_points(
+                simulation_domain_object=self.simulation_domain_engine_instance
+            )
+
+        domains_data = resample_data_fn()
         
         print(f"--- Standard Adam Training ({self.training_config.epochs_adam} Epochs) ---")
         self.training_manager_instance.train_adam(
             epochs=self.training_config.epochs_adam, 
-            points_tensor=points_tensor,
-            reluctivity_tensor=reluctivity_tensor,
-            current_density_z_tensor=current_density_z_tensor,
-            coercive_field_x_tensor=coercive_field_x_tensor,
-            coercive_field_y_tensor=coercive_field_y_tensor,
+            domains_data=domains_data,
             dynamic_resampling=self.sampler_config.dynamic_resampling,
             resample_fn=resample_data_fn,
             resample_interval=self.sampler_config.resample_interval
@@ -131,11 +111,7 @@ class ElectroMagneticPINN:
         print(f"--- L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
         self.training_manager_instance.train_lbfgs(
             epochs=self.training_config.epochs_lbfgs, 
-            points_tensor=points_tensor,
-            reluctivity_tensor=reluctivity_tensor,
-            current_density_z_tensor=current_density_z_tensor,
-            coercive_field_x_tensor=coercive_field_x_tensor,
-            coercive_field_y_tensor=coercive_field_y_tensor
+            domains_data=domains_data
         )
         
         if self.visualizer_instance:
@@ -145,8 +121,25 @@ class ElectroMagneticPINN:
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
         points_tensor = points_tensor.to(self.computation_device).clone().requires_grad_(True)
-        A_z_star = self.pinn_architecture_instance(points_tensor)
-        A_z_phys = A_z_star * self.A0
+        
+        props = self.simulation_domain_engine_instance.evaluate_global_physical_properties(points_tensor)
+        mat_id = props["material_classification"]
+        
+        A_z_star_total = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
+        
+        for domain in self.simulation_domain_engine_instance.domains_list:
+            d_id = domain.domain_id
+            if getattr(domain, 'domain_name', '') == 'background':
+                net_key = 'background'
+            else:
+                net_key = f'domain_{d_id}'
+                
+            mask = (mat_id == float(d_id)).float()
+            if mask.any():
+                Az_sub = self.pinn_architecture_instance.forward_network(net_key, points_tensor)
+                A_z_star_total = A_z_star_total + mask * Az_sub
+
+        A_z_phys = A_z_star_total * self.A0
         
         grad_A = torch.autograd.grad(
             outputs=A_z_phys, inputs=points_tensor,

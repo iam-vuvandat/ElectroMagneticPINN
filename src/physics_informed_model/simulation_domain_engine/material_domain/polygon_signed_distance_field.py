@@ -2,7 +2,7 @@ import torch
 
 def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     if vertices_tensor is None:
-        raise ValueError("Segment vertices must be set before computing signed distance field.")
+        raise ValueError("MaterialDomain vertices must be set before computing signed distance field.")
         
     computation_device = points_tensor.device
     computation_dtype = points_tensor.dtype

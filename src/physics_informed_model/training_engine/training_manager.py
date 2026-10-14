@@ -45,15 +45,38 @@ class TrainingManager:
         self.visualizer = visualizer
         self.visualizer_update_interval = visualizer_update_interval
 
-    def compute_loss(self, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
-        A_z_star = self.model(points_tensor)
-        residual_star = self.pde_evaluator.compute_residual(
-            xy=points_tensor, A_z_star=A_z_star, nu=reluctivity_tensor,
-            J_z=current_density_z_tensor, H_cx=coercive_field_x_tensor, H_cy=coercive_field_y_tensor
-        )
-        return torch.mean(residual_star**2)
+    def compute_loss(self, domains_data):
+        total_pde_loss = torch.tensor(0.0, device=next(self.model.parameters()).device)
+        total_interface_loss = torch.tensor(0.0, device=next(self.model.parameters()).device)
 
-    def train_adam(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor, dynamic_resampling=False, resample_fn=None, resample_interval=100):
+        for key, data in domains_data.items():
+            domain = data["domain_object"]
+            pts = data["interior_points"]
+            
+            if pts.shape[0] > 0:
+                A_z_star = self.model.forward_network(key, pts)
+                nu = domain.evaluate_reluctivity(pts)
+                hx, hy = domain.evaluate_magnetization_vector(pts)
+                jz = domain.evaluate_current_density(pts)
+                
+                residual_star = self.pde_evaluator.compute_residual(
+                    xy=pts, A_z_star=A_z_star, nu=nu, J_z=jz, H_cx=hx, H_cy=hy
+                )
+                weighted_res = residual_star * domain.training_config.pde_weight
+                pde_loss = torch.mean(weighted_res**2)
+                total_pde_loss = total_pde_loss + pde_loss
+
+            surf_pts = data["surface_points"]
+            if surf_pts.shape[0] > 0 and key != 'background':
+                Az_mat = self.model.forward_network(key, surf_pts)
+                Az_bg = self.model.forward_network('background', surf_pts)
+                
+                continuity_loss = torch.mean((Az_mat - Az_bg)**2)
+                total_interface_loss = total_interface_loss + domain.training_config.interface_weight * continuity_loss
+
+        return total_pde_loss + total_interface_loss
+
+    def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
         self.model.train()
         
         for param_group in self.optimizer_adam.param_groups:
@@ -61,15 +84,14 @@ class TrainingManager:
             param_group['lr'] = self.base_learning_rate_adam
             
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
-        
         stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
         
         for epoch in range(epochs):
             if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
-                points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor = resample_fn()
+                domains_data = resample_fn()
 
             self.optimizer_adam.zero_grad(set_to_none=True)
-            loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
+            loss = self.compute_loss(domains_data)
             
             if torch.isnan(loss):
                 print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss bị NaN. Bỏ qua step này.")
@@ -91,14 +113,11 @@ class TrainingManager:
                 print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {self.optimizer_adam.param_groups[0]['lr']:.3e}")
                 
             if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(
-                    epoch + 1, current_loss_value, 
-                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
+                self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
                 
         print(f"[*] KẾT THÚC HUẤN LUYỆN ADAM. Lý do: {stop_reason}")
 
-    def train_lbfgs(self, epochs, points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor):
+    def train_lbfgs(self, epochs, domains_data):
         self.model.train()
         lbfgs_counter = [0]
         early_stop_triggered = False 
@@ -106,7 +125,7 @@ class TrainingManager:
         def closure():
             nonlocal early_stop_triggered
             self.optimizer_lbfgs.zero_grad(set_to_none=True)
-            loss = self.compute_loss(points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor)
+            loss = self.compute_loss(domains_data)
             loss.backward(retain_graph=True)
             
             lbfgs_counter[0] += 1
@@ -114,10 +133,7 @@ class TrainingManager:
                 print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
                 
             if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(
-                    50000 + lbfgs_counter[0], loss.item(), 
-                    points_tensor, reluctivity_tensor, current_density_z_tensor, coercive_field_x_tensor, coercive_field_y_tensor
-                )
+                self.visualizer.save_frame(50000 + lbfgs_counter[0], loss.item(), domains_data)
                 
             if self.target_loss > 0 and loss.item() <= self.target_loss:
                 early_stop_triggered = True

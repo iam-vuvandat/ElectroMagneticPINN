@@ -1,95 +1,110 @@
 import torch
+import numpy as np
 
 class CollocationSampler:
-    def __init__(self, x_boundaries_tuple, y_boundaries_tuple, device=torch.device('cpu')):
-        self.x_minimum = x_boundaries_tuple[0]
-        self.x_maximum = x_boundaries_tuple[1]
-        self.y_minimum = y_boundaries_tuple[0]
-        self.y_maximum = y_boundaries_tuple[1]
+    def __init__(self, device=torch.device('cpu')):
         self.device = device
 
-    def generate_uniform_points_tensor(self, number_of_points):
-        points_tensor = torch.rand((number_of_points, 2), dtype=torch.float32, device=self.device)
-        points_tensor[:, 0] = points_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-        points_tensor[:, 1] = points_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
-        points_tensor.requires_grad_(True)
-        return points_tensor
-
-    def generate_material_points_tensor(self, geometry_object, number_of_points, distance_threshold):
+    def sample_domain_interior_points(self, domain_object, bounding_box, number_of_points):
         if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device).requires_grad_(True)
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
             
+        outline = np.array(domain_object.geometry_config.outline)
+        x_min, x_max = np.min(outline[:, 0]), np.max(outline[:, 0])
+        y_min, y_max = np.min(outline[:, 1]), np.max(outline[:, 1])
+
         collected_points = []
         collected_count = 0
-        pool_size_value = max(number_of_points * 20, 1000)
-        
+        pool_size = max(number_of_points * 4, 500)
+
         while collected_count < number_of_points:
-            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
-            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
+            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
+            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
+            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
             
-            signed_distance_field_tensor = geometry_object.compute_global_signed_distance_field(points_pool_tensor)
-            mask_tensor = signed_distance_field_tensor < distance_threshold
-            mask_1d = mask_tensor.squeeze()
+            sdf = domain_object.compute_signed_distance_field(points_pool)
+            inside_mask = sdf <= 0.0
             
-            if mask_1d.any():
-                valid_points = points_pool_tensor[mask_1d]
-                collected_points.append(valid_points)
-                collected_count += valid_points.shape[0]
-                
-        material_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        material_points_tensor = material_points_tensor.detach().clone()
-        material_points_tensor.requires_grad_(True)
-        return material_points_tensor
+            if inside_mask.any():
+                valid = points_pool[inside_mask]
+                collected_points.append(valid)
+                collected_count += valid.shape[0]
 
-    def generate_combined_points_tensor(self, geometry_object, number_of_uniform_points, number_of_material_points, distance_threshold):
-        tensors_to_combine = []
-        
-        if number_of_uniform_points > 0:
-            tensors_to_combine.append(self.generate_uniform_points_tensor(number_of_uniform_points))
-            
-        if number_of_material_points > 0:
-            tensors_to_combine.append(self.generate_material_points_tensor(geometry_object, number_of_material_points, distance_threshold))
-            
-        combined_points_tensor = torch.cat(tensors_to_combine, dim=0)
-        
-        combined_points_tensor = combined_points_tensor.detach().clone()
-        combined_points_tensor.requires_grad_(True)
-        return combined_points_tensor
+        pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        return pts
 
-    def generate_interface_points_tensor(self, segment_object, number_of_points, projection_threshold=0.15):
+    def sample_domain_surface_points(self, domain_object, number_of_points):
         if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device).requires_grad_(True)
-            
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+
+        outline = domain_object.geometry_config.outline
+        num_vertices = len(outline)
+        
+        edge_starts = np.array(outline)
+        edge_ends = np.roll(edge_starts, shift=-1, axis=0)
+        
+        edge_vectors = edge_ends - edge_starts
+        edge_lengths = np.sqrt(np.sum(edge_vectors**2, axis=1))
+        total_perimeter = np.sum(edge_lengths)
+        
+        edge_probs = edge_lengths / total_perimeter
+        
+        sampled_edges = np.random.choice(num_vertices, size=number_of_points, p=edge_probs)
+        t_params = np.random.rand(number_of_points, 1)
+        
+        pts_sampled = edge_starts[sampled_edges] + t_params * edge_vectors[sampled_edges]
+        return torch.tensor(pts_sampled, dtype=torch.float32, device=self.device)
+
+    def sample_background_interior_points(self, simulation_domain_object, number_of_points):
+        if number_of_points <= 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+
+        x_min, x_max = simulation_domain_object.x_boundaries_tuple
+        y_min, y_max = simulation_domain_object.y_boundaries_tuple
+
         collected_points = []
         collected_count = 0
-        pool_size_value = max(number_of_points * 10, 1000)
-        
+        pool_size = max(number_of_points * 2, 1000)
+
         while collected_count < number_of_points:
-            points_pool_tensor = torch.rand((pool_size_value, 2), dtype=torch.float32, device=self.device)
-            points_pool_tensor[:, 0] = points_pool_tensor[:, 0] * (self.x_maximum - self.x_minimum) + self.x_minimum
-            points_pool_tensor[:, 1] = points_pool_tensor[:, 1] * (self.y_maximum - self.y_minimum) + self.y_minimum
-            
-            signed_distance_field_tensor = segment_object.compute_signed_distance_field(points_pool_tensor)
-            
-            mask_tensor = (signed_distance_field_tensor.squeeze() > -projection_threshold) & (signed_distance_field_tensor.squeeze() < projection_threshold)
-            
-            if mask_tensor.any():
-                valid_points = points_pool_tensor[mask_tensor]
-                collected_points.append(valid_points)
-                collected_count += valid_points.shape[0]
-                
-        close_points_tensor = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        close_points_tensor = close_points_tensor.detach().requires_grad_(True)
-        
-        sdf_close_tensor = segment_object.compute_signed_distance_field(close_points_tensor)
-        grad_close_tensor = torch.autograd.grad(
-            outputs=sdf_close_tensor,
-            inputs=close_points_tensor,
-            grad_outputs=torch.ones_like(sdf_close_tensor),
-            create_graph=False
-        )[0]
-        
-        interface_points_tensor = (close_points_tensor - sdf_close_tensor * grad_close_tensor).detach()
-        interface_points_tensor.requires_grad_(True)
-        return interface_points_tensor
+            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
+            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
+            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
+
+            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool)
+            air_mask = global_sdf > 0.0
+
+            if air_mask.any():
+                valid = points_pool[air_mask]
+                collected_points.append(valid)
+                collected_count += valid.shape[0]
+
+        pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
+        return pts
+
+    def generate_all_domain_points(self, simulation_domain_object):
+        domains_data = {}
+        bb = (simulation_domain_object.x_boundaries_tuple, simulation_domain_object.y_boundaries_tuple)
+
+        for domain in simulation_domain_object.domains_list:
+            if getattr(domain, 'domain_name', '') == 'background':
+                n_interior = domain.training_config.number_of_interior_points
+                interior_pts = self.sample_background_interior_points(simulation_domain_object, n_interior)
+                surface_pts = torch.empty((0, 2), dtype=torch.float32, device=self.device)
+            else:
+                n_interior = domain.training_config.number_of_interior_points
+                n_surface = domain.training_config.number_of_surface_points
+                interior_pts = self.sample_domain_interior_points(domain, bb, n_interior)
+                surface_pts = self.sample_domain_surface_points(domain, n_surface)
+
+            interior_pts = interior_pts.detach().clone().requires_grad_(True)
+            surface_pts = surface_pts.detach().clone().requires_grad_(True)
+
+            key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{domain.domain_id}'
+            domains_data[key] = {
+                "domain_object": domain,
+                "interior_points": interior_pts,
+                "surface_points": surface_pts
+            }
+
+        return domains_data
