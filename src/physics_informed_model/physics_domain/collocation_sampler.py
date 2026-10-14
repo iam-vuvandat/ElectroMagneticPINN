@@ -2,8 +2,14 @@ import torch
 import numpy as np
 
 class CollocationSampler:
-    def __init__(self, device=torch.device('cpu')):
-        self.device = device
+    def __init__(self, electro_magnetic_pinn=None, device=None):
+        self.electro_magnetic_pinn = electro_magnetic_pinn
+        if device is not None:
+            self.device = device
+        elif electro_magnetic_pinn is not None and hasattr(electro_magnetic_pinn, 'computation_device'):
+            self.device = electro_magnetic_pinn.computation_device
+        else:
+            self.device = torch.device('cpu')
 
     def sample_domain_interior_points(self, domain_object, bounding_box, number_of_points):
         if number_of_points <= 0:
@@ -82,7 +88,10 @@ class CollocationSampler:
         pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
         return pts
 
-    def generate_all_domain_points(self, simulation_domain_object):
+    def generate_all_domain_points(self, simulation_domain_object=None):
+        if simulation_domain_object is None:
+            simulation_domain_object = self.electro_magnetic_pinn.simulation_domain_engine_instance
+
         domains_data = {}
         bb = (simulation_domain_object.x_boundaries_tuple, simulation_domain_object.y_boundaries_tuple)
 

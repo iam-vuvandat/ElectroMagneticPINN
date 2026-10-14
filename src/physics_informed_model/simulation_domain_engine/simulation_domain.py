@@ -1,19 +1,44 @@
 import torch
+from types import SimpleNamespace
 from simulation_domain_engine.boundary.boundary import Boundary
 from simulation_domain_engine.material_domain.material_domain import MaterialDomain
 from simulation_domain_engine.global_signed_distance_field import compute_global_signed_distance_field
-from simulation_domain_engine.global_physical_properties_evaluation import evaluate_global_physical_properties
+from simulation_domain_engine.global_physical_properties_evaluation import evaluate_global_physical_properties, VACUUM_RELUCTIVITY
 from simulation_domain_engine.domain_visualizer import display_simulation_domain
 
 class SimulationDomain:
-    def __init__(self, x_boundaries_tuple=(-0.05, 0.05), y_boundaries_tuple=(-0.05, 0.05)):
-        self.boundary = Boundary()
+    def __init__(self, electro_magnetic_pinn=None, x_boundaries_tuple=(-0.05, 0.05), y_boundaries_tuple=(-0.05, 0.05)):
+        self.electro_magnetic_pinn = electro_magnetic_pinn
+        
+        self.physics_config = SimpleNamespace(
+            scale_L0=0.05,
+            scale_H0=1200000.0,
+            scale_nu0=VACUUM_RELUCTIVITY
+        )
+
+        self.boundary = Boundary(simulation_domain=self)
         self.boundary.geometry_config.x_boundaries_tuple = x_boundaries_tuple
         self.boundary.geometry_config.y_boundaries_tuple = y_boundaries_tuple
         self.boundary.build_boundary()
 
         self.domains_list = []
         self.background_domain = None
+
+    @property
+    def L0(self):
+        return self.physics_config.scale_L0
+
+    @property
+    def H0(self):
+        return self.physics_config.scale_H0
+
+    @property
+    def nu0(self):
+        return self.physics_config.scale_nu0
+
+    @property
+    def A0(self):
+        return (self.H0 * self.L0) / self.nu0
 
     @property
     def x_boundaries_tuple(self):
@@ -34,10 +59,12 @@ class SimulationDomain:
         self.boundary.build_boundary()
 
     def set_boundary(self, boundary_object):
+        boundary_object.simulation_domain = self
         self.boundary = boundary_object
         return self
 
     def add_material_domain(self, domain_object):
+        domain_object.simulation_domain = self
         if self.background_domain in self.domains_list:
             insert_idx = len(self.domains_list) - 1
             self.domains_list.insert(insert_idx, domain_object)
@@ -62,7 +89,7 @@ class SimulationDomain:
             [x_min, y_max]
         ]
 
-        bg_domain = MaterialDomain(domain_name=domain_name)
+        bg_domain = MaterialDomain(domain_name=domain_name, simulation_domain=self)
         bg_domain.geometry_config.outline = box_outline
         bg_domain.physics_config.relative_permeability = 1.0
         bg_domain.physics_config.coercive = [0.0, 0.0]
@@ -102,5 +129,7 @@ class SimulationDomain:
     def plot_problem_definition(self, resolution=100):
         display_simulation_domain(self, self.x_boundaries_tuple, self.y_boundaries_tuple, resolution)
 
-    def display(self, resolution=150):
-        display_simulation_domain(self, self.x_boundaries_tuple, self.y_boundaries_tuple, resolution)
+    def display(self, x_boundaries_tuple=None, y_boundaries_tuple=None, resolution=150):
+        xb = x_boundaries_tuple if x_boundaries_tuple is not None else self.x_boundaries_tuple
+        yb = y_boundaries_tuple if y_boundaries_tuple is not None else self.y_boundaries_tuple
+        display_simulation_domain(self, xb, yb, resolution)

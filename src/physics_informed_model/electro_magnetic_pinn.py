@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-from architectures.xpinn_architecture import XPINNArchitecture
 from types import SimpleNamespace
+from architectures.xpinn_architecture import XPINNArchitecture
 from training_engine.training_manager import TrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
+from physics_domain.physical_equations.interface_loss import InterfaceLoss
 from simulation_domain_engine.simulation_domain import SimulationDomain
 from physics_domain.collocation_sampler import CollocationSampler
-from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from utils.training_visualizer import TrainingVisualizer
 
 class ElectroMagneticPINN:
@@ -38,18 +38,33 @@ class ElectroMagneticPINN:
             gif_fps=10
         )
         
-        self.physics_config = SimpleNamespace(
-            scale_L0=0.05,
-            scale_H0=1200000.0,
-            scale_nu0=VACUUM_RELUCTIVITY
-        )
-        
-        self.simulation_domain_engine_instance = SimulationDomain()
+        self.simulation_domain_engine_instance = SimulationDomain(electro_magnetic_pinn=self)
         self.pinn_architecture_instance = None
         self.training_manager_instance = None
         self.maxwell_pde_loss_instance = None
+        self.interface_loss_instance = None
         self.collocation_sampler_instance = None
         self.visualizer_instance = None
+
+    @property
+    def physics_config(self):
+        return self.simulation_domain_engine_instance.physics_config
+
+    @property
+    def L0(self):
+        return self.simulation_domain_engine_instance.L0
+
+    @property
+    def H0(self):
+        return self.simulation_domain_engine_instance.H0
+
+    @property
+    def nu0(self):
+        return self.simulation_domain_engine_instance.nu0
+
+    @property
+    def A0(self):
+        return self.simulation_domain_engine_instance.A0
 
     def update_electromagnetic_pinn(self):
         self._build_system()
@@ -58,44 +73,30 @@ class ElectroMagneticPINN:
         self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
         
-        self.collocation_sampler_instance = CollocationSampler(device=self.computation_device)
-        
-        self.L0 = self.physics_config.scale_L0
-        self.H0 = self.physics_config.scale_H0
-        self.nu0 = self.physics_config.scale_nu0
-        self.A0 = (self.H0 * self.L0) / self.nu0
+        self.collocation_sampler_instance = CollocationSampler(
+            electro_magnetic_pinn=self,
+            device=self.computation_device
+        )
         
         self.pinn_architecture_instance = XPINNArchitecture(
-            electro_magnetic_pinn=self,
-            domain_scale=self.L0
+            electro_magnetic_pinn=self
         ).to(self.computation_device)
         
-        self.maxwell_pde_loss_instance = MaxwellPDELoss(L0=self.L0, H0=self.H0, nu0=self.nu0)
+        self.maxwell_pde_loss_instance = MaxwellPDELoss(electro_magnetic_pinn=self)
+        self.interface_loss_instance = InterfaceLoss(electro_magnetic_pinn=self)
         
         self.visualizer_instance = None
         if self.visualization_config.active:
-            self.visualizer_instance = TrainingVisualizer(parent_pinn=self)
+            self.visualizer_instance = TrainingVisualizer(electro_magnetic_pinn=self)
             
-        manager_kwargs = vars(self.training_config).copy()
-        manager_kwargs.pop('epochs_adam', None)
-        manager_kwargs.pop('epochs_lbfgs', None)
-            
-        self.training_manager_instance = TrainingManager(
-            model=self.pinn_architecture_instance,
-            pde_evaluator=self.maxwell_pde_loss_instance,
-            visualizer=self.visualizer_instance,
-            visualizer_update_interval=self.visualization_config.update_interval,
-            **manager_kwargs
-        )
+        self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
 
     def execute_training_process(self):
         if self.pinn_architecture_instance is None:
             self._build_system()
 
         def resample_data_fn():
-            return self.collocation_sampler_instance.generate_all_domain_points(
-                simulation_domain_object=self.simulation_domain_engine_instance
-            )
+            return self.collocation_sampler_instance.generate_all_domain_points()
 
         domains_data = resample_data_fn()
         
@@ -120,7 +121,7 @@ class ElectroMagneticPINN:
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()
-        points_tensor = points_tensor.to(self.computation_device).clone().requires_grad_(True)
+        points_tensor = points_tensor.to(self.computation_device).detach().clone().requires_grad_(True)
         
         props = self.simulation_domain_engine_instance.evaluate_global_physical_properties(points_tensor)
         mat_id = props["material_classification"]

@@ -5,8 +5,8 @@ def forward_network(self, network_key, xy):
     if network_key not in self.networks:
         raise ValueError(f"Lỗi: Không tìm thấy mạng con '{network_key}' trong XPINNArchitecture.")
         
-    xy_normalized = xy / self.domain_scale
     sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+    xy_normalized = xy / sim_domain.L0
     
     target_domain = None
     for domain in sim_domain.domains_list:
@@ -32,6 +32,10 @@ def forward_network(self, network_key, xy):
         x_input = xy_normalized
         
     raw_output = self.networks[network_key](x_input)
-    b_factor = self.boundary_factor(xy)
-    A_z_star = raw_output * b_factor
+    
+    if network_key == 'background':
+        A_z_star = raw_output * self.boundary_factor(xy)
+    else:
+        A_z_star = raw_output
+        
     return A_z_star

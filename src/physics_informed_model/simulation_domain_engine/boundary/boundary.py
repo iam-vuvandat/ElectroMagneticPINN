@@ -4,8 +4,10 @@ from simulation_domain_engine.boundary.compute_boundary_factor import compute_bo
 
 class Boundary:
     build_boundary = build_boundary
+    compute_boundary_factor = compute_boundary_factor
 
-    def __init__(self, boundary_name="outer_boundary", boundary_type="dirichlet"):
+    def __init__(self, simulation_domain=None, boundary_name="outer_boundary", boundary_type="dirichlet"):
+        self.simulation_domain = simulation_domain
         self.boundary_name = boundary_name
         self.boundary_type = boundary_type
 
@@ -27,6 +29,3 @@ class Boundary:
 
         self.bounding_box = None
         self.outline_tensor = None
-
-    def compute_boundary_factor(self, points_tensor, domain_scale):
-        return compute_boundary_factor(points_tensor, domain_scale)

@@ -2,37 +2,24 @@ import torch
 import torch.optim as optim
 
 class TrainingManager:
-    def __init__(
-        self, 
-        model, 
-        pde_evaluator, 
-        learning_rate_adam=1e-3, 
-        target_loss=0.0,
-        lbfgs_learning_rate=0.8, 
-        lbfgs_maximum_iterations=1000, 
-        lbfgs_maximum_evaluations=1250,
-        lbfgs_tolerance_gradient=1e-8,
-        lbfgs_tolerance_change=1e-10,
-        lbfgs_history_size=50,
-        visualizer=None,
-        visualizer_update_interval=100
-    ):
-        self.model = model
-        self.pde_evaluator = pde_evaluator
+    def __init__(self, electro_magnetic_pinn):
+        self.electro_magnetic_pinn = electro_magnetic_pinn
         
-        self.base_learning_rate_adam = learning_rate_adam
-        self.target_loss = target_loss
-        self.lbfgs_learning_rate = lbfgs_learning_rate
-        self.lbfgs_maximum_iterations = lbfgs_maximum_iterations
-        self.lbfgs_maximum_evaluations = lbfgs_maximum_evaluations
-        self.lbfgs_tolerance_gradient = lbfgs_tolerance_gradient
-        self.lbfgs_tolerance_change = lbfgs_tolerance_change
-        self.lbfgs_history_size = lbfgs_history_size
+        t_cfg = self.electro_magnetic_pinn.training_config
+        self.base_learning_rate_adam = t_cfg.learning_rate_adam
+        self.target_loss = t_cfg.target_loss
+        self.lbfgs_learning_rate = t_cfg.lbfgs_learning_rate
+        self.lbfgs_maximum_iterations = t_cfg.lbfgs_maximum_iterations
+        self.lbfgs_maximum_evaluations = t_cfg.lbfgs_maximum_evaluations
+        self.lbfgs_tolerance_gradient = t_cfg.lbfgs_tolerance_gradient
+        self.lbfgs_tolerance_change = t_cfg.lbfgs_tolerance_change
+        self.lbfgs_history_size = t_cfg.lbfgs_history_size
         
-        self.optimizer_adam = optim.Adam(self.model.parameters(), lr=self.base_learning_rate_adam)
+        model = self.electro_magnetic_pinn.pinn_architecture_instance
+        self.optimizer_adam = optim.Adam(model.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
+            model.parameters(),
             lr=self.lbfgs_learning_rate,
             max_iter=self.lbfgs_maximum_iterations,
             max_eval=self.lbfgs_maximum_evaluations,
@@ -41,14 +28,29 @@ class TrainingManager:
             history_size=self.lbfgs_history_size,
             line_search_fn="strong_wolfe"
         )
-        
-        self.visualizer = visualizer
-        self.visualizer_update_interval = visualizer_update_interval
+
+    @property
+    def model(self):
+        return self.electro_magnetic_pinn.pinn_architecture_instance
+
+    @property
+    def pde_evaluator(self):
+        return self.electro_magnetic_pinn.maxwell_pde_loss_instance
+
+    @property
+    def interface_evaluator(self):
+        return self.electro_magnetic_pinn.interface_loss_instance
+
+    @property
+    def visualizer(self):
+        return self.electro_magnetic_pinn.visualizer_instance
+
+    @property
+    def visualizer_update_interval(self):
+        return self.electro_magnetic_pinn.visualization_config.update_interval
 
     def compute_loss(self, domains_data):
         device = next(self.model.parameters()).device
-        
-        # Móc nối trực tiếp vào đồ thị autograd của tham số mô hình
         dummy_param = next(self.model.parameters())
         total_loss = (dummy_param * 0.0).sum()
 
@@ -57,9 +59,8 @@ class TrainingManager:
             pts = data["interior_points"].to(device)
             
             if pts.shape[0] > 0:
-                # Đảm bảo tensor tọa độ khả vi và độc lập
-                pts = pts.detach().clone()
-                pts.requires_grad_(True)
+                if not pts.requires_grad:
+                    pts = pts.detach().clone().requires_grad_(True)
                     
                 A_z_star = self.model.forward_network(key, pts)
                 nu = domain.evaluate_reluctivity(pts).to(device)
@@ -71,19 +72,21 @@ class TrainingManager:
                     xy=pts, A_z_star=A_z_star, nu=nu, J_z=jz, H_cx=hx, H_cy=hy
                 )
                 weighted_res = residual_star * domain.training_config.pde_weight
-                pde_loss = torch.mean(weighted_res**2)
+                pde_loss = torch.mean(weighted_res ** 2)
                 total_loss = total_loss + pde_loss
 
             surf_pts = data["surface_points"].to(device)
             if surf_pts.shape[0] > 0 and key != 'background':
-                surf_pts = surf_pts.detach().clone()
-                surf_pts.requires_grad_(True)
+                if not surf_pts.requires_grad:
+                    surf_pts = surf_pts.detach().clone().requires_grad_(True)
                     
-                Az_mat = self.model.forward_network(key, surf_pts)
-                Az_bg = self.model.forward_network('background', surf_pts)
-                
-                continuity_loss = torch.mean((Az_mat - Az_bg)**2)
-                total_loss = total_loss + domain.training_config.interface_weight * continuity_loss
+                interface_loss = self.interface_evaluator.compute_loss(
+                    network_key=key,
+                    domain=domain,
+                    surf_pts=surf_pts,
+                    background_key='background'
+                )
+                total_loss = total_loss + domain.training_config.interface_weight * interface_loss
 
         return total_loss
 

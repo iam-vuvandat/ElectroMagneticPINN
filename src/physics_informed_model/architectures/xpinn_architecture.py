@@ -15,16 +15,17 @@ class XPINNArchitecture(nn.Module):
     forward_network = forward_network
     forward = forward
 
-    def __init__(self, electro_magnetic_pinn, input_dim=2, output_dim=1, domain_scale=0.05):
+    def __init__(self, electro_magnetic_pinn, input_dim=2, output_dim=1, domain_scale=None):
         super().__init__()
         
         self.electro_magnetic_pinn = electro_magnetic_pinn
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.domain_scale = domain_scale
+        
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        self.domain_scale = domain_scale if domain_scale is not None else sim_domain.L0
         
         self.networks = nn.ModuleDict()
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         self.domain_count = sim_domain.get_domain_count()
         domains_list = sim_domain.domains_list
         

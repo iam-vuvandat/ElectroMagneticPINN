@@ -6,12 +6,17 @@ from matplotlib.colors import LogNorm
 import imageio
 
 class TrainingVisualizer:
-    def __init__(self, parent_pinn):
-        self.parent_pinn = parent_pinn
-        self.output_directory = self.parent_pinn.visualization_config.output_directory
-        self.x_bounds = self.parent_pinn.simulation_domain_engine_instance.x_boundaries_tuple
-        self.y_bounds = self.parent_pinn.simulation_domain_engine_instance.y_boundaries_tuple
-        self.resolution = self.parent_pinn.visualization_config.resolution
+    def __init__(self, electro_magnetic_pinn=None, parent_pinn=None):
+        self.electro_magnetic_pinn = electro_magnetic_pinn if electro_magnetic_pinn is not None else parent_pinn
+        self.parent_pinn = self.electro_magnetic_pinn
+        
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        vis_cfg = self.electro_magnetic_pinn.visualization_config
+        
+        self.output_directory = vis_cfg.output_directory
+        self.x_bounds = sim_domain.x_boundaries_tuple
+        self.y_bounds = sim_domain.y_boundaries_tuple
+        self.resolution = vis_cfg.resolution
         
         self.frame_paths = []
         self.loss_history = []
@@ -32,13 +37,13 @@ class TrainingVisualizer:
         self.loss_history.append(loss_value)
         self.epoch_history.append(epoch)
         
-        model = self.parent_pinn.pinn_architecture_instance
-        pde_evaluator = self.parent_pinn.maxwell_pde_loss_instance
-        sim_domain = self.parent_pinn.simulation_domain_engine_instance
+        model = self.electro_magnetic_pinn.pinn_architecture_instance
+        pde_evaluator = self.electro_magnetic_pinn.maxwell_pde_loss_instance
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         
         model.eval()
         computation_device = next(model.parameters()).device
-        eval_points = self.eval_points_tensor.to(computation_device).clone().detach().requires_grad_(True)
+        eval_points = self.eval_points_tensor.to(computation_device).detach().clone().requires_grad_(True)
         
         phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
         mat_id = phys_props["material_classification"]
@@ -58,7 +63,7 @@ class TrainingVisualizer:
 
         residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
         
-        A_z_phys = A_z_star * self.parent_pinn.A0
+        A_z_phys = A_z_star * sim_domain.A0
         grad_A = torch.autograd.grad(
             outputs=A_z_phys,
             inputs=eval_points,
@@ -91,7 +96,8 @@ class TrainingVisualizer:
         axs[0, 0].set_ylim(self.y_bounds)
         axs[0, 0].set_aspect('equal')
         
-        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, np.abs(residual_numpy), levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
+        res_abs = np.clip(np.abs(residual_numpy), 1e-6, None)
+        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, res_abs, levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
         fig.colorbar(contour_res, ax=axs[0, 1])
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
@@ -134,8 +140,8 @@ class TrainingVisualizer:
         model.train()
 
     def generate_gif(self):
-        output_filename = self.parent_pinn.visualization_config.gif_filename
-        fps = self.parent_pinn.visualization_config.gif_fps
+        output_filename = self.electro_magnetic_pinn.visualization_config.gif_filename
+        fps = self.electro_magnetic_pinn.visualization_config.gif_fps
         if not self.frame_paths:
             print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo GIF.")
             return

@@ -5,7 +5,8 @@ from simulation_domain_engine.material_domain.polygon_signed_distance_field impo
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
 class MaterialDomain:
-    def __init__(self, domain_name="air_domain"):
+    def __init__(self, domain_name="air_domain", simulation_domain=None):
+        self.simulation_domain = simulation_domain
         self.domain_id = None
         self.domain_name = domain_name
         
@@ -55,7 +56,8 @@ class MaterialDomain:
         return self
 
     def _compute_constant_bh_curve(self):
-        constant_reluctivity = VACUUM_RELUCTIVITY / self.physics_config.relative_permeability
+        nu0 = self.simulation_domain.nu0 if self.simulation_domain is not None else VACUUM_RELUCTIVITY
+        constant_reluctivity = nu0 / self.physics_config.relative_permeability
         self.physics_config.bh_curve_data = lambda points_tensor: torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
         return self.physics_config.bh_curve_data
 
