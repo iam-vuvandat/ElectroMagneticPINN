@@ -24,6 +24,8 @@ def forward_network(self, network_key, xy):
     
     if config.fourier_features:
         B_matrix = getattr(self, f'B_matrix_{network_key}')
+        if B_matrix.device != xy.device:
+            B_matrix = B_matrix.to(xy.device)
         projected = (2.0 * np.pi * xy_normalized) @ B_matrix.T
         x_input = torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1)
     else:

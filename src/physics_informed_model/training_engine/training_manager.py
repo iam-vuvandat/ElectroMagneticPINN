@@ -48,15 +48,17 @@ class TrainingManager:
     def compute_loss(self, domains_data):
         device = next(self.model.parameters()).device
         
-        # Móc nối trực tiếp vào đồ thị đạo hàm của tham số mô hình
-        dummy_tensor = next(self.model.parameters())
-        total_loss = (dummy_tensor * 0.0).sum()
+        # Móc nối trực tiếp vào đồ thị autograd của tham số mô hình
+        dummy_param = next(self.model.parameters())
+        total_loss = (dummy_param * 0.0).sum()
 
         for key, data in domains_data.items():
             domain = data["domain_object"]
-            pts = data["interior_points"].to(device).detach()
+            pts = data["interior_points"].to(device)
             
             if pts.shape[0] > 0:
+                # Đảm bảo tensor tọa độ khả vi và độc lập
+                pts = pts.detach().clone()
                 pts.requires_grad_(True)
                     
                 A_z_star = self.model.forward_network(key, pts)
@@ -72,8 +74,9 @@ class TrainingManager:
                 pde_loss = torch.mean(weighted_res**2)
                 total_loss = total_loss + pde_loss
 
-            surf_pts = data["surface_points"].to(device).detach()
+            surf_pts = data["surface_points"].to(device)
             if surf_pts.shape[0] > 0 and key != 'background':
+                surf_pts = surf_pts.detach().clone()
                 surf_pts.requires_grad_(True)
                     
                 Az_mat = self.model.forward_network(key, surf_pts)
