@@ -28,10 +28,10 @@ def main():
     print("version 8.0 - Dual Straight I-Shaped Magnets Simulation (XPINN)")
     
     model = ElectroMagneticPINN()
-    
+  
     max_coercive_field = 800000.0
-    model.simulation_domain_engine_instance.physics_config.scale_H0 = max_coercive_field * 1.5
-    model.simulation_domain_engine_instance.physics_config.scale_L0 = 0.1
+    model.physics_config.scale_H0 = max_coercive_field * 1.5
+    model.physics_config.scale_L0 = 0.12
     
     model.simulation_domain_engine_instance.x_boundaries_tuple = (-0.1, 0.1)
     model.simulation_domain_engine_instance.y_boundaries_tuple = (-0.1, 0.1)
