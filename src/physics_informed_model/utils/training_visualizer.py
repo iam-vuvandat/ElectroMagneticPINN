@@ -38,22 +38,39 @@ class TrainingVisualizer:
         
         model.eval()
         computation_device = next(model.parameters()).device
-        eval_points = self.eval_points_tensor.to(computation_device).clone().requires_grad_(True)
+        eval_points = self.eval_points_tensor.to(computation_device).clone().detach().requires_grad_(True)
         
         phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
+        mat_id = phys_props["material_classification"]
         nu_grid = phys_props["reluctivity"].to(computation_device)
         jz_grid = phys_props["current_density_z"].to(computation_device)
         hcx_grid = phys_props["coercive_field_x"].to(computation_device)
         hcy_grid = phys_props["coercive_field_y"].to(computation_device)
         
-        A_z_phys, B_x_phys, B_y_phys = self.parent_pinn.evaluate_fields(eval_points)
-        A_z_star = A_z_phys / self.parent_pinn.A0
-        
+        A_z_star = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        for domain in sim_domain.domains_list:
+            d_id = domain.domain_id
+            net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
+            mask = (mat_id == float(d_id)).float()
+            if mask.any():
+                Az_sub = model.forward_network(net_key, eval_points)
+                A_z_star = A_z_star + mask * Az_sub
+
         residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
         
-        A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
-        B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        A_z_phys = A_z_star * self.parent_pinn.A0
+        grad_A = torch.autograd.grad(
+            outputs=A_z_phys,
+            inputs=eval_points,
+            grad_outputs=torch.ones_like(A_z_phys),
+            create_graph=False
+        )[0]
+        B_x_phys = grad_A[:, 1:2]
+        B_y_phys = -grad_A[:, 0:1]
+        
+        A_z_numpy = A_z_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        B_x_numpy = B_x_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        B_y_numpy = B_y_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
         B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
         residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
         
