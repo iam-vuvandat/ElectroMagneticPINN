@@ -30,6 +30,7 @@ class TrainingManager:
             line_search_fn="strong_wolfe"
         )
         self.last_loss_breakdown = {}
+        self.completed_adam_epochs = 0
 
     @property
     def model(self):
@@ -139,6 +140,7 @@ class TrainingManager:
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=1e-6)
         stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
         non_finite_streak = 0
+        self.completed_adam_epochs = 0
         
         for epoch in range(epochs):
             if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
@@ -161,6 +163,7 @@ class TrainingManager:
             self.optimizer_adam.step()
             scheduler_adam.step()
             
+            self.completed_adam_epochs = epoch + 1
             current_loss_value = loss.item()
             
             if self.target_loss > 0 and current_loss_value <= self.target_loss:
@@ -200,7 +203,9 @@ class TrainingManager:
         )
 
         lbfgs_counter = [0]
+        last_loss = [0.0]
         start_time = time.time()
+        base_step = self.completed_adam_epochs
         stop_reason = f"Hoàn thành tối ưu hóa L-BFGS (tối đa {max_iterations} iterations)."
         
         def closure():
@@ -211,7 +216,8 @@ class TrainingManager:
             loss.backward()
             
             lbfgs_counter[0] += 1
-            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
+            last_loss[0] = loss.item()
+            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 25 == 0:
                 bd = self.last_loss_breakdown
                 elapsed = time.time() - start_time
                 print(
@@ -220,11 +226,13 @@ class TrainingManager:
                 )
                 
             if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(50000 + lbfgs_counter[0], loss.item(), domains_data)
+                self.visualizer.save_frame(base_step + lbfgs_counter[0], loss.item(), domains_data)
                 
             return loss
             
         self.optimizer_lbfgs.step(closure)
+        if self.visualizer and lbfgs_counter[0] > 0 and lbfgs_counter[0] % self.visualizer_update_interval != 0:
+            self.visualizer.save_frame(base_step + lbfgs_counter[0], last_loss[0], domains_data)
         total_elapsed = time.time() - start_time
         print(f"[*] KẾT THÚC L-BFGS: {lbfgs_counter[0]} closure calls trong {total_elapsed:.2f}s. {stop_reason}")
         return domains_data

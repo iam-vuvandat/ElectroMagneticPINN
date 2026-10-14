@@ -45,8 +45,7 @@ class CollocationSampler:
         while collected_count < number_of_points:
             if attempts >= self.max_sampling_attempts:
                 raise RuntimeError(
-                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho domain '{domain_object.domain_name}'. "
-                    f"Yêu cầu {number_of_points} điểm, chỉ thu được {collected_count} điểm."
+                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho domain '{domain_object.domain_name}'."
                 )
             attempts += 1
             points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
@@ -83,10 +82,32 @@ class CollocationSampler:
         sampled_edges = np.random.choice(num_vertices, size=number_of_points, p=edge_probs)
         
         uv_1d = self.sobol_engine.draw(number_of_points)[:, 0:1].cpu().numpy()
-        t_params = np.clip(uv_1d, 1e-3, 1.0 - 1e-3)
+        t_params = 0.02 + 0.96 * uv_1d
         
         pts_sampled = edge_starts[sampled_edges] + t_params * edge_vectors[sampled_edges]
         return torch.tensor(pts_sampled, dtype=torch.float32, device=self.device)
+
+    def _sample_air_box(self, simulation_domain_object, target_count, x_min, x_max, y_min, y_max):
+        if target_count <= 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+        collected_points = []
+        collected_count = 0
+        pool_size = max(target_count * 2, 1000)
+        attempts = 0
+        while collected_count < target_count:
+            if attempts >= self.max_sampling_attempts:
+                raise RuntimeError(
+                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho miền background."
+                )
+            attempts += 1
+            points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
+            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool).view(-1)
+            air_mask = global_sdf > 0.0
+            if air_mask.any():
+                valid = points_pool[air_mask]
+                collected_points.append(valid)
+                collected_count += valid.shape[0]
+        return torch.cat(collected_points, dim=0)[:target_count, :]
 
     def sample_background_interior_points(self, simulation_domain_object, number_of_points):
         if number_of_points <= 0:
@@ -97,29 +118,26 @@ class CollocationSampler:
         if x_max <= x_min or y_max <= y_min:
             raise ValueError("Lỗi lấy mẫu: Khung biên của SimulationDomain không hợp lệ.")
 
-        collected_points = []
-        collected_count = 0
-        pool_size = max(number_of_points * 2, 1000)
-        attempts = 0
+        mat_domains = [d for d in simulation_domain_object.domains_list if getattr(d, 'domain_name', '') != 'background']
+        if not mat_domains:
+            return self._sample_air_box(simulation_domain_object, number_of_points, x_min, x_max, y_min, y_max)
 
-        while collected_count < number_of_points:
-            if attempts >= self.max_sampling_attempts:
-                raise RuntimeError(
-                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho miền background. "
-                    f"Yêu cầu {number_of_points} điểm, chỉ thu được {collected_count} điểm."
-                )
-            attempts += 1
-            points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
-            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool).view(-1)
-            air_mask = global_sdf > 0.0
+        all_outlines = np.vstack([np.array(d.geometry_config.outline) for d in mat_domains])
+        mx_min, mx_max = float(np.min(all_outlines[:, 0])), float(np.max(all_outlines[:, 0]))
+        my_min, my_max = float(np.min(all_outlines[:, 1])), float(np.max(all_outlines[:, 1]))
+        pad_x = 0.15 * (x_max - x_min)
+        pad_y = 0.15 * (y_max - y_min)
+        gx_min = max(x_min, mx_min - pad_x)
+        gx_max = min(x_max, mx_max + pad_x)
+        gy_min = max(y_min, my_min - pad_y)
+        gy_max = min(y_max, my_max + pad_y)
 
-            if air_mask.any():
-                valid = points_pool[air_mask]
-                collected_points.append(valid)
-                collected_count += valid.shape[0]
+        n_focus = int(round(number_of_points * 0.35))
+        n_uniform = number_of_points - n_focus
 
-        pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        return pts
+        pts_uniform = self._sample_air_box(simulation_domain_object, n_uniform, x_min, x_max, y_min, y_max)
+        pts_focus = self._sample_air_box(simulation_domain_object, n_focus, gx_min, gx_max, gy_min, gy_max)
+        return torch.cat([pts_uniform, pts_focus], dim=0)
 
     def generate_all_domain_points(self, simulation_domain_object=None):
         if simulation_domain_object is None:

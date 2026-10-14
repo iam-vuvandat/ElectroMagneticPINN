@@ -30,17 +30,17 @@ class MaterialDomain:
             interface_ht_weight=500.0,
             pde_fading_beta=150.0,
             sampling_density_multiplier=1.0,
-            number_of_interior_points=2500,
-            number_of_surface_points=600
+            number_of_interior_points=1000,
+            number_of_surface_points=800
         )
         
         self.network_config = SimpleNamespace(
-            hidden_layers=6,
-            hidden_neurons=128,
+            hidden_layers=4,
+            hidden_neurons=64,
             activation_function=nn.SiLU(),
             fourier_features=True,
-            fourier_sigma=1.5,
-            fourier_mapping_size=256
+            fourier_sigma=1.2,
+            fourier_mapping_size=128
         )
         
         self.outline_tensor = None

@@ -25,7 +25,7 @@ def main():
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 9.0 - Dual Straight I-Shaped Magnets Simulation (XPINN Stabilized)")
+    print("version 10.0 - Fast & Stabilized Dual Magnets XPINN Simulation")
     
     model = ElectroMagneticPINN()
     
@@ -40,24 +40,24 @@ def main():
     model.sampler_config.resample_interval = 100
     model.sampler_config.resample_before_lbfgs = True
     
-    model.training_config.epochs_adam = 5000
-    model.training_config.epochs_lbfgs = 2000
+    model.training_config.epochs_adam = 2500
+    model.training_config.epochs_lbfgs = 800
     model.training_config.learning_rate_adam = 1e-3
     model.training_config.target_loss = 1e-6
     
     model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_iterations = 2000
-    model.training_config.lbfgs_maximum_evaluations = 2500
+    model.training_config.lbfgs_maximum_iterations = 800
+    model.training_config.lbfgs_maximum_evaluations = 1000
     model.training_config.lbfgs_tolerance_gradient = 1e-8
     model.training_config.lbfgs_tolerance_change = 1e-10
     model.training_config.lbfgs_history_size = 50
     
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 100 
+    model.visualization_config.update_interval = 200 
     model.visualization_config.output_directory = "figure"
-    model.visualization_config.resolution = 100
+    model.visualization_config.resolution = 80
     model.visualization_config.gif_filename = "training_process.gif"
-    model.visualization_config.gif_fps = 15
+    model.visualization_config.gif_fps = 10
     
     i_magnet_left = MaterialDomain(domain_name="i_bar_left")
     i_magnet_left.geometry_config.outline = [
@@ -74,14 +74,14 @@ def main():
     i_magnet_left.training_config.interface_bn_weight = 500.0
     i_magnet_left.training_config.interface_ht_weight = 500.0
     i_magnet_left.training_config.pde_fading_beta = 150.0
-    i_magnet_left.training_config.number_of_interior_points = 3000
-    i_magnet_left.training_config.number_of_surface_points = 1000
-    i_magnet_left.network_config.hidden_layers = 6
-    i_magnet_left.network_config.hidden_neurons = 128
+    i_magnet_left.training_config.number_of_interior_points = 1000
+    i_magnet_left.training_config.number_of_surface_points = 800
+    i_magnet_left.network_config.hidden_layers = 4
+    i_magnet_left.network_config.hidden_neurons = 64
     i_magnet_left.network_config.activation_function = nn.SiLU()
     i_magnet_left.network_config.fourier_features = True
-    i_magnet_left.network_config.fourier_sigma = 1.5
-    i_magnet_left.network_config.fourier_mapping_size = 256
+    i_magnet_left.network_config.fourier_sigma = 1.2
+    i_magnet_left.network_config.fourier_mapping_size = 128
     i_magnet_left.build_domain()
 
     i_magnet_right = MaterialDomain(domain_name="i_bar_right")
@@ -99,14 +99,14 @@ def main():
     i_magnet_right.training_config.interface_bn_weight = 500.0
     i_magnet_right.training_config.interface_ht_weight = 500.0
     i_magnet_right.training_config.pde_fading_beta = 150.0
-    i_magnet_right.training_config.number_of_interior_points = 3000
-    i_magnet_right.training_config.number_of_surface_points = 1000
-    i_magnet_right.network_config.hidden_layers = 6
-    i_magnet_right.network_config.hidden_neurons = 128
+    i_magnet_right.training_config.number_of_interior_points = 1000
+    i_magnet_right.training_config.number_of_surface_points = 800
+    i_magnet_right.network_config.hidden_layers = 4
+    i_magnet_right.network_config.hidden_neurons = 64
     i_magnet_right.network_config.activation_function = nn.SiLU()
     i_magnet_right.network_config.fourier_features = True
-    i_magnet_right.network_config.fourier_sigma = 1.5
-    i_magnet_right.network_config.fourier_mapping_size = 256
+    i_magnet_right.network_config.fourier_sigma = 1.2
+    i_magnet_right.network_config.fourier_mapping_size = 128
     i_magnet_right.build_domain()
 
     model.simulation_domain_engine_instance.add_material_domain(i_magnet_left)
@@ -117,16 +117,16 @@ def main():
     bg_training_config.interface_weight = 1.0
     bg_training_config.pde_fading_beta = 150.0
     bg_training_config.sampling_density_multiplier = 1.0
-    bg_training_config.number_of_interior_points = 8000
+    bg_training_config.number_of_interior_points = 4000
     bg_training_config.number_of_surface_points = 0
 
     bg_network_config = type('', (), {})()
-    bg_network_config.hidden_layers = 6
-    bg_network_config.hidden_neurons = 128
+    bg_network_config.hidden_layers = 4
+    bg_network_config.hidden_neurons = 64
     bg_network_config.activation_function = nn.SiLU()
     bg_network_config.fourier_features = True
-    bg_network_config.fourier_sigma = 1.5
-    bg_network_config.fourier_mapping_size = 256
+    bg_network_config.fourier_sigma = 1.2
+    bg_network_config.fourier_mapping_size = 128
 
     model.simulation_domain_engine_instance.build_background_domain(
         domain_name="background",
@@ -139,11 +139,11 @@ def main():
     xb = model.simulation_domain_engine_instance.x_boundaries_tuple
     yb = model.simulation_domain_engine_instance.y_boundaries_tuple
     
-    model.simulation_domain_engine_instance.plot_problem_definition(resolution=120)
+    model.simulation_domain_engine_instance.plot_problem_definition(resolution=100)
 
     model.execute_training_process()
     
-    resolution = 150
+    resolution = 140
     x_coords = np.linspace(xb[0], xb[1], resolution)
     y_coords = np.linspace(yb[0], yb[1], resolution)
     X_grid, Y_grid = np.meshgrid(x_coords, y_coords)

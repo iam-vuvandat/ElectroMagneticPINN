@@ -91,7 +91,7 @@ class SimulationDomain:
             strict_inside_counts += (sdf < -1e-6).int()
 
         if torch.any(strict_inside_counts > 1):
-            raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau. Vui lòng tách rời các miền hoặc bật allow_overlapping_domains=True.")
+            raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau.")
         return True
 
     def add_material_domain(self, domain_object):
@@ -131,6 +131,8 @@ class SimulationDomain:
         bg_domain.physics_config.relative_permeability = 1.0
         bg_domain.physics_config.coercive = [0.0, 0.0]
         bg_domain.physics_config.current = 0.0
+        bg_domain.training_config.number_of_interior_points = 4000
+        bg_domain.training_config.number_of_surface_points = 0
 
         if training_config is not None:
             for key, value in vars(training_config).items():

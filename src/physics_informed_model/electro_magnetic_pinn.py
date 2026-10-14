@@ -20,11 +20,11 @@ class ElectroMagneticPINN:
         self.training_config = SimpleNamespace(
             learning_rate_adam=1e-3,
             target_loss=1e-5,
-            epochs_adam=4000,
-            epochs_lbfgs=1500,
+            epochs_adam=2500,
+            epochs_lbfgs=800,
             lbfgs_learning_rate=0.8,
-            lbfgs_maximum_iterations=1500,
-            lbfgs_maximum_evaluations=1875,
+            lbfgs_maximum_iterations=800,
+            lbfgs_maximum_evaluations=1000,
             lbfgs_tolerance_gradient=1e-8,
             lbfgs_tolerance_change=1e-10,
             lbfgs_history_size=50
@@ -32,9 +32,9 @@ class ElectroMagneticPINN:
         
         self.visualization_config = SimpleNamespace(
             active=False,
-            update_interval=100,
+            update_interval=200,
             output_directory="animation_frames",
-            resolution=100,
+            resolution=80,
             gif_filename="training_process.gif",
             gif_fps=10
         )

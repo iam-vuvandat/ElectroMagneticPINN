@@ -25,22 +25,34 @@ class InterfaceLoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def _compute_normals_and_tangents_from_sdf(self, domain, surf_pts):
-        pts_for_n = surf_pts.detach().clone().requires_grad_(True)
-        sdf_val = domain.compute_signed_distance_field(pts_for_n).view(-1, 1)
-        n_vec = torch.autograd.grad(
-            outputs=sdf_val,
-            inputs=pts_for_n,
-            grad_outputs=torch.ones_like(sdf_val),
-            create_graph=False
-        )[0]
-        n_norm = torch.linalg.norm(n_vec, dim=1, keepdim=True)
-        n_unit = (n_vec / (n_norm + 1e-8)).detach()
-        nx = n_unit[:, 0:1]
-        ny = n_unit[:, 1:2]
-        tx = -ny
-        ty = nx
-        return nx, ny, tx, ty
+    def _compute_normals_and_tangents_from_outline(self, domain, surf_pts):
+        vertices = domain.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        start_pts = vertices
+        end_pts = torch.roll(vertices, shifts=-1, dims=0)
+        edge_vecs = end_pts - start_pts
+        edge_lens = torch.sqrt(torch.sum(edge_vecs ** 2, dim=1, keepdim=True) + 1e-12)
+
+        signed_area = 0.5 * torch.sum(start_pts[:, 0] * end_pts[:, 1] - end_pts[:, 0] * start_pts[:, 1])
+        orient = 1.0 if signed_area.item() >= 0.0 else -1.0
+
+        unit_tangents = orient * (edge_vecs / edge_lens)
+        unit_normals = torch.cat([unit_tangents[:, 1:2], -unit_tangents[:, 0:1]], dim=1)
+
+        pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
+        denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
+        proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
+        closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
+        dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
+        edge_idx = torch.argmin(dist_sq, dim=1)
+
+        t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
+        corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
+
+        nx = unit_normals[edge_idx, 0:1].detach()
+        ny = unit_normals[edge_idx, 1:2].detach()
+        tx = unit_tangents[edge_idx, 0:1].detach()
+        ty = unit_tangents[edge_idx, 1:2].detach()
+        return nx, ny, tx, ty, corner_w
 
     def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
         if pts.shape[0] == 0:
@@ -48,7 +60,7 @@ class InterfaceLoss:
             return zero, zero, zero
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
-        nx, ny, tx, ty = self._compute_normals_and_tangents_from_sdf(domain_a, pts)
+        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
 
         Az_a = model.forward_network(key_a, pts)
         Az_b = model.forward_network(key_b, pts)
@@ -76,7 +88,7 @@ class InterfaceLoss:
 
         Bn_a_star = Bx_a_star * nx + By_a_star * ny
         Bn_b_star = Bx_b_star * nx + By_b_star * ny
-        loss_Bn = torch.mean((Bn_a_star - Bn_b_star) ** 2)
+        loss_Bn = torch.mean(corner_w * ((Bn_a_star - Bn_b_star) ** 2))
 
         nu_a_star = domain_a.evaluate_reluctivity(pts) / self.nu0
         hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
@@ -100,7 +112,7 @@ class InterfaceLoss:
 
         Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
-        loss_Ht = torch.mean((Ht_a_star - Ht_b_star) ** 2)
+        loss_Ht = torch.mean(corner_w * ((Ht_a_star - Ht_b_star) ** 2))
 
         return loss_val, loss_Bn, loss_Ht
 

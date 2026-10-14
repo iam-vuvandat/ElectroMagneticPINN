@@ -54,6 +54,14 @@ def run_geometry_and_physics_tests():
 
     model.update_electromagnetic_pinn()
 
+    surf_sample = model.collocation_sampler_instance.sample_domain_surface_points(mag_left, 200)
+    nx, ny, tx, ty, cw = model.interface_loss_instance._compute_normals_and_tangents_from_outline(mag_left, surf_sample)
+    n_norms = torch.sqrt(nx ** 2 + ny ** 2)
+    t_norms = torch.sqrt(tx ** 2 + ty ** 2)
+    assert torch.allclose(n_norms, torch.ones_like(n_norms), atol=1e-5), "Pháp tuyến giao diện phải có độ dài đơn vị = 1."
+    assert torch.allclose(t_norms, torch.ones_like(t_norms), atol=1e-5), "Tiếp tuyến giao diện phải có độ dài đơn vị = 1."
+    assert torch.all(cw > 0.0), "Trọng số làm mượt góc phải dương tại các điểm lấy mẫu."
+
     test_pts = torch.tensor([
         [-0.03, 0.0],
         [0.03, 0.0],
@@ -84,12 +92,12 @@ def run_geometry_and_physics_tests():
     assert domains_data['domain_2']['surface_points'].shape[0] == 50, "Sai số điểm bề mặt khi nhân multiplier = 0.5"
 
     loss_val = model.training_manager_instance.compute_loss(domains_data)
-    assert torch.isfinite(loss_val), "Tổng loss khởi tạo phải hữu hạn."
+    assert torch.isfinite(loss_val) and loss_val.item() > 10.0, "Loss khởi tạo phải hữu hạn và phản ánh nguồn H_c trên giao diện."
 
     Az_f, Bx_f, By_f = model.evaluate_fields(test_pts)
     assert torch.all(torch.isfinite(Az_f)) and torch.all(torch.isfinite(Bx_f)) and torch.all(torch.isfinite(By_f)), "Trường dự đoán không hữu hạn."
 
-    print("[*] TẤT CẢ CÁC BÀI KIỂM THỬ HÌNH HỌC, LẤY MẪU, BIÊN VÀ VẬT LÝ ĐỀU ĐẠT (PASSED)!")
+    print("[*] TẤT CẢ CÁC BÀI KIỂM THỬ HÌNH HỌC, PHÁP TUYẾN GIAO DIỆN, LẤY MẪU VÀ VẬT LÝ ĐỀU ĐẠT (PASSED)!")
 
 if __name__ == "__main__":
     run_geometry_and_physics_tests()

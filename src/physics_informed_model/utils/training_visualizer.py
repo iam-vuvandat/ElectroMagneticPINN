@@ -115,7 +115,7 @@ class TrainingVisualizer:
         axs[0, 2].plot(self.epoch_history, self.loss_history, 'b-')
         axs[0, 2].set_yscale('log')
         axs[0, 2].set_title("Loss Optimization")
-        axs[0, 2].set_xlabel("Epoch")
+        axs[0, 2].set_xlabel("Step / Epoch")
         axs[0, 2].set_ylabel("Loss")
         axs[0, 2].grid(True, which="both", ls="-", alpha=0.2)
         
@@ -142,10 +142,10 @@ class TrainingVisualizer:
         axs[1, 2].set_title("Flux Density Vectors (B)")
         axs[1, 2].set_aspect('equal')
         
-        fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
+        fig.suptitle(f"PINN Training Process - Step {epoch}", fontsize=16)
         plt.tight_layout()
         
-        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
+        frame_name = os.path.join(self.output_directory, f"frame_{len(self.frame_paths) + 1:05d}.png")
         plt.savefig(frame_name, dpi=100)
         plt.close(fig)
         
