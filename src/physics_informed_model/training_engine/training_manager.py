@@ -47,16 +47,17 @@ class TrainingManager:
 
     def compute_loss(self, domains_data):
         device = next(self.model.parameters()).device
-        dummy_param = next(self.model.parameters())
-        total_loss = (dummy_param * 0.0).sum()
+        
+        # Móc nối trực tiếp vào đồ thị đạo hàm của tham số mô hình
+        dummy_tensor = next(self.model.parameters())
+        total_loss = (dummy_tensor * 0.0).sum()
 
         for key, data in domains_data.items():
             domain = data["domain_object"]
-            pts = data["interior_points"].to(device)
+            pts = data["interior_points"].to(device).detach()
             
             if pts.shape[0] > 0:
-                if not pts.requires_grad:
-                    pts = pts.clone().detach().requires_grad_(True)
+                pts.requires_grad_(True)
                     
                 A_z_star = self.model.forward_network(key, pts)
                 nu = domain.evaluate_reluctivity(pts).to(device)
@@ -71,10 +72,9 @@ class TrainingManager:
                 pde_loss = torch.mean(weighted_res**2)
                 total_loss = total_loss + pde_loss
 
-            surf_pts = data["surface_points"].to(device)
+            surf_pts = data["surface_points"].to(device).detach()
             if surf_pts.shape[0] > 0 and key != 'background':
-                if not surf_pts.requires_grad:
-                    surf_pts = surf_pts.clone().detach().requires_grad_(True)
+                surf_pts.requires_grad_(True)
                     
                 Az_mat = self.model.forward_network(key, surf_pts)
                 Az_bg = self.model.forward_network('background', surf_pts)

@@ -17,8 +17,12 @@ class MaxwellPDELoss:
             inputs=xy,
             grad_outputs=torch.ones_like(A_z_star),
             create_graph=True,
-            retain_graph=True
+            retain_graph=True,
+            allow_unused=True
         )[0]
+        
+        if grad_A_star is None:
+            return torch.zeros_like(A_z_star)
         
         dAz_star_dx_star = grad_A_star[:, 0:1] * self.L0
         dAz_star_dy_star = grad_A_star[:, 1:2] * self.L0
@@ -31,18 +35,21 @@ class MaxwellPDELoss:
             inputs=xy,
             grad_outputs=torch.ones_like(H_x_star),
             create_graph=True,
-            retain_graph=True
+            retain_graph=True,
+            allow_unused=True
         )[0]
-        dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
         
         grad_Hy_star = torch.autograd.grad(
             outputs=H_y_star,
             inputs=xy,
             grad_outputs=torch.ones_like(H_y_star),
             create_graph=True,
-            retain_graph=True
+            retain_graph=True,
+            allow_unused=True
         )[0]
-        dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
+        
+        dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0 if grad_Hx_star is not None else torch.zeros_like(H_x_star)
+        dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0 if grad_Hy_star is not None else torch.zeros_like(H_y_star)
         
         residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
         return residual_star
