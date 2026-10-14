@@ -13,17 +13,18 @@ class ElectroMagneticPINN:
     def __init__(self):
         self.sampler_config = SimpleNamespace(
             dynamic_resampling=True,
-            resample_interval=100
+            resample_interval=100,
+            resample_before_lbfgs=True
         )
         
         self.training_config = SimpleNamespace(
             learning_rate_adam=1e-3,
-            target_loss=1e-3,
+            target_loss=1e-5,
             epochs_adam=4000,
-            epochs_lbfgs=1000,
+            epochs_lbfgs=1500,
             lbfgs_learning_rate=0.8,
-            lbfgs_maximum_iterations=1000,
-            lbfgs_maximum_evaluations=1250,
+            lbfgs_maximum_iterations=1500,
+            lbfgs_maximum_evaluations=1875,
             lbfgs_tolerance_gradient=1e-8,
             lbfgs_tolerance_change=1e-10,
             lbfgs_history_size=50
@@ -70,6 +71,7 @@ class ElectroMagneticPINN:
         self._build_system()
 
     def _build_system(self):
+        self.simulation_domain_engine_instance.validate_non_overlapping_domains()
         self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
         
@@ -99,9 +101,14 @@ class ElectroMagneticPINN:
             return self.collocation_sampler_instance.generate_all_domain_points()
 
         domains_data = resample_data_fn()
+        for key, d in domains_data.items():
+            print(
+                f"  - Domain [{key} ({d['domain_object'].domain_name})]: "
+                f"interior = {d['interior_points'].shape[0]}, surface = {d['surface_points'].shape[0]}"
+            )
         
         print(f"--- Standard Adam Training ({self.training_config.epochs_adam} Epochs) ---")
-        self.training_manager_instance.train_adam(
+        domains_data = self.training_manager_instance.train_adam(
             epochs=self.training_config.epochs_adam, 
             domains_data=domains_data,
             dynamic_resampling=self.sampler_config.dynamic_resampling,
@@ -109,9 +116,13 @@ class ElectroMagneticPINN:
             resample_interval=self.sampler_config.resample_interval
         )
         
-        print(f"--- L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
+        if getattr(self.sampler_config, 'resample_before_lbfgs', True):
+            domains_data = resample_data_fn()
+
+        lbfgs_iters = int(self.training_config.epochs_lbfgs)
+        print(f"--- L-BFGS Refinement (Max {lbfgs_iters} Iterations) ---")
         self.training_manager_instance.train_lbfgs(
-            epochs=self.training_config.epochs_lbfgs, 
+            max_iterations=lbfgs_iters, 
             domains_data=domains_data
         )
         
@@ -126,7 +137,9 @@ class ElectroMagneticPINN:
         props = self.simulation_domain_engine_instance.evaluate_global_physical_properties(points_tensor)
         mat_id = props["material_classification"]
         
-        A_z_star_total = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
+        A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
+        B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
+        B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
         
         for domain in self.simulation_domain_engine_instance.domains_list:
             d_id = domain.domain_id
@@ -135,16 +148,21 @@ class ElectroMagneticPINN:
             else:
                 net_key = f'domain_{d_id}'
                 
-            mask = (mat_id == float(d_id)).float()
-            if mask.any():
-                Az_sub = self.pinn_architecture_instance.forward_network(net_key, points_tensor)
-                A_z_star_total = A_z_star_total + mask * Az_sub
+            mask_bool = (mat_id == float(d_id))
+            if mask_bool.any():
+                Az_sub_star = self.pinn_architecture_instance.forward_network(net_key, points_tensor)
+                grad_sub_star = torch.autograd.grad(
+                    outputs=Az_sub_star,
+                    inputs=points_tensor,
+                    grad_outputs=torch.ones_like(Az_sub_star),
+                    create_graph=False
+                )[0]
+                Az_sub_phys = Az_sub_star * self.A0
+                Bx_sub_phys = grad_sub_star[:, 1:2] * self.A0
+                By_sub_phys = -grad_sub_star[:, 0:1] * self.A0
 
-        A_z_phys = A_z_star_total * self.A0
+                A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
+                B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
+                B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
         
-        grad_A = torch.autograd.grad(
-            outputs=A_z_phys, inputs=points_tensor,
-            grad_outputs=torch.ones_like(A_z_phys), create_graph=False
-        )[0]
-        
-        return A_z_phys.detach(), grad_A[:, 1:2].detach(), (-grad_A[:, 0:1]).detach()
+        return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()

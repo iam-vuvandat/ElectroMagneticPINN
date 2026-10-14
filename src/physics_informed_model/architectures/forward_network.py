@@ -27,14 +27,20 @@ def forward_network(self, network_key, xy):
         if B_matrix.device != xy.device:
             B_matrix = B_matrix.to(xy.device)
         projected = (2.0 * np.pi * xy_normalized) @ B_matrix.T
-        x_input = torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1)
+        x_input = torch.cat([torch.sin(projected), torch.cos(projected)], dim=-1)
     else:
         x_input = xy_normalized
         
     raw_output = self.networks[network_key](x_input)
     
     if network_key == 'background':
-        A_z_star = raw_output * self.boundary_factor(xy)
+        boundary_obj = sim_domain.boundary
+        enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor')
+        pot_val_star = float(getattr(boundary_obj.physics_config, 'potential_value', 0.0)) / max(sim_domain.A0, 1e-12)
+        if enforce_method == 'hard_factor':
+            A_z_star = raw_output * self.boundary_factor(xy) + pot_val_star
+        else:
+            A_z_star = raw_output
     else:
         A_z_star = raw_output
         

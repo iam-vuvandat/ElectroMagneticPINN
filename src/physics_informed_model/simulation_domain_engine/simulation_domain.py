@@ -11,9 +11,10 @@ class SimulationDomain:
         self.electro_magnetic_pinn = electro_magnetic_pinn
         
         self.physics_config = SimpleNamespace(
-            scale_L0=0.05,
-            scale_H0=1200000.0,
-            scale_nu0=VACUUM_RELUCTIVITY
+            scale_L0=0.1,
+            scale_H0=800000.0,
+            scale_nu0=VACUUM_RELUCTIVITY,
+            allow_overlapping_domains=False
         )
 
         self.boundary = Boundary(simulation_domain=self)
@@ -41,6 +42,10 @@ class SimulationDomain:
         return (self.H0 * self.L0) / self.nu0
 
     @property
+    def B0(self):
+        return self.H0 / self.nu0
+
+    @property
     def x_boundaries_tuple(self):
         return self.boundary.geometry_config.x_boundaries_tuple
 
@@ -63,8 +68,40 @@ class SimulationDomain:
         self.boundary = boundary_object
         return self
 
+    def validate_non_overlapping_domains(self, candidate_domain=None, check_resolution=80):
+        if getattr(self.physics_config, 'allow_overlapping_domains', False):
+            return True
+        mat_domains = [d for d in self.domains_list if getattr(d, 'domain_name', '') != 'background']
+        if candidate_domain is not None and getattr(candidate_domain, 'domain_name', '') != 'background':
+            if candidate_domain not in mat_domains:
+                mat_domains.append(candidate_domain)
+        if len(mat_domains) < 2:
+            return True
+
+        x_min, x_max = self.x_boundaries_tuple
+        y_min, y_max = self.y_boundaries_tuple
+        xs = torch.linspace(x_min, x_max, check_resolution)
+        ys = torch.linspace(y_min, y_max, check_resolution)
+        Xg, Yg = torch.meshgrid(xs, ys, indexing='ij')
+        test_pts = torch.column_stack([Xg.reshape(-1), Yg.reshape(-1)])
+
+        strict_inside_counts = torch.zeros(test_pts.shape[0], dtype=torch.int32)
+        for d in mat_domains:
+            sdf = d.compute_signed_distance_field(test_pts).view(-1)
+            strict_inside_counts += (sdf < -1e-6).int()
+
+        if torch.any(strict_inside_counts > 1):
+            raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau. Vui lòng tách rời các miền hoặc bật allow_overlapping_domains=True.")
+        return True
+
     def add_material_domain(self, domain_object):
         domain_object.simulation_domain = self
+        if domain_object.outline_tensor is None:
+            domain_object.build_domain()
+
+        if getattr(domain_object, 'domain_name', '') != 'background':
+            self.validate_non_overlapping_domains(candidate_domain=domain_object)
+
         if self.background_domain in self.domains_list:
             insert_idx = len(self.domains_list) - 1
             self.domains_list.insert(insert_idx, domain_object)

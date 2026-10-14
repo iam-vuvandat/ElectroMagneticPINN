@@ -47,37 +47,47 @@ class TrainingVisualizer:
         
         phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
         mat_id = phys_props["material_classification"]
-        nu_grid = phys_props["reluctivity"].to(computation_device)
-        jz_grid = phys_props["current_density_z"].to(computation_device)
-        hcx_grid = phys_props["coercive_field_x"].to(computation_device)
-        hcy_grid = phys_props["coercive_field_y"].to(computation_device)
         
-        A_z_star = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        A_z_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        B_x_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        B_y_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        residual_total = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+
         for domain in sim_domain.domains_list:
             d_id = domain.domain_id
             net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
-            mask = (mat_id == float(d_id)).float()
-            if mask.any():
-                Az_sub = model.forward_network(net_key, eval_points)
-                A_z_star = A_z_star + mask * Az_sub
+            mask_bool = (mat_id == float(d_id))
+            if mask_bool.any():
+                Az_sub_star = model.forward_network(net_key, eval_points)
+                grad_sub_star = torch.autograd.grad(
+                    outputs=Az_sub_star,
+                    inputs=eval_points,
+                    grad_outputs=torch.ones_like(Az_sub_star),
+                    create_graph=True
+                )[0]
+                Az_sub_phys = Az_sub_star * sim_domain.A0
+                Bx_sub_phys = grad_sub_star[:, 1:2] * sim_domain.A0
+                By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
-        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
+                nu_dom = domain.evaluate_reluctivity(eval_points).to(computation_device)
+                hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
+                hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
+                jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
+
+                res_sub = pde_evaluator.compute_residual(
+                    eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
+                )
+
+                A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
+                B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
+                B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
+                residual_total = torch.where(mask_bool, torch.abs(res_sub.detach()), residual_total)
         
-        A_z_phys = A_z_star * sim_domain.A0
-        grad_A = torch.autograd.grad(
-            outputs=A_z_phys,
-            inputs=eval_points,
-            grad_outputs=torch.ones_like(A_z_phys),
-            create_graph=False
-        )[0]
-        B_x_phys = grad_A[:, 1:2]
-        B_y_phys = -grad_A[:, 0:1]
-        
-        A_z_numpy = A_z_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_x_numpy = B_x_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_y_numpy = B_y_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
-        residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
+        residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
         all_pts = []
         for key, d in domains_data.items():
@@ -96,7 +106,7 @@ class TrainingVisualizer:
         axs[0, 0].set_ylim(self.y_bounds)
         axs[0, 0].set_aspect('equal')
         
-        res_abs = np.clip(np.abs(residual_numpy), 1e-6, None)
+        res_abs = np.clip(np.abs(residual_numpy), 1e-6, 1e2)
         contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, res_abs, levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
         fig.colorbar(contour_res, ax=axs[0, 1])
         axs[0, 1].set_title("PDE Residual Error")
@@ -114,18 +124,21 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow")
+        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="jet")
         fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
         axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
         axs[1, 1].set_aspect('equal')
 
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow", alpha=0.4)
+        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="jet", alpha=0.3)
         fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
         
         step = max(1, self.resolution // 20)
-        axs[1, 2].quiver(self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
-                         B_x_numpy[::step, ::step], B_y_numpy[::step, ::step], 
-                         color='black', pivot='mid')
+        B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
+        axs[1, 2].quiver(
+            self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
+            B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub, 
+            scale=30.0, color='black', pivot='mid'
+        )
         axs[1, 2].set_title("Flux Density Vectors (B)")
         axs[1, 2].set_aspect('equal')
         

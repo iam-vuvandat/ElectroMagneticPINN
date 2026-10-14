@@ -2,8 +2,11 @@ import torch
 import numpy as np
 
 class CollocationSampler:
-    def __init__(self, electro_magnetic_pinn=None, device=None):
+    def __init__(self, electro_magnetic_pinn=None, device=None, seed=42, max_sampling_attempts=200):
         self.electro_magnetic_pinn = electro_magnetic_pinn
+        self.seed = seed
+        self.max_sampling_attempts = max_sampling_attempts
+        self.sobol_engine = torch.quasirandom.SobolEngine(dimension=2, scramble=True, seed=self.seed)
         if device is not None:
             self.device = device
         elif electro_magnetic_pinn is not None and hasattr(electro_magnetic_pinn, 'computation_device'):
@@ -11,24 +14,43 @@ class CollocationSampler:
         else:
             self.device = torch.device('cpu')
 
+    def _draw_sobol_box(self, count, x_min, x_max, y_min, y_max):
+        uv = self.sobol_engine.draw(count).to(device=self.device, dtype=torch.float32)
+        pts = torch.empty_like(uv)
+        pts[:, 0] = uv[:, 0] * (x_max - x_min) + x_min
+        pts[:, 1] = uv[:, 1] * (y_max - y_min) + y_min
+        return pts
+
     def sample_domain_interior_points(self, domain_object, bounding_box, number_of_points):
         if number_of_points <= 0:
             return torch.empty((0, 2), dtype=torch.float32, device=self.device)
             
+        if domain_object.geometry_config.outline is None or len(domain_object.geometry_config.outline) < 3:
+            raise ValueError(f"Lỗi lấy mẫu: Domain '{domain_object.domain_name}' có outline không hợp lệ.")
+        if domain_object.section_area <= 1e-12:
+            raise ValueError(f"Lỗi lấy mẫu: Domain '{domain_object.domain_name}' có diện tích bằng 0.")
+
         outline = np.array(domain_object.geometry_config.outline)
-        x_min, x_max = np.min(outline[:, 0]), np.max(outline[:, 0])
-        y_min, y_max = np.min(outline[:, 1]), np.max(outline[:, 1])
+        x_min, x_max = float(np.min(outline[:, 0])), float(np.max(outline[:, 0]))
+        y_min, y_max = float(np.min(outline[:, 1])), float(np.max(outline[:, 1]))
+
+        if x_max <= x_min or y_max <= y_min:
+            raise ValueError(f"Lỗi lấy mẫu: Bounding box của domain '{domain_object.domain_name}' suy biến.")
 
         collected_points = []
         collected_count = 0
         pool_size = max(number_of_points * 4, 500)
+        attempts = 0
 
         while collected_count < number_of_points:
-            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
-            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
-            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
-            
-            sdf = domain_object.compute_signed_distance_field(points_pool)
+            if attempts >= self.max_sampling_attempts:
+                raise RuntimeError(
+                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho domain '{domain_object.domain_name}'. "
+                    f"Yêu cầu {number_of_points} điểm, chỉ thu được {collected_count} điểm."
+                )
+            attempts += 1
+            points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
+            sdf = domain_object.compute_signed_distance_field(points_pool).view(-1)
             inside_mask = sdf <= 0.0
             
             if inside_mask.any():
@@ -44,19 +66,24 @@ class CollocationSampler:
             return torch.empty((0, 2), dtype=torch.float32, device=self.device)
 
         outline = domain_object.geometry_config.outline
+        if outline is None or len(outline) < 3:
+            raise ValueError(f"Lỗi lấy mẫu bề mặt: Domain '{domain_object.domain_name}' có outline không hợp lệ.")
+
         num_vertices = len(outline)
-        
-        edge_starts = np.array(outline)
+        edge_starts = np.array(outline, dtype=np.float32)
         edge_ends = np.roll(edge_starts, shift=-1, axis=0)
         
         edge_vectors = edge_ends - edge_starts
-        edge_lengths = np.sqrt(np.sum(edge_vectors**2, axis=1))
-        total_perimeter = np.sum(edge_lengths)
+        edge_lengths = np.sqrt(np.sum(edge_vectors ** 2, axis=1))
+        total_perimeter = float(np.sum(edge_lengths))
+        if total_perimeter <= 1e-12:
+            raise ValueError(f"Lỗi lấy mẫu bề mặt: Chu vi của domain '{domain_object.domain_name}' bằng 0.")
         
         edge_probs = edge_lengths / total_perimeter
-        
         sampled_edges = np.random.choice(num_vertices, size=number_of_points, p=edge_probs)
-        t_params = np.random.rand(number_of_points, 1)
+        
+        uv_1d = self.sobol_engine.draw(number_of_points)[:, 0:1].cpu().numpy()
+        t_params = np.clip(uv_1d, 1e-3, 1.0 - 1e-3)
         
         pts_sampled = edge_starts[sampled_edges] + t_params * edge_vectors[sampled_edges]
         return torch.tensor(pts_sampled, dtype=torch.float32, device=self.device)
@@ -67,17 +94,23 @@ class CollocationSampler:
 
         x_min, x_max = simulation_domain_object.x_boundaries_tuple
         y_min, y_max = simulation_domain_object.y_boundaries_tuple
+        if x_max <= x_min or y_max <= y_min:
+            raise ValueError("Lỗi lấy mẫu: Khung biên của SimulationDomain không hợp lệ.")
 
         collected_points = []
         collected_count = 0
         pool_size = max(number_of_points * 2, 1000)
+        attempts = 0
 
         while collected_count < number_of_points:
-            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
-            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
-            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
-
-            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool)
+            if attempts >= self.max_sampling_attempts:
+                raise RuntimeError(
+                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho miền background. "
+                    f"Yêu cầu {number_of_points} điểm, chỉ thu được {collected_count} điểm."
+                )
+            attempts += 1
+            points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
+            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool).view(-1)
             air_mask = global_sdf > 0.0
 
             if air_mask.any():
@@ -96,15 +129,22 @@ class CollocationSampler:
         bb = (simulation_domain_object.x_boundaries_tuple, simulation_domain_object.y_boundaries_tuple)
 
         for domain in simulation_domain_object.domains_list:
+            mult = float(getattr(domain.training_config, 'sampling_density_multiplier', 1.0))
+            if mult < 0.0:
+                raise ValueError(f"Lỗi: sampling_density_multiplier của domain '{domain.domain_name}' không được âm.")
+
+            base_interior = int(domain.training_config.number_of_interior_points)
+            base_surface = int(domain.training_config.number_of_surface_points)
+
+            actual_interior = int(round(base_interior * mult)) if base_interior > 0 else 0
+            actual_surface = int(round(base_surface * mult)) if base_surface > 0 else 0
+
             if getattr(domain, 'domain_name', '') == 'background':
-                n_interior = domain.training_config.number_of_interior_points
-                interior_pts = self.sample_background_interior_points(simulation_domain_object, n_interior)
+                interior_pts = self.sample_background_interior_points(simulation_domain_object, actual_interior)
                 surface_pts = torch.empty((0, 2), dtype=torch.float32, device=self.device)
             else:
-                n_interior = domain.training_config.number_of_interior_points
-                n_surface = domain.training_config.number_of_surface_points
-                interior_pts = self.sample_domain_interior_points(domain, bb, n_interior)
-                surface_pts = self.sample_domain_surface_points(domain, n_surface)
+                interior_pts = self.sample_domain_interior_points(domain, bb, actual_interior)
+                surface_pts = self.sample_domain_surface_points(domain, actual_surface)
 
             interior_pts = interior_pts.detach().clone().requires_grad_(True)
             surface_pts = surface_pts.detach().clone().requires_grad_(True)

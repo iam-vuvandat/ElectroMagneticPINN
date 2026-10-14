@@ -1,7 +1,7 @@
 import torch
 
 class InterfaceLoss:
-    def __init__(self, electro_magnetic_pinn=None, L0=0.05, H0=1200000.0, nu0=795774.715459):
+    def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
         self.electro_magnetic_pinn = electro_magnetic_pinn
         self._L0 = L0
         self._H0 = H0
@@ -25,84 +25,130 @@ class InterfaceLoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def _compute_edge_unit_tangents(self, domain, surf_pts):
-        vertices = domain.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        start_pts = vertices
-        end_pts = torch.roll(vertices, shifts=-1, dims=0)
-        edge_vecs = end_pts - start_pts
-        edge_lens = torch.sqrt(torch.sum(edge_vecs ** 2, dim=1, keepdim=True) + 1e-12)
-        unit_tangents = edge_vecs / edge_lens
+    def _compute_normals_and_tangents_from_sdf(self, domain, surf_pts):
+        pts_for_n = surf_pts.detach().clone().requires_grad_(True)
+        sdf_val = domain.compute_signed_distance_field(pts_for_n).view(-1, 1)
+        n_vec = torch.autograd.grad(
+            outputs=sdf_val,
+            inputs=pts_for_n,
+            grad_outputs=torch.ones_like(sdf_val),
+            create_graph=False
+        )[0]
+        n_norm = torch.linalg.norm(n_vec, dim=1, keepdim=True)
+        n_unit = (n_vec / (n_norm + 1e-8)).detach()
+        nx = n_unit[:, 0:1]
+        ny = n_unit[:, 1:2]
+        tx = -ny
+        ty = nx
+        return nx, ny, tx, ty
 
-        pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
-        denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
-        proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
-        closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
-        dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
-        edge_idx = torch.argmin(dist_sq, dim=1)
+    def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
+        if pts.shape[0] == 0:
+            zero = torch.tensor(0.0, device=pts.device)
+            return zero, zero, zero
 
-        tx = unit_tangents[edge_idx, 0:1].detach()
-        ty = unit_tangents[edge_idx, 1:2].detach()
-        return tx, ty
-
-    def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
         model = self.electro_magnetic_pinn.pinn_architecture_instance
+        nx, ny, tx, ty = self._compute_normals_and_tangents_from_sdf(domain_a, pts)
+
+        Az_a = model.forward_network(key_a, pts)
+        Az_b = model.forward_network(key_b, pts)
+
+        loss_val = torch.mean((Az_a - Az_b) ** 2)
+
+        grad_a = torch.autograd.grad(
+            outputs=Az_a,
+            inputs=pts,
+            grad_outputs=torch.ones_like(Az_a),
+            create_graph=True
+        )[0]
+
+        grad_b = torch.autograd.grad(
+            outputs=Az_b,
+            inputs=pts,
+            grad_outputs=torch.ones_like(Az_b),
+            create_graph=True
+        )[0]
+
+        Bx_a_star = grad_a[:, 1:2] * self.L0
+        By_a_star = -grad_a[:, 0:1] * self.L0
+        Bx_b_star = grad_b[:, 1:2] * self.L0
+        By_b_star = -grad_b[:, 0:1] * self.L0
+
+        Bn_a_star = Bx_a_star * nx + By_a_star * ny
+        Bn_b_star = Bx_b_star * nx + By_b_star * ny
+        loss_Bn = torch.mean((Bn_a_star - Bn_b_star) ** 2)
+
+        nu_a_star = domain_a.evaluate_reluctivity(pts) / self.nu0
+        hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
+        hx_a_star = hx_a / self.H0
+        hy_a_star = hy_a / self.H0
+
+        if domain_b is not None:
+            nu_b_star = domain_b.evaluate_reluctivity(pts) / self.nu0
+            hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
+            hx_b_star = hx_b / self.H0
+            hy_b_star = hy_b / self.H0
+        else:
+            nu_b_star = 1.0
+            hx_b_star = 0.0
+            hy_b_star = 0.0
+
+        Hx_a_star = nu_a_star * Bx_a_star - hx_a_star
+        Hy_a_star = nu_a_star * By_a_star - hy_a_star
+        Hx_b_star = nu_b_star * Bx_b_star - hx_b_star
+        Hy_b_star = nu_b_star * By_b_star - hy_b_star
+
+        Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
+        Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
+        loss_Ht = torch.mean((Ht_a_star - Ht_b_star) ** 2)
+
+        return loss_val, loss_Bn, loss_Ht
+
+    def compute_loss_components(self, network_key, domain, surf_pts, background_key='background', contact_tol=1e-4):
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         bg_domain = sim_domain.background_domain
+        other_domains = [
+            d for d in sim_domain.domains_list
+            if d is not domain and getattr(d, 'domain_name', '') != 'background'
+        ]
 
-        Az_mat = model.forward_network(network_key, surf_pts)
-        Az_bg = model.forward_network(background_key, surf_pts)
+        remaining_mask = torch.ones(surf_pts.shape[0], dtype=torch.bool, device=surf_pts.device)
+        total_val = torch.tensor(0.0, device=surf_pts.device)
+        total_bn = torch.tensor(0.0, device=surf_pts.device)
+        total_ht = torch.tensor(0.0, device=surf_pts.device)
 
-        potential_continuity_loss = torch.mean((Az_mat - Az_bg) ** 2)
+        for other_dom in other_domains:
+            if not remaining_mask.any():
+                break
+            other_sdf = other_dom.compute_signed_distance_field(surf_pts).view(-1)
+            contact_mask = remaining_mask & (torch.abs(other_sdf) <= contact_tol)
+            if contact_mask.any():
+                other_key = f"domain_{other_dom.domain_id}"
+                v_l, bn_l, ht_l = self._compute_pair_components(
+                    network_key, domain, other_key, other_dom, surf_pts[contact_mask]
+                )
+                ratio = float(contact_mask.sum().item()) / float(surf_pts.shape[0])
+                total_val = total_val + ratio * v_l
+                total_bn = total_bn + ratio * bn_l
+                total_ht = total_ht + ratio * ht_l
+                remaining_mask = remaining_mask & (~contact_mask)
 
-        grad_Az_mat = torch.autograd.grad(
-            outputs=Az_mat,
-            inputs=surf_pts,
-            grad_outputs=torch.ones_like(Az_mat),
-            create_graph=True,
-            retain_graph=True
-        )[0]
+        if remaining_mask.any():
+            v_bg, bn_bg, ht_bg = self._compute_pair_components(
+                network_key, domain, background_key, bg_domain, surf_pts[remaining_mask]
+            )
+            ratio = float(remaining_mask.sum().item()) / float(surf_pts.shape[0])
+            total_val = total_val + ratio * v_bg
+            total_bn = total_bn + ratio * bn_bg
+            total_ht = total_ht + ratio * ht_bg
 
-        grad_Az_bg = torch.autograd.grad(
-            outputs=Az_bg,
-            inputs=surf_pts,
-            grad_outputs=torch.ones_like(Az_bg),
-            create_graph=True,
-            retain_graph=True
-        )[0]
+        w_az = float(getattr(domain.training_config, 'interface_potential_weight', 1000.0))
+        w_bn = float(getattr(domain.training_config, 'interface_bn_weight', 500.0))
+        w_ht = float(getattr(domain.training_config, 'interface_ht_weight', 500.0))
 
-        dAz_mat_dx_star = grad_Az_mat[:, 0:1] * self.L0
-        dAz_mat_dy_star = grad_Az_mat[:, 1:2] * self.L0
-        dAz_bg_dx_star = grad_Az_bg[:, 0:1] * self.L0
-        dAz_bg_dy_star = grad_Az_bg[:, 1:2] * self.L0
+        weighted_interface = w_az * total_val + w_bn * total_bn + w_ht * total_ht
+        return weighted_interface, total_val, total_bn, total_ht
 
-        tx, ty = self._compute_edge_unit_tangents(domain, surf_pts)
-
-        bn_continuity_loss = torch.mean(((dAz_mat_dx_star - dAz_bg_dx_star) * tx + (dAz_mat_dy_star - dAz_bg_dy_star) * ty) ** 2)
-
-        nu_mat_star = domain.evaluate_reluctivity(surf_pts) / self.nu0
-        hx_mat, hy_mat = domain.evaluate_magnetization_vector(surf_pts)
-        hx_mat_star = hx_mat / self.H0
-        hy_mat_star = hy_mat / self.H0
-
-        if bg_domain is not None:
-            nu_bg_star = bg_domain.evaluate_reluctivity(surf_pts) / self.nu0
-            hx_bg, hy_bg = bg_domain.evaluate_magnetization_vector(surf_pts)
-            hx_bg_star = hx_bg / self.H0
-            hy_bg_star = hy_bg / self.H0
-        else:
-            nu_bg_star = 1.0
-            hx_bg_star = 0.0
-            hy_bg_star = 0.0
-
-        Hx_mat_star = nu_mat_star * dAz_mat_dy_star - hx_mat_star
-        Hy_mat_star = -nu_mat_star * dAz_mat_dx_star - hy_mat_star
-
-        Hx_bg_star = nu_bg_star * dAz_bg_dy_star - hx_bg_star
-        Hy_bg_star = -nu_bg_star * dAz_bg_dx_star - hy_bg_star
-
-        Ht_mat_star = Hx_mat_star * tx + Hy_mat_star * ty
-        Ht_bg_star = Hx_bg_star * tx + Hy_bg_star * ty
-
-        ht_continuity_loss = torch.mean((Ht_mat_star - Ht_bg_star) ** 2)
-
-        return potential_continuity_loss + bn_continuity_loss + ht_continuity_loss
+    def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
+        weighted_interface, _, _, _ = self.compute_loss_components(network_key, domain, surf_pts, background_key)
+        return weighted_interface

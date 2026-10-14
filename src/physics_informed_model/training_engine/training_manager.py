@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.optim as optim
 
@@ -28,6 +29,7 @@ class TrainingManager:
             history_size=self.lbfgs_history_size,
             line_search_fn="strong_wolfe"
         )
+        self.last_loss_breakdown = {}
 
     @property
     def model(self):
@@ -54,6 +56,13 @@ class TrainingManager:
         dummy_param = next(self.model.parameters())
         total_loss = (dummy_param * 0.0).sum()
 
+        raw_pde_sum = 0.0
+        weighted_pde_sum = 0.0
+        az_if_sum = 0.0
+        bn_if_sum = 0.0
+        ht_if_sum = 0.0
+        weighted_if_sum = 0.0
+
         for key, data in domains_data.items():
             domain = data["domain_object"]
             pts = data["interior_points"].to(device)
@@ -71,22 +80,52 @@ class TrainingManager:
                 residual_star = self.pde_evaluator.compute_residual(
                     xy=pts, A_z_star=A_z_star, nu=nu, J_z=jz, H_cx=hx, H_cy=hy
                 )
-                weighted_res = residual_star * domain.training_config.pde_weight
-                pde_loss = torch.mean(weighted_res ** 2)
+                fading_w = self.pde_evaluator.compute_fading_weight(domain, pts)
+                raw_pde = torch.mean((residual_star ** 2) * fading_w)
+                pde_loss = float(domain.training_config.pde_weight) * raw_pde
                 total_loss = total_loss + pde_loss
+
+                raw_pde_sum += raw_pde.item()
+                weighted_pde_sum += pde_loss.item()
 
             surf_pts = data["surface_points"].to(device)
             if surf_pts.shape[0] > 0 and key != 'background':
                 if not surf_pts.requires_grad:
                     surf_pts = surf_pts.detach().clone().requires_grad_(True)
                     
-                interface_loss = self.interface_evaluator.compute_loss(
+                w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator.compute_loss_components(
                     network_key=key,
                     domain=domain,
                     surf_pts=surf_pts,
                     background_key='background'
                 )
-                total_loss = total_loss + domain.training_config.interface_weight * interface_loss
+                scaled_if_loss = float(domain.training_config.interface_weight) * w_if_loss
+                total_loss = total_loss + scaled_if_loss
+
+                az_if_sum += val_l.item()
+                bn_if_sum += bn_l.item()
+                ht_if_sum += ht_l.item()
+                weighted_if_sum += scaled_if_loss.item()
+
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        boundary_obj = sim_domain.boundary
+        if getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') == 'soft_loss':
+            b_pts = boundary_obj.sample_boundary_points(device=device)
+            if b_pts.shape[0] > 0:
+                Az_b = self.model.forward_network('background', b_pts)
+                target_b = float(boundary_obj.physics_config.potential_value) / max(sim_domain.A0, 1e-12)
+                b_loss = float(boundary_obj.training_config.boundary_loss_weight) * torch.mean((Az_b - target_b) ** 2)
+                total_loss = total_loss + b_loss
+
+        self.last_loss_breakdown = {
+            "raw_pde": raw_pde_sum,
+            "weighted_pde": weighted_pde_sum,
+            "interface_Az": az_if_sum,
+            "interface_Bn": bn_if_sum,
+            "interface_Ht": ht_if_sum,
+            "weighted_interface": weighted_if_sum,
+            "total": total_loss.item()
+        }
 
         return total_loss
 
@@ -97,8 +136,9 @@ class TrainingManager:
             param_group['initial_lr'] = self.base_learning_rate_adam
             param_group['lr'] = self.base_learning_rate_adam
             
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
+        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=1e-6)
         stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
+        non_finite_streak = 0
         
         for epoch in range(epochs):
             if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
@@ -107,11 +147,16 @@ class TrainingManager:
             self.optimizer_adam.zero_grad(set_to_none=True)
             loss = self.compute_loss(domains_data)
             
-            if torch.isnan(loss):
-                print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss bị NaN. Bỏ qua step này.")
+            if not torch.isfinite(loss):
+                non_finite_streak += 1
+                print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss không hữu hạn ({loss.item()}). Chuỗi lỗi: {non_finite_streak}")
+                if non_finite_streak >= 5:
+                    stop_reason = "Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp 5 lần."
+                    break
                 continue
+            non_finite_streak = 0
                 
-            loss.backward(retain_graph=True)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
             scheduler_adam.step()
@@ -123,38 +168,63 @@ class TrainingManager:
                 print(f"Adam Epoch {epoch + 1}: {stop_reason} KẾT THÚC ADAM SỚM!")
                 break
             
-            if (epoch + 1) % 100 == 0:
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {self.optimizer_adam.param_groups[0]['lr']:.3e}")
+            if (epoch + 1) == 1 or (epoch + 1) % 100 == 0:
+                bd = self.last_loss_breakdown
+                print(
+                    f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
+                    f"PDE(raw/w) = {bd.get('raw_pde', 0.0):.3e}/{bd.get('weighted_pde', 0.0):.3e} | "
+                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e} | "
+                    f"LR = {self.optimizer_adam.param_groups[0]['lr']:.2e}"
+                )
                 
             if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
                 self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
                 
         print(f"[*] KẾT THÚC HUẤN LUYỆN ADAM. Lý do: {stop_reason}")
+        return domains_data
 
-    def train_lbfgs(self, epochs, domains_data):
+    def train_lbfgs(self, max_iterations, domains_data):
+        if max_iterations <= 0:
+            return domains_data
+
         self.model.train()
+        self.optimizer_lbfgs = optim.LBFGS(
+            self.model.parameters(),
+            lr=self.lbfgs_learning_rate,
+            max_iter=max_iterations,
+            max_eval=int(max_iterations * 1.25),
+            tolerance_grad=self.lbfgs_tolerance_gradient,
+            tolerance_change=self.lbfgs_tolerance_change,
+            history_size=self.lbfgs_history_size,
+            line_search_fn="strong_wolfe"
+        )
+
         lbfgs_counter = [0]
-        early_stop_triggered = False 
+        start_time = time.time()
+        stop_reason = f"Hoàn thành tối ưu hóa L-BFGS (tối đa {max_iterations} iterations)."
         
         def closure():
-            nonlocal early_stop_triggered
             self.optimizer_lbfgs.zero_grad(set_to_none=True)
             loss = self.compute_loss(domains_data)
-            loss.backward(retain_graph=True)
+            if not torch.isfinite(loss):
+                return loss
+            loss.backward()
             
             lbfgs_counter[0] += 1
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
-                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
+                bd = self.last_loss_breakdown
+                elapsed = time.time() - start_time
+                print(
+                    f"L-BFGS Closure {lbfgs_counter[0]:05d} ({elapsed:.1f}s) | Total = {loss.item():.4e} | "
+                    f"PDE(w) = {bd.get('weighted_pde', 0.0):.3e} | IF(w) = {bd.get('weighted_interface', 0.0):.3e}"
+                )
                 
             if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
                 self.visualizer.save_frame(50000 + lbfgs_counter[0], loss.item(), domains_data)
                 
-            if self.target_loss > 0 and loss.item() <= self.target_loss:
-                early_stop_triggered = True
             return loss
             
-        for epoch in range(epochs):
-            if early_stop_triggered:
-                print(f"L-BFGS Epoch {epoch + 1}: Đạt ngưỡng target_loss. KẾT THÚC L-BFGS SỚM!")
-                break
-            self.optimizer_lbfgs.step(closure)
+        self.optimizer_lbfgs.step(closure)
+        total_elapsed = time.time() - start_time
+        print(f"[*] KẾT THÚC L-BFGS: {lbfgs_counter[0]} closure calls trong {total_elapsed:.2f}s. {stop_reason}")
+        return domains_data
