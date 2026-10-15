@@ -25,7 +25,7 @@ def main():
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 10.0 - Fast & Stabilized Dual Magnets XPINN Simulation")
+    print("version 10.1 - Optimized Corner Convergence Simulation")
     
     model = ElectroMagneticPINN()
     
@@ -71,10 +71,10 @@ def main():
     i_magnet_left.training_config.pde_weight = 1.0
     i_magnet_left.training_config.interface_weight = 1.0
     i_magnet_left.training_config.interface_potential_weight = 1000.0
-    i_magnet_left.training_config.interface_bn_weight = 500.0
-    i_magnet_left.training_config.interface_ht_weight = 500.0
-    i_magnet_left.training_config.pde_fading_beta = 150.0
-    i_magnet_left.training_config.number_of_interior_points = 1000
+    i_magnet_left.training_config.interface_bn_weight = 200.0
+    i_magnet_left.training_config.interface_ht_weight = 200.0
+    i_magnet_left.training_config.pde_fading_beta = 40.0
+    i_magnet_left.training_config.number_of_interior_points = 1200
     i_magnet_left.training_config.number_of_surface_points = 800
     i_magnet_left.network_config.hidden_layers = 4
     i_magnet_left.network_config.hidden_neurons = 64
@@ -96,10 +96,10 @@ def main():
     i_magnet_right.training_config.pde_weight = 1.0
     i_magnet_right.training_config.interface_weight = 1.0
     i_magnet_right.training_config.interface_potential_weight = 1000.0
-    i_magnet_right.training_config.interface_bn_weight = 500.0
-    i_magnet_right.training_config.interface_ht_weight = 500.0
-    i_magnet_right.training_config.pde_fading_beta = 150.0
-    i_magnet_right.training_config.number_of_interior_points = 1000
+    i_magnet_right.training_config.interface_bn_weight = 200.0
+    i_magnet_right.training_config.interface_ht_weight = 200.0
+    i_magnet_right.training_config.pde_fading_beta = 40.0
+    i_magnet_right.training_config.number_of_interior_points = 1200
     i_magnet_right.training_config.number_of_surface_points = 800
     i_magnet_right.network_config.hidden_layers = 4
     i_magnet_right.network_config.hidden_neurons = 64
@@ -115,9 +115,9 @@ def main():
     bg_training_config = type('', (), {})()
     bg_training_config.pde_weight = 1.0
     bg_training_config.interface_weight = 1.0
-    bg_training_config.pde_fading_beta = 150.0
+    bg_training_config.pde_fading_beta = 40.0
     bg_training_config.sampling_density_multiplier = 1.0
-    bg_training_config.number_of_interior_points = 4000
+    bg_training_config.number_of_interior_points = 5000
     bg_training_config.number_of_surface_points = 0
 
     bg_network_config = type('', (), {})()
