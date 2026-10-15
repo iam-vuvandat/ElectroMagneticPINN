@@ -61,18 +61,28 @@ class MaxwellPDELoss:
         dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
         
         residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
-        return residual_star
+        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
+        return residual_star / nu_scale
 
     def compute_fading_weight(self, domain, xy):
         beta = float(getattr(domain.training_config, 'pde_fading_beta', 150.0))
         if beta <= 0.0:
             return torch.ones((xy.shape[0], 1), dtype=xy.dtype, device=xy.device)
 
-        if getattr(domain, 'domain_name', '') == 'background' and self.electro_magnetic_pinn is not None:
+        if self.electro_magnetic_pinn is not None:
             sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-            sdf = sim_domain.compute_global_signed_distance_field(xy).view(-1, 1)
-        else:
-            sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
+            mat_verts = [
+                d.outline_tensor.to(device=xy.device, dtype=xy.dtype)
+                for d in sim_domain.domains_list
+                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+            ]
+            if mat_verts:
+                all_verts = torch.cat(mat_verts, dim=0)
+                dists = torch.cdist(xy.detach(), all_verts, p=2.0)
+                min_corner_dist, _ = torch.min(dists, dim=1, keepdim=True)
+                corner_dist_star = min_corner_dist / self.L0
+                return 1.0 - torch.exp(-beta * corner_dist_star)
 
+        sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
         abs_sdf_star = torch.abs(sdf.detach()) / self.L0
         return 1.0 - torch.exp(-beta * abs_sdf_star)

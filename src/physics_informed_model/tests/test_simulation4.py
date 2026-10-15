@@ -26,7 +26,7 @@ def main():
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
-    print("version 1.0 - Dual Magnets on Constant Permeability Iron Yoke Simulation")
+    print("version 2.0 - Dual Magnets on Constant Permeability Iron Yoke Simulation (Fixed Multi-Material Interface)")
     
     model = ElectroMagneticPINN()
     
@@ -51,7 +51,7 @@ def main():
     model.training_config.lbfgs_maximum_evaluations = 2500
     model.training_config.lbfgs_tolerance_gradient = 1e-8
     model.training_config.lbfgs_tolerance_change = 1e-10
-    model.training_config.lbfgs_history_size = 50
+    model.training_config.lbfgs_history_size = 80
     
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50
@@ -77,11 +77,11 @@ def main():
     iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.0
     iron_yoke.training_config.interface_potential_weight = 1000.0
-    iron_yoke.training_config.interface_bn_weight = 350.0
-    iron_yoke.training_config.interface_ht_weight = 350.0
-    iron_yoke.training_config.pde_fading_beta = 90.0
-    iron_yoke.training_config.number_of_interior_points = 2500
-    iron_yoke.training_config.number_of_surface_points = 1200
+    iron_yoke.training_config.interface_bn_weight = 400.0
+    iron_yoke.training_config.interface_ht_weight = 400.0
+    iron_yoke.training_config.pde_fading_beta = 80.0
+    iron_yoke.training_config.number_of_interior_points = 3000
+    iron_yoke.training_config.number_of_surface_points = 1600
     iron_yoke.network_config.hidden_layers = 4
     iron_yoke.network_config.hidden_neurons = 64
     iron_yoke.network_config.activation_function = nn.SiLU()
@@ -103,11 +103,11 @@ def main():
     magnet_left.training_config.pde_weight = 1.0
     magnet_left.training_config.interface_weight = 1.0
     magnet_left.training_config.interface_potential_weight = 1000.0
-    magnet_left.training_config.interface_bn_weight = 350.0
-    magnet_left.training_config.interface_ht_weight = 350.0
-    magnet_left.training_config.pde_fading_beta = 90.0
-    magnet_left.training_config.number_of_interior_points = 1500
-    magnet_left.training_config.number_of_surface_points = 800
+    magnet_left.training_config.interface_bn_weight = 400.0
+    magnet_left.training_config.interface_ht_weight = 400.0
+    magnet_left.training_config.pde_fading_beta = 80.0
+    magnet_left.training_config.number_of_interior_points = 2000
+    magnet_left.training_config.number_of_surface_points = 1200
     magnet_left.network_config.hidden_layers = 4
     magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.SiLU()
@@ -129,11 +129,11 @@ def main():
     magnet_right.training_config.pde_weight = 1.0
     magnet_right.training_config.interface_weight = 1.0
     magnet_right.training_config.interface_potential_weight = 1000.0
-    magnet_right.training_config.interface_bn_weight = 350.0
-    magnet_right.training_config.interface_ht_weight = 350.0
-    magnet_right.training_config.pde_fading_beta = 90.0
-    magnet_right.training_config.number_of_interior_points = 1500
-    magnet_right.training_config.number_of_surface_points = 800
+    magnet_right.training_config.interface_bn_weight = 400.0
+    magnet_right.training_config.interface_ht_weight = 400.0
+    magnet_right.training_config.pde_fading_beta = 80.0
+    magnet_right.training_config.number_of_interior_points = 2000
+    magnet_right.training_config.number_of_surface_points = 1200
     magnet_right.network_config.hidden_layers = 4
     magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.SiLU()
@@ -149,9 +149,9 @@ def main():
     bg_training_config = type('', (), {})()
     bg_training_config.pde_weight = 1.0
     bg_training_config.interface_weight = 1.0
-    bg_training_config.pde_fading_beta = 90.0
+    bg_training_config.pde_fading_beta = 80.0
     bg_training_config.sampling_density_multiplier = 1.0
-    bg_training_config.number_of_interior_points = 7000
+    bg_training_config.number_of_interior_points = 8000
     bg_training_config.number_of_surface_points = 0
 
     bg_network_config = type('', (), {})()

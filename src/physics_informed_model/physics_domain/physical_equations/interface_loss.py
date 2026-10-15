@@ -48,6 +48,20 @@ class InterfaceLoss:
         t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
         corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
 
+        if self.electro_magnetic_pinn is not None:
+            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+            mat_verts = [
+                d.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
+                for d in sim_domain.domains_list
+                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+            ]
+            if mat_verts:
+                all_verts = torch.cat(mat_verts, dim=0)
+                v_dists = torch.cdist(surf_pts.detach(), all_verts, p=2.0)
+                min_v_dist, _ = torch.min(v_dists, dim=1, keepdim=True)
+                vertex_w = (torch.tanh(25.0 * (min_v_dist / self.L0)) ** 2).detach()
+                corner_w = corner_w * vertex_w
+
         nx = unit_normals[edge_idx, 0:1].detach()
         ny = unit_normals[edge_idx, 1:2].detach()
         tx = unit_tangents[edge_idx, 0:1].detach()
@@ -61,6 +75,10 @@ class InterfaceLoss:
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
+
+        if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
+            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_outline(domain_b, pts)
+            corner_w = torch.minimum(corner_w, corner_w_b)
 
         Az_a = model.forward_network(key_a, pts)
         Az_b = model.forward_network(key_b, pts)
@@ -101,9 +119,9 @@ class InterfaceLoss:
             hx_b_star = hx_b / self.H0
             hy_b_star = hy_b / self.H0
         else:
-            nu_b_star = 1.0
-            hx_b_star = 0.0
-            hy_b_star = 0.0
+            nu_b_star = torch.ones_like(nu_a_star)
+            hx_b_star = torch.zeros_like(hx_a_star)
+            hy_b_star = torch.zeros_like(hy_a_star)
 
         Hx_a_star = nu_a_star * Bx_a_star - hx_a_star
         Hy_a_star = nu_a_star * By_a_star - hy_a_star
@@ -112,7 +130,9 @@ class InterfaceLoss:
 
         Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
-        loss_Ht = torch.mean(corner_w * ((Ht_a_star - Ht_b_star) ** 2))
+        nu_pair_scale = torch.clamp(torch.maximum(nu_a_star.detach(), nu_b_star.detach()), min=1e-6)
+        ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
+        loss_Ht = torch.mean(corner_w * (ht_diff_normalized ** 2))
 
         return loss_val, loss_Bn, loss_Ht
 
@@ -124,6 +144,8 @@ class InterfaceLoss:
             if d is not domain and getattr(d, 'domain_name', '') != 'background'
         ]
 
+        nx_a, ny_a, _, _, _ = self._compute_normals_and_tangents_from_outline(domain, surf_pts)
+
         remaining_mask = torch.ones(surf_pts.shape[0], dtype=torch.bool, device=surf_pts.device)
         total_val = torch.tensor(0.0, device=surf_pts.device)
         total_bn = torch.tensor(0.0, device=surf_pts.device)
@@ -133,7 +155,9 @@ class InterfaceLoss:
             if not remaining_mask.any():
                 break
             other_sdf = other_dom.compute_signed_distance_field(surf_pts).view(-1)
-            contact_mask = remaining_mask & (torch.abs(other_sdf) <= contact_tol)
+            nx_b, ny_b, _, _, _ = self._compute_normals_and_tangents_from_outline(other_dom, surf_pts)
+            normal_dot = (nx_a * nx_b + ny_a * ny_b).view(-1)
+            contact_mask = remaining_mask & (torch.abs(other_sdf) <= contact_tol) & (normal_dot < -0.85)
             if contact_mask.any():
                 other_key = f"domain_{other_dom.domain_id}"
                 v_l, bn_l, ht_l = self._compute_pair_components(
