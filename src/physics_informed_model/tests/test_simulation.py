@@ -25,13 +25,13 @@ def main():
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 10.1 - Optimized Corner Convergence Simulation")
+    print("version 10.2 - Dual Magnets XPINN Simulation with Scaled Constants")
     
     model = ElectroMagneticPINN()
     
     max_coercive_field = 800000.0
-    model.simulation_domain_engine_instance.physics_config.scale_H0 = max_coercive_field
-    model.simulation_domain_engine_instance.physics_config.scale_L0 = 0.1
+    model.simulation_domain_engine_instance.physics_config.scale_H0 = max_coercive_field * 1.2
+    model.simulation_domain_engine_instance.physics_config.scale_L0 = 0.1 * 1.2
     
     model.simulation_domain_engine_instance.x_boundaries_tuple = (-0.1, 0.1)
     model.simulation_domain_engine_instance.y_boundaries_tuple = (-0.1, 0.1)
@@ -40,14 +40,14 @@ def main():
     model.sampler_config.resample_interval = 100
     model.sampler_config.resample_before_lbfgs = True
     
-    model.training_config.epochs_adam = 2500
-    model.training_config.epochs_lbfgs = 800
+    model.training_config.epochs_adam = 3500
+    model.training_config.epochs_lbfgs = 1500
     model.training_config.learning_rate_adam = 1e-3
-    model.training_config.target_loss = 1e-6
+    model.training_config.target_loss = 1e-7
     
     model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_iterations = 800
-    model.training_config.lbfgs_maximum_evaluations = 1000
+    model.training_config.lbfgs_maximum_iterations = 1500
+    model.training_config.lbfgs_maximum_evaluations = 1875
     model.training_config.lbfgs_tolerance_gradient = 1e-8
     model.training_config.lbfgs_tolerance_change = 1e-10
     model.training_config.lbfgs_history_size = 50
