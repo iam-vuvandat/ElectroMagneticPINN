@@ -88,6 +88,7 @@ class TrainingVisualizer:
         B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
         B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
+        mat_id_numpy = mat_id.cpu().numpy().reshape(self.resolution, self.resolution)
         
         all_pts = []
         for key, d in domains_data.items():
@@ -124,14 +125,21 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="jet")
-        fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
+        b_max_val = max(float(np.max(B_mag_numpy)), 1e-3)
+        levels_b = np.linspace(0.0, b_max_val, 50)
+        for domain in sim_domain.domains_list:
+            d_id = float(domain.domain_id)
+            mask_d = (mat_id_numpy != d_id)
+            b_sub = np.ma.masked_where(mask_d, B_mag_numpy)
+            axs[1, 1].contourf(self.X_grid, self.Y_grid, b_sub, levels=levels_b, cmap="jet", vmin=0.0, vmax=b_max_val)
+            axs[1, 2].contourf(self.X_grid, self.Y_grid, b_sub, levels=levels_b, cmap="jet", alpha=0.3, vmin=0.0, vmax=b_max_val)
+
+        sm_b = plt.cm.ScalarMappable(norm=plt.Normalize(vmin=0.0, vmax=b_max_val), cmap="jet")
+        fig.colorbar(sm_b, ax=axs[1, 1], label="|B| (T)")
         axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
         axs[1, 1].set_aspect('equal')
 
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="jet", alpha=0.3)
-        fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
-        
+        fig.colorbar(sm_b, ax=axs[1, 2], label="|B| (T)")
         step = max(1, self.resolution // 20)
         B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
         axs[1, 2].quiver(

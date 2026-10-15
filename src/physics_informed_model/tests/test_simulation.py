@@ -25,7 +25,7 @@ def main():
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 10.2 - Dual Magnets XPINN Simulation with Scaled Constants")
+    print("version 10.4 - Dual Magnets XPINN Simulation with Masked Discontinuous Plotting")
     
     model = ElectroMagneticPINN()
     
@@ -75,9 +75,9 @@ def main():
     i_magnet_left.training_config.pde_weight = 1.0
     i_magnet_left.training_config.interface_weight = 1.0
     i_magnet_left.training_config.interface_potential_weight = 1000.0
-    i_magnet_left.training_config.interface_bn_weight = 200.0
-    i_magnet_left.training_config.interface_ht_weight = 200.0
-    i_magnet_left.training_config.pde_fading_beta = 40.0
+    i_magnet_left.training_config.interface_bn_weight = 350.0
+    i_magnet_left.training_config.interface_ht_weight = 350.0
+    i_magnet_left.training_config.pde_fading_beta = 90.0
     i_magnet_left.training_config.number_of_interior_points = 1200
     i_magnet_left.training_config.number_of_surface_points = 800
     i_magnet_left.network_config.hidden_layers = 4
@@ -100,9 +100,9 @@ def main():
     i_magnet_right.training_config.pde_weight = 1.0
     i_magnet_right.training_config.interface_weight = 1.0
     i_magnet_right.training_config.interface_potential_weight = 1000.0
-    i_magnet_right.training_config.interface_bn_weight = 200.0
-    i_magnet_right.training_config.interface_ht_weight = 200.0
-    i_magnet_right.training_config.pde_fading_beta = 40.0
+    i_magnet_right.training_config.interface_bn_weight = 350.0
+    i_magnet_right.training_config.interface_ht_weight = 350.0
+    i_magnet_right.training_config.pde_fading_beta = 90.0
     i_magnet_right.training_config.number_of_interior_points = 1200
     i_magnet_right.training_config.number_of_surface_points = 800
     i_magnet_right.network_config.hidden_layers = 4
@@ -119,7 +119,7 @@ def main():
     bg_training_config = type('', (), {})()
     bg_training_config.pde_weight = 1.0
     bg_training_config.interface_weight = 1.0
-    bg_training_config.pde_fading_beta = 40.0
+    bg_training_config.pde_fading_beta = 90.0
     bg_training_config.sampling_density_multiplier = 1.0
     bg_training_config.number_of_interior_points = 5000
     bg_training_config.number_of_surface_points = 0
@@ -157,6 +157,9 @@ def main():
     A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
     assert torch.all(torch.isfinite(A_z_pred)) and torch.all(torch.isfinite(B_x_pred)) and torch.all(torch.isfinite(B_y_pred)), "Kết quả trường từ không hữu hạn!"
     
+    props = model.simulation_domain_engine_instance.evaluate_global_physical_properties(xy_points_tensor)
+    mat_id_grid = props["material_classification"].cpu().numpy().reshape(resolution, resolution)
+
     A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
     B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
     B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
@@ -168,8 +171,15 @@ def main():
     axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
     axs[0, 0].set_aspect('equal')
     
-    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="jet")
-    fig1.colorbar(contour_b, ax=axs[0, 1], label=r"$|B|$ (T)")
+    b_max_val = max(float(np.max(B_mag_grid)), 1e-3)
+    levels_b = np.linspace(0.0, b_max_val, 60)
+    for domain in model.simulation_domain_engine_instance.domains_list:
+        d_id = float(domain.domain_id)
+        mask_d = (mat_id_grid != d_id)
+        b_sub = np.ma.masked_where(mask_d, B_mag_grid)
+        axs[0, 1].contourf(X_grid, Y_grid, b_sub, levels=levels_b, cmap="jet", vmin=0.0, vmax=b_max_val)
+    sm_b = plt.cm.ScalarMappable(norm=plt.Normalize(vmin=0.0, vmax=b_max_val), cmap="jet")
+    fig1.colorbar(sm_b, ax=axs[0, 1], label=r"$|B|$ (T)")
     axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_aspect('equal')
     
@@ -186,8 +196,12 @@ def main():
     plt.savefig('figure/final_fields_grid.png', dpi=150)
     
     fig2, ax2 = plt.subplots(figsize=(8, 7))
-    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="jet", alpha=0.35)
-    fig2.colorbar(contour_b_bg, ax=ax2, label=r"$|B|$ (T)")
+    for domain in model.simulation_domain_engine_instance.domains_list:
+        d_id = float(domain.domain_id)
+        mask_d = (mat_id_grid != d_id)
+        b_sub = np.ma.masked_where(mask_d, B_mag_grid)
+        ax2.contourf(X_grid, Y_grid, b_sub, levels=levels_b, cmap="jet", alpha=0.35, vmin=0.0, vmax=b_max_val)
+    fig2.colorbar(sm_b, ax=ax2, label=r"$|B|$ (T)")
     
     step = 6
     B_sub = np.maximum(B_mag_grid[::step, ::step], 1e-12)
