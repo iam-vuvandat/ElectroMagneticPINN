@@ -25,7 +25,7 @@ def main():
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 10.4 - Dual Magnets XPINN Simulation with Masked Discontinuous Plotting")
+    print("version 10.5 - Dual Magnets XPINN Simulation without Seam Border")
     
     model = ElectroMagneticPINN()
     
@@ -147,7 +147,7 @@ def main():
 
     model.execute_training_process()
     
-    resolution = 140
+    resolution = 180
     x_coords = np.linspace(xb[0], xb[1], resolution)
     y_coords = np.linspace(yb[0], yb[1], resolution)
     X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
@@ -157,9 +157,6 @@ def main():
     A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
     assert torch.all(torch.isfinite(A_z_pred)) and torch.all(torch.isfinite(B_x_pred)) and torch.all(torch.isfinite(B_y_pred)), "Kết quả trường từ không hữu hạn!"
     
-    props = model.simulation_domain_engine_instance.evaluate_global_physical_properties(xy_points_tensor)
-    mat_id_grid = props["material_classification"].cpu().numpy().reshape(resolution, resolution)
-
     A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
     B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
     B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
@@ -173,13 +170,8 @@ def main():
     
     b_max_val = max(float(np.max(B_mag_grid)), 1e-3)
     levels_b = np.linspace(0.0, b_max_val, 60)
-    for domain in model.simulation_domain_engine_instance.domains_list:
-        d_id = float(domain.domain_id)
-        mask_d = (mat_id_grid != d_id)
-        b_sub = np.ma.masked_where(mask_d, B_mag_grid)
-        axs[0, 1].contourf(X_grid, Y_grid, b_sub, levels=levels_b, cmap="jet", vmin=0.0, vmax=b_max_val)
-    sm_b = plt.cm.ScalarMappable(norm=plt.Normalize(vmin=0.0, vmax=b_max_val), cmap="jet")
-    fig1.colorbar(sm_b, ax=axs[0, 1], label=r"$|B|$ (T)")
+    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=levels_b, cmap="jet", vmin=0.0, vmax=b_max_val)
+    fig1.colorbar(contour_b, ax=axs[0, 1], label=r"$|B|$ (T)")
     axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_aspect('equal')
     
@@ -196,12 +188,8 @@ def main():
     plt.savefig('figure/final_fields_grid.png', dpi=150)
     
     fig2, ax2 = plt.subplots(figsize=(8, 7))
-    for domain in model.simulation_domain_engine_instance.domains_list:
-        d_id = float(domain.domain_id)
-        mask_d = (mat_id_grid != d_id)
-        b_sub = np.ma.masked_where(mask_d, B_mag_grid)
-        ax2.contourf(X_grid, Y_grid, b_sub, levels=levels_b, cmap="jet", alpha=0.35, vmin=0.0, vmax=b_max_val)
-    fig2.colorbar(sm_b, ax=ax2, label=r"$|B|$ (T)")
+    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=levels_b, cmap="jet", alpha=0.35, vmin=0.0, vmax=b_max_val)
+    fig2.colorbar(contour_b_bg, ax=ax2, label=r"$|B|$ (T)")
     
     step = 6
     B_sub = np.maximum(B_mag_grid[::step, ::step], 1e-12)
