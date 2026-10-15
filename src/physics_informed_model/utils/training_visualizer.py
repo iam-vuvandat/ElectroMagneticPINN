@@ -153,8 +153,9 @@ class TrainingVisualizer:
         model.train()
 
     def generate_gif(self):
-        output_filename = self.electro_magnetic_pinn.visualization_config.gif_filename
-        fps = self.electro_magnetic_pinn.visualization_config.gif_fps
+        cfg = self.electro_magnetic_pinn.visualization_config
+        output_filename = getattr(cfg, 'gif_filename', 'training_process.gif')
+        fps = getattr(cfg, 'animation_fps', getattr(cfg, 'gif_fps', 5))
         if not self.frame_paths:
             print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo GIF.")
             return
@@ -165,5 +166,66 @@ class TrainingVisualizer:
             if os.path.exists(filename):
                 images.append(imageio.imread(filename))
                 
-        imageio.mimsave(full_gif_path, images, fps=fps)
+        imageio.mimsave(full_gif_path, images, fps=fps, loop=0)
         print(f"[*] Đã xuất GIF Animation thành công tại: {full_gif_path}")
+
+    def generate_mp4(self):
+        cfg = self.electro_magnetic_pinn.visualization_config
+        output_filename = getattr(cfg, 'mp4_filename', 'training_process.mp4')
+        fps = getattr(cfg, 'animation_fps', getattr(cfg, 'gif_fps', 5))
+        codec = getattr(cfg, 'mp4_codec', 'libx264')
+        quality = getattr(cfg, 'mp4_quality', 8)
+
+        if not self.frame_paths:
+            print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo MP4.")
+            return
+
+        valid_frames = [f for f in self.frame_paths if os.path.exists(f)]
+        if not valid_frames:
+            print("[!] CẢNH BÁO: Tất cả frame paths đều không tồn tại trên đĩa.")
+            return
+
+        full_mp4_path = os.path.join(self.output_directory, output_filename)
+        print(f"[*] Đang xuất Video MP4 ({len(valid_frames)} frames, {fps} fps)...")
+        
+        exported = False
+        try:
+            writer = imageio.get_writer(
+                full_mp4_path,
+                fps=fps,
+                codec=codec,
+                pixelformat='yuv420p',
+                quality=quality
+            )
+            for f in valid_frames:
+                writer.append_data(imageio.imread(f))
+            writer.close()
+            exported = True
+            print(f"[*] Đã xuất MP4 Video thành công (imageio) tại: {full_mp4_path}")
+        except Exception as exc:
+            print(f"[!] Không thể xuất MP4 bằng imageio-ffmpeg ({exc}). Chuyển sang OpenCV fallback...")
+
+        if not exported:
+            try:
+                import cv2
+                sample = cv2.imread(valid_frames[0])
+                height, width, _ = sample.shape
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                video_writer = cv2.VideoWriter(full_mp4_path, fourcc, float(fps), (width, height))
+                for f in valid_frames:
+                    img = cv2.imread(f)
+                    video_writer.write(img)
+                video_writer.release()
+                print(f"[*] Đã xuất MP4 Video thành công (OpenCV) tại: {full_mp4_path}")
+            except Exception as cv_exc:
+                print(f"[!] Lỗi khi xuất video MP4 bằng OpenCV: {cv_exc}")
+
+    def generate_animations(self):
+        cfg = self.electro_magnetic_pinn.visualization_config
+        gen_gif = getattr(cfg, 'generate_gif_animation', True)
+        gen_mp4 = getattr(cfg, 'generate_mp4_video', True)
+
+        if gen_gif:
+            self.generate_gif()
+        if gen_mp4:
+            self.generate_mp4()

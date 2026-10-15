@@ -63,17 +63,18 @@ class ElectroMagneticPINN:
     def __init__(self):
         self.sampler_config = SimpleNamespace(
             dynamic_resampling=True,
-            resample_interval=100
+            resample_interval=100,
+            resample_before_lbfgs=True
         )
         
         self.training_config = SimpleNamespace(
             learning_rate_adam=1e-3,
-            target_loss=1e-3,
-            epochs_adam=4000,
-            epochs_lbfgs=1000,
+            target_loss=1e-5,
+            epochs_adam=2500,
+            epochs_lbfgs=800,
             lbfgs_learning_rate=0.8,
-            lbfgs_maximum_iterations=1000,
-            lbfgs_maximum_evaluations=1250,
+            lbfgs_maximum_iterations=800,
+            lbfgs_maximum_evaluations=1000,
             lbfgs_tolerance_gradient=1e-8,
             lbfgs_tolerance_change=1e-10,
             lbfgs_history_size=50
@@ -81,9 +82,9 @@ class ElectroMagneticPINN:
         
         self.visualization_config = SimpleNamespace(
             active=False,
-            update_interval=100,
+            update_interval=200,
             output_directory="animation_frames",
-            resolution=100,
+            resolution=80,
             gif_filename="training_process.gif",
             gif_fps=10
         )
@@ -120,6 +121,7 @@ class ElectroMagneticPINN:
         self._build_system()
 
     def _build_system(self):
+        self.simulation_domain_engine_instance.validate_non_overlapping_domains()
         self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
         
@@ -149,9 +151,14 @@ class ElectroMagneticPINN:
             return self.collocation_sampler_instance.generate_all_domain_points()
 
         domains_data = resample_data_fn()
+        for key, d in domains_data.items():
+            print(
+                f"  - Domain [{key} ({d['domain_object'].domain_name})]: "
+                f"interior = {d['interior_points'].shape[0]}, surface = {d['surface_points'].shape[0]}"
+            )
         
         print(f"--- Standard Adam Training ({self.training_config.epochs_adam} Epochs) ---")
-        self.training_manager_instance.train_adam(
+        domains_data = self.training_manager_instance.train_adam(
             epochs=self.training_config.epochs_adam, 
             domains_data=domains_data,
             dynamic_resampling=self.sampler_config.dynamic_resampling,
@@ -159,9 +166,13 @@ class ElectroMagneticPINN:
             resample_interval=self.sampler_config.resample_interval
         )
         
-        print(f"--- L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
+        if getattr(self.sampler_config, 'resample_before_lbfgs', True):
+            domains_data = resample_data_fn()
+
+        lbfgs_iters = int(self.training_config.epochs_lbfgs)
+        print(f"--- L-BFGS Refinement (Max {lbfgs_iters} Iterations) ---")
         self.training_manager_instance.train_lbfgs(
-            epochs=self.training_config.epochs_lbfgs, 
+            max_iterations=lbfgs_iters, 
             domains_data=domains_data
         )
         
@@ -176,7 +187,9 @@ class ElectroMagneticPINN:
         props = self.simulation_domain_engine_instance.evaluate_global_physical_properties(points_tensor)
         mat_id = props["material_classification"]
         
-        A_z_star_total = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
+        A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
+        B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
+        B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
         
         for domain in self.simulation_domain_engine_instance.domains_list:
             d_id = domain.domain_id
@@ -185,19 +198,24 @@ class ElectroMagneticPINN:
             else:
                 net_key = f'domain_{d_id}'
                 
-            mask = (mat_id == float(d_id)).float()
-            if mask.any():
-                Az_sub = self.pinn_architecture_instance.forward_network(net_key, points_tensor)
-                A_z_star_total = A_z_star_total + mask * Az_sub
+            mask_bool = (mat_id == float(d_id))
+            if mask_bool.any():
+                Az_sub_star = self.pinn_architecture_instance.forward_network(net_key, points_tensor)
+                grad_sub_star = torch.autograd.grad(
+                    outputs=Az_sub_star,
+                    inputs=points_tensor,
+                    grad_outputs=torch.ones_like(Az_sub_star),
+                    create_graph=False
+                )[0]
+                Az_sub_phys = Az_sub_star * self.A0
+                Bx_sub_phys = grad_sub_star[:, 1:2] * self.A0
+                By_sub_phys = -grad_sub_star[:, 0:1] * self.A0
 
-        A_z_phys = A_z_star_total * self.A0
+                A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
+                B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
+                B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
         
-        grad_A = torch.autograd.grad(
-            outputs=A_z_phys, inputs=points_tensor,
-            grad_outputs=torch.ones_like(A_z_phys), create_graph=False
-        )[0]
-        
-        return A_z_phys.detach(), grad_A[:, 1:2].detach(), (-grad_A[:, 0:1]).detach()
+        return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
 
 ========================================
 
@@ -274,14 +292,20 @@ def forward_network(self, network_key, xy):
         if B_matrix.device != xy.device:
             B_matrix = B_matrix.to(xy.device)
         projected = (2.0 * np.pi * xy_normalized) @ B_matrix.T
-        x_input = torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1)
+        x_input = torch.cat([torch.sin(projected), torch.cos(projected)], dim=-1)
     else:
         x_input = xy_normalized
         
     raw_output = self.networks[network_key](x_input)
     
     if network_key == 'background':
-        A_z_star = raw_output * self.boundary_factor(xy)
+        boundary_obj = sim_domain.boundary
+        enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor')
+        pot_val_star = float(getattr(boundary_obj.physics_config, 'potential_value', 0.0)) / max(sim_domain.A0, 1e-12)
+        if enforce_method == 'hard_factor':
+            A_z_star = raw_output * self.boundary_factor(xy) + pot_val_star
+        else:
+            A_z_star = raw_output
     else:
         A_z_star = raw_output
         
@@ -362,8 +386,11 @@ import torch
 import numpy as np
 
 class CollocationSampler:
-    def __init__(self, electro_magnetic_pinn=None, device=None):
+    def __init__(self, electro_magnetic_pinn=None, device=None, seed=42, max_sampling_attempts=200):
         self.electro_magnetic_pinn = electro_magnetic_pinn
+        self.seed = seed
+        self.max_sampling_attempts = max_sampling_attempts
+        self.sobol_engine = torch.quasirandom.SobolEngine(dimension=2, scramble=True, seed=self.seed)
         if device is not None:
             self.device = device
         elif electro_magnetic_pinn is not None and hasattr(electro_magnetic_pinn, 'computation_device'):
@@ -371,24 +398,42 @@ class CollocationSampler:
         else:
             self.device = torch.device('cpu')
 
+    def _draw_sobol_box(self, count, x_min, x_max, y_min, y_max):
+        uv = self.sobol_engine.draw(count).to(device=self.device, dtype=torch.float32)
+        pts = torch.empty_like(uv)
+        pts[:, 0] = uv[:, 0] * (x_max - x_min) + x_min
+        pts[:, 1] = uv[:, 1] * (y_max - y_min) + y_min
+        return pts
+
     def sample_domain_interior_points(self, domain_object, bounding_box, number_of_points):
         if number_of_points <= 0:
             return torch.empty((0, 2), dtype=torch.float32, device=self.device)
             
+        if domain_object.geometry_config.outline is None or len(domain_object.geometry_config.outline) < 3:
+            raise ValueError(f"Lỗi lấy mẫu: Domain '{domain_object.domain_name}' có outline không hợp lệ.")
+        if domain_object.section_area <= 1e-12:
+            raise ValueError(f"Lỗi lấy mẫu: Domain '{domain_object.domain_name}' có diện tích bằng 0.")
+
         outline = np.array(domain_object.geometry_config.outline)
-        x_min, x_max = np.min(outline[:, 0]), np.max(outline[:, 0])
-        y_min, y_max = np.min(outline[:, 1]), np.max(outline[:, 1])
+        x_min, x_max = float(np.min(outline[:, 0])), float(np.max(outline[:, 0]))
+        y_min, y_max = float(np.min(outline[:, 1])), float(np.max(outline[:, 1]))
+
+        if x_max <= x_min or y_max <= y_min:
+            raise ValueError(f"Lỗi lấy mẫu: Bounding box của domain '{domain_object.domain_name}' suy biến.")
 
         collected_points = []
         collected_count = 0
         pool_size = max(number_of_points * 4, 500)
+        attempts = 0
 
         while collected_count < number_of_points:
-            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
-            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
-            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
-            
-            sdf = domain_object.compute_signed_distance_field(points_pool)
+            if attempts >= self.max_sampling_attempts:
+                raise RuntimeError(
+                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho domain '{domain_object.domain_name}'."
+                )
+            attempts += 1
+            points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
+            sdf = domain_object.compute_signed_distance_field(points_pool).view(-1)
             inside_mask = sdf <= 0.0
             
             if inside_mask.any():
@@ -404,22 +449,49 @@ class CollocationSampler:
             return torch.empty((0, 2), dtype=torch.float32, device=self.device)
 
         outline = domain_object.geometry_config.outline
+        if outline is None or len(outline) < 3:
+            raise ValueError(f"Lỗi lấy mẫu bề mặt: Domain '{domain_object.domain_name}' có outline không hợp lệ.")
+
         num_vertices = len(outline)
-        
-        edge_starts = np.array(outline)
+        edge_starts = np.array(outline, dtype=np.float32)
         edge_ends = np.roll(edge_starts, shift=-1, axis=0)
         
         edge_vectors = edge_ends - edge_starts
-        edge_lengths = np.sqrt(np.sum(edge_vectors**2, axis=1))
-        total_perimeter = np.sum(edge_lengths)
+        edge_lengths = np.sqrt(np.sum(edge_vectors ** 2, axis=1))
+        total_perimeter = float(np.sum(edge_lengths))
+        if total_perimeter <= 1e-12:
+            raise ValueError(f"Lỗi lấy mẫu bề mặt: Chu vi của domain '{domain_object.domain_name}' bằng 0.")
         
         edge_probs = edge_lengths / total_perimeter
-        
         sampled_edges = np.random.choice(num_vertices, size=number_of_points, p=edge_probs)
-        t_params = np.random.rand(number_of_points, 1)
+        
+        uv_1d = self.sobol_engine.draw(number_of_points)[:, 0:1].cpu().numpy()
+        t_params = 0.02 + 0.96 * uv_1d
         
         pts_sampled = edge_starts[sampled_edges] + t_params * edge_vectors[sampled_edges]
         return torch.tensor(pts_sampled, dtype=torch.float32, device=self.device)
+
+    def _sample_air_box(self, simulation_domain_object, target_count, x_min, x_max, y_min, y_max):
+        if target_count <= 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+        collected_points = []
+        collected_count = 0
+        pool_size = max(target_count * 2, 1000)
+        attempts = 0
+        while collected_count < target_count:
+            if attempts >= self.max_sampling_attempts:
+                raise RuntimeError(
+                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho miền background."
+                )
+            attempts += 1
+            points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
+            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool).view(-1)
+            air_mask = global_sdf > 0.0
+            if air_mask.any():
+                valid = points_pool[air_mask]
+                collected_points.append(valid)
+                collected_count += valid.shape[0]
+        return torch.cat(collected_points, dim=0)[:target_count, :]
 
     def sample_background_interior_points(self, simulation_domain_object, number_of_points):
         if number_of_points <= 0:
@@ -427,26 +499,29 @@ class CollocationSampler:
 
         x_min, x_max = simulation_domain_object.x_boundaries_tuple
         y_min, y_max = simulation_domain_object.y_boundaries_tuple
+        if x_max <= x_min or y_max <= y_min:
+            raise ValueError("Lỗi lấy mẫu: Khung biên của SimulationDomain không hợp lệ.")
 
-        collected_points = []
-        collected_count = 0
-        pool_size = max(number_of_points * 2, 1000)
+        mat_domains = [d for d in simulation_domain_object.domains_list if getattr(d, 'domain_name', '') != 'background']
+        if not mat_domains:
+            return self._sample_air_box(simulation_domain_object, number_of_points, x_min, x_max, y_min, y_max)
 
-        while collected_count < number_of_points:
-            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
-            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
-            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
+        all_outlines = np.vstack([np.array(d.geometry_config.outline) for d in mat_domains])
+        mx_min, mx_max = float(np.min(all_outlines[:, 0])), float(np.max(all_outlines[:, 0]))
+        my_min, my_max = float(np.min(all_outlines[:, 1])), float(np.max(all_outlines[:, 1]))
+        pad_x = 0.15 * (x_max - x_min)
+        pad_y = 0.15 * (y_max - y_min)
+        gx_min = max(x_min, mx_min - pad_x)
+        gx_max = min(x_max, mx_max + pad_x)
+        gy_min = max(y_min, my_min - pad_y)
+        gy_max = min(y_max, my_max + pad_y)
 
-            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool)
-            air_mask = global_sdf > 0.0
+        n_focus = int(round(number_of_points * 0.35))
+        n_uniform = number_of_points - n_focus
 
-            if air_mask.any():
-                valid = points_pool[air_mask]
-                collected_points.append(valid)
-                collected_count += valid.shape[0]
-
-        pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        return pts
+        pts_uniform = self._sample_air_box(simulation_domain_object, n_uniform, x_min, x_max, y_min, y_max)
+        pts_focus = self._sample_air_box(simulation_domain_object, n_focus, gx_min, gx_max, gy_min, gy_max)
+        return torch.cat([pts_uniform, pts_focus], dim=0)
 
     def generate_all_domain_points(self, simulation_domain_object=None):
         if simulation_domain_object is None:
@@ -456,15 +531,22 @@ class CollocationSampler:
         bb = (simulation_domain_object.x_boundaries_tuple, simulation_domain_object.y_boundaries_tuple)
 
         for domain in simulation_domain_object.domains_list:
+            mult = float(getattr(domain.training_config, 'sampling_density_multiplier', 1.0))
+            if mult < 0.0:
+                raise ValueError(f"Lỗi: sampling_density_multiplier của domain '{domain.domain_name}' không được âm.")
+
+            base_interior = int(domain.training_config.number_of_interior_points)
+            base_surface = int(domain.training_config.number_of_surface_points)
+
+            actual_interior = int(round(base_interior * mult)) if base_interior > 0 else 0
+            actual_surface = int(round(base_surface * mult)) if base_surface > 0 else 0
+
             if getattr(domain, 'domain_name', '') == 'background':
-                n_interior = domain.training_config.number_of_interior_points
-                interior_pts = self.sample_background_interior_points(simulation_domain_object, n_interior)
+                interior_pts = self.sample_background_interior_points(simulation_domain_object, actual_interior)
                 surface_pts = torch.empty((0, 2), dtype=torch.float32, device=self.device)
             else:
-                n_interior = domain.training_config.number_of_interior_points
-                n_surface = domain.training_config.number_of_surface_points
-                interior_pts = self.sample_domain_interior_points(domain, bb, n_interior)
-                surface_pts = self.sample_domain_surface_points(domain, n_surface)
+                interior_pts = self.sample_domain_interior_points(domain, bb, actual_interior)
+                surface_pts = self.sample_domain_surface_points(domain, actual_surface)
 
             interior_pts = interior_pts.detach().clone().requires_grad_(True)
             surface_pts = surface_pts.detach().clone().requires_grad_(True)
@@ -485,7 +567,7 @@ class CollocationSampler:
 import torch
 
 class InterfaceLoss:
-    def __init__(self, electro_magnetic_pinn=None, L0=0.05, H0=1200000.0, nu0=795774.715459):
+    def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
         self.electro_magnetic_pinn = electro_magnetic_pinn
         self._L0 = L0
         self._H0 = H0
@@ -509,13 +591,18 @@ class InterfaceLoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def _compute_edge_unit_tangents(self, domain, surf_pts):
+    def _compute_normals_and_tangents_from_outline(self, domain, surf_pts):
         vertices = domain.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
         start_pts = vertices
         end_pts = torch.roll(vertices, shifts=-1, dims=0)
         edge_vecs = end_pts - start_pts
         edge_lens = torch.sqrt(torch.sum(edge_vecs ** 2, dim=1, keepdim=True) + 1e-12)
-        unit_tangents = edge_vecs / edge_lens
+
+        signed_area = 0.5 * torch.sum(start_pts[:, 0] * end_pts[:, 1] - end_pts[:, 0] * start_pts[:, 1])
+        orient = 1.0 if signed_area.item() >= 0.0 else -1.0
+
+        unit_tangents = orient * (edge_vecs / edge_lens)
+        unit_normals = torch.cat([unit_tangents[:, 1:2], -unit_tangents[:, 0:1]], dim=1)
 
         pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
         denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
@@ -524,72 +611,125 @@ class InterfaceLoss:
         dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
         edge_idx = torch.argmin(dist_sq, dim=1)
 
+        t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
+        corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
+
+        nx = unit_normals[edge_idx, 0:1].detach()
+        ny = unit_normals[edge_idx, 1:2].detach()
         tx = unit_tangents[edge_idx, 0:1].detach()
         ty = unit_tangents[edge_idx, 1:2].detach()
-        return tx, ty
+        return nx, ny, tx, ty, corner_w
 
-    def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
+    def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
+        if pts.shape[0] == 0:
+            zero = torch.tensor(0.0, device=pts.device)
+            return zero, zero, zero
+
         model = self.electro_magnetic_pinn.pinn_architecture_instance
+        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
+
+        Az_a = model.forward_network(key_a, pts)
+        Az_b = model.forward_network(key_b, pts)
+
+        loss_val = torch.mean((Az_a - Az_b) ** 2)
+
+        grad_a = torch.autograd.grad(
+            outputs=Az_a,
+            inputs=pts,
+            grad_outputs=torch.ones_like(Az_a),
+            create_graph=True
+        )[0]
+
+        grad_b = torch.autograd.grad(
+            outputs=Az_b,
+            inputs=pts,
+            grad_outputs=torch.ones_like(Az_b),
+            create_graph=True
+        )[0]
+
+        Bx_a_star = grad_a[:, 1:2] * self.L0
+        By_a_star = -grad_a[:, 0:1] * self.L0
+        Bx_b_star = grad_b[:, 1:2] * self.L0
+        By_b_star = -grad_b[:, 0:1] * self.L0
+
+        Bn_a_star = Bx_a_star * nx + By_a_star * ny
+        Bn_b_star = Bx_b_star * nx + By_b_star * ny
+        loss_Bn = torch.mean(corner_w * ((Bn_a_star - Bn_b_star) ** 2))
+
+        nu_a_star = domain_a.evaluate_reluctivity(pts) / self.nu0
+        hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
+        hx_a_star = hx_a / self.H0
+        hy_a_star = hy_a / self.H0
+
+        if domain_b is not None:
+            nu_b_star = domain_b.evaluate_reluctivity(pts) / self.nu0
+            hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
+            hx_b_star = hx_b / self.H0
+            hy_b_star = hy_b / self.H0
+        else:
+            nu_b_star = 1.0
+            hx_b_star = 0.0
+            hy_b_star = 0.0
+
+        Hx_a_star = nu_a_star * Bx_a_star - hx_a_star
+        Hy_a_star = nu_a_star * By_a_star - hy_a_star
+        Hx_b_star = nu_b_star * Bx_b_star - hx_b_star
+        Hy_b_star = nu_b_star * By_b_star - hy_b_star
+
+        Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
+        Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
+        loss_Ht = torch.mean(corner_w * ((Ht_a_star - Ht_b_star) ** 2))
+
+        return loss_val, loss_Bn, loss_Ht
+
+    def compute_loss_components(self, network_key, domain, surf_pts, background_key='background', contact_tol=1e-4):
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         bg_domain = sim_domain.background_domain
+        other_domains = [
+            d for d in sim_domain.domains_list
+            if d is not domain and getattr(d, 'domain_name', '') != 'background'
+        ]
 
-        Az_mat = model.forward_network(network_key, surf_pts)
-        Az_bg = model.forward_network(background_key, surf_pts)
+        remaining_mask = torch.ones(surf_pts.shape[0], dtype=torch.bool, device=surf_pts.device)
+        total_val = torch.tensor(0.0, device=surf_pts.device)
+        total_bn = torch.tensor(0.0, device=surf_pts.device)
+        total_ht = torch.tensor(0.0, device=surf_pts.device)
 
-        potential_continuity_loss = torch.mean((Az_mat - Az_bg) ** 2)
+        for other_dom in other_domains:
+            if not remaining_mask.any():
+                break
+            other_sdf = other_dom.compute_signed_distance_field(surf_pts).view(-1)
+            contact_mask = remaining_mask & (torch.abs(other_sdf) <= contact_tol)
+            if contact_mask.any():
+                other_key = f"domain_{other_dom.domain_id}"
+                v_l, bn_l, ht_l = self._compute_pair_components(
+                    network_key, domain, other_key, other_dom, surf_pts[contact_mask]
+                )
+                ratio = float(contact_mask.sum().item()) / float(surf_pts.shape[0])
+                total_val = total_val + ratio * v_l
+                total_bn = total_bn + ratio * bn_l
+                total_ht = total_ht + ratio * ht_l
+                remaining_mask = remaining_mask & (~contact_mask)
 
-        grad_Az_mat = torch.autograd.grad(
-            outputs=Az_mat,
-            inputs=surf_pts,
-            grad_outputs=torch.ones_like(Az_mat),
-            create_graph=True,
-            retain_graph=True
-        )[0]
+        if remaining_mask.any():
+            v_bg, bn_bg, ht_bg = self._compute_pair_components(
+                network_key, domain, background_key, bg_domain, surf_pts[remaining_mask]
+            )
+            ratio = float(remaining_mask.sum().item()) / float(surf_pts.shape[0])
+            total_val = total_val + ratio * v_bg
+            total_bn = total_bn + ratio * bn_bg
+            total_ht = total_ht + ratio * ht_bg
 
-        grad_Az_bg = torch.autograd.grad(
-            outputs=Az_bg,
-            inputs=surf_pts,
-            grad_outputs=torch.ones_like(Az_bg),
-            create_graph=True,
-            retain_graph=True
-        )[0]
+        w_az = float(getattr(domain.training_config, 'interface_potential_weight', 1000.0))
+        w_bn = float(getattr(domain.training_config, 'interface_bn_weight', 500.0))
+        w_ht = float(getattr(domain.training_config, 'interface_ht_weight', 500.0))
 
-        dAz_mat_dx_star = grad_Az_mat[:, 0:1] * self.L0
-        dAz_mat_dy_star = grad_Az_mat[:, 1:2] * self.L0
-        dAz_bg_dx_star = grad_Az_bg[:, 0:1] * self.L0
-        dAz_bg_dy_star = grad_Az_bg[:, 1:2] * self.L0
+        weighted_interface = w_az * total_val + w_bn * total_bn + w_ht * total_ht
+        return weighted_interface, total_val, total_bn, total_ht
 
-        tx, ty = self._compute_edge_unit_tangents(domain, surf_pts)
-
-        bn_continuity_loss = torch.mean(((dAz_mat_dx_star - dAz_bg_dx_star) * tx + (dAz_mat_dy_star - dAz_bg_dy_star) * ty) ** 2)
-
-        nu_mat_star = domain.evaluate_reluctivity(surf_pts) / self.nu0
-        hx_mat, hy_mat = domain.evaluate_magnetization_vector(surf_pts)
-        hx_mat_star = hx_mat / self.H0
-        hy_mat_star = hy_mat / self.H0
-
-        if bg_domain is not None:
-            nu_bg_star = bg_domain.evaluate_reluctivity(surf_pts) / self.nu0
-            hx_bg, hy_bg = bg_domain.evaluate_magnetization_vector(surf_pts)
-            hx_bg_star = hx_bg / self.H0
-            hy_bg_star = hy_bg / self.H0
-        else:
-            nu_bg_star = 1.0
-            hx_bg_star = 0.0
-            hy_bg_star = 0.0
-
-        Hx_mat_star = nu_mat_star * dAz_mat_dy_star - hx_mat_star
-        Hy_mat_star = -nu_mat_star * dAz_mat_dx_star - hy_mat_star
-
-        Hx_bg_star = nu_bg_star * dAz_bg_dy_star - hx_bg_star
-        Hy_bg_star = -nu_bg_star * dAz_bg_dx_star - hy_bg_star
-
-        Ht_mat_star = Hx_mat_star * tx + Hy_mat_star * ty
-        Ht_bg_star = Hx_bg_star * tx + Hy_bg_star * ty
-
-        ht_continuity_loss = torch.mean((Ht_mat_star - Ht_bg_star) ** 2)
-
-        return potential_continuity_loss + bn_continuity_loss + ht_continuity_loss
+    def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
+        weighted_interface, _, _, _ = self.compute_loss_components(network_key, domain, surf_pts, background_key)
+        return weighted_interface
 
 ========================================
 
@@ -598,7 +738,7 @@ class InterfaceLoss:
 import torch
 
 class MaxwellPDELoss:
-    def __init__(self, electro_magnetic_pinn=None, L0=0.05, H0=1200000.0, nu0=795774.715459):
+    def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
         self.electro_magnetic_pinn = electro_magnetic_pinn
         self._L0 = L0
         self._H0 = H0
@@ -632,8 +772,7 @@ class MaxwellPDELoss:
             outputs=A_z_star,
             inputs=xy,
             grad_outputs=torch.ones_like(A_z_star),
-            create_graph=True,
-            retain_graph=True
+            create_graph=True
         )[0]
         
         dAz_star_dx_star = grad_A_star[:, 0:1] * self.L0
@@ -646,8 +785,7 @@ class MaxwellPDELoss:
             outputs=H_x_star,
             inputs=xy,
             grad_outputs=torch.ones_like(H_x_star),
-            create_graph=True,
-            retain_graph=True
+            create_graph=True
         )[0]
         dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
         
@@ -655,13 +793,26 @@ class MaxwellPDELoss:
             outputs=H_y_star,
             inputs=xy,
             grad_outputs=torch.ones_like(H_y_star),
-            create_graph=True,
-            retain_graph=True
+            create_graph=True
         )[0]
         dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
         
         residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
         return residual_star
+
+    def compute_fading_weight(self, domain, xy):
+        beta = float(getattr(domain.training_config, 'pde_fading_beta', 150.0))
+        if beta <= 0.0:
+            return torch.ones((xy.shape[0], 1), dtype=xy.dtype, device=xy.device)
+
+        if getattr(domain, 'domain_name', '') == 'background' and self.electro_magnetic_pinn is not None:
+            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+            sdf = sim_domain.compute_global_signed_distance_field(xy).view(-1, 1)
+        else:
+            sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
+
+        abs_sdf_star = torch.abs(sdf.detach()) / self.L0
+        return 1.0 - torch.exp(-beta * abs_sdf_star)
 
 ========================================
 
@@ -873,6 +1024,7 @@ VACUUM_RELUCTIVITY = 795774.715459
 def evaluate_global_physical_properties(domains_list, points_tensor):
     number_of_points = points_tensor.shape[0]
     computation_device = points_tensor.device
+    computation_dtype = points_tensor.dtype
 
     background_domain = None
     material_domains = []
@@ -883,118 +1035,72 @@ def evaluate_global_physical_properties(domains_list, points_tensor):
             material_domains.append(domain)
 
     if background_domain is not None:
-        base_reluctivity = background_domain.evaluate_reluctivity(points_tensor)
+        global_reluctivity = background_domain.evaluate_reluctivity(points_tensor).clone()
         base_hx, base_hy = background_domain.evaluate_magnetization_vector(points_tensor)
-        base_jz = background_domain.evaluate_current_density(points_tensor)
-        base_pde_weight = background_domain.training_config.pde_weight
-        base_interface_weight = background_domain.training_config.interface_weight
-        base_sampling_density = background_domain.training_config.sampling_density_multiplier
+        global_hx = base_hx.clone()
+        global_hy = base_hy.clone()
+        global_jz = background_domain.evaluate_current_density(points_tensor).clone()
+        base_pde_weight = float(background_domain.training_config.pde_weight)
+        base_interface_weight = float(background_domain.training_config.interface_weight)
+        base_sampling_density = float(background_domain.training_config.sampling_density_multiplier)
         base_mat_id = float(background_domain.domain_id) if background_domain.domain_id is not None else float(len(domains_list))
     else:
-        base_reluctivity = torch.full((number_of_points, 1), VACUUM_RELUCTIVITY, dtype=torch.float32, device=computation_device)
-        base_hx = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-        base_hy = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
-        base_jz = torch.zeros((number_of_points, 1), dtype=torch.float32, device=computation_device)
+        global_reluctivity = torch.full((number_of_points, 1), VACUUM_RELUCTIVITY, dtype=computation_dtype, device=computation_device)
+        global_hx = torch.zeros((number_of_points, 1), dtype=computation_dtype, device=computation_device)
+        global_hy = torch.zeros((number_of_points, 1), dtype=computation_dtype, device=computation_device)
+        global_jz = torch.zeros((number_of_points, 1), dtype=computation_dtype, device=computation_device)
         base_pde_weight = 1.0
         base_interface_weight = 1.0
         base_sampling_density = 1.0
         base_mat_id = 0.0
 
-    global_reluctivity_tensor = base_reluctivity.clone()
-    global_coercive_field_x_tensor = base_hx.clone()
-    global_coercive_field_y_tensor = base_hy.clone()
-    global_current_density_z_tensor = base_jz.clone()
-    global_material_classification_tensor = torch.full((number_of_points, 1), base_mat_id, dtype=torch.float32, device=computation_device)
-
-    global_pde_weight_tensor = torch.full((number_of_points, 1), base_pde_weight, dtype=torch.float32, device=computation_device)
-    global_interface_weight_tensor = torch.full((number_of_points, 1), base_interface_weight, dtype=torch.float32, device=computation_device)
-    global_sampling_density_tensor = torch.full((number_of_points, 1), base_sampling_density, dtype=torch.float32, device=computation_device)
+    global_mat_id = torch.full((number_of_points, 1), base_mat_id, dtype=computation_dtype, device=computation_device)
+    global_pde_weight = torch.full((number_of_points, 1), base_pde_weight, dtype=computation_dtype, device=computation_device)
+    global_interface_weight = torch.full((number_of_points, 1), base_interface_weight, dtype=computation_dtype, device=computation_device)
+    global_sampling_density = torch.full((number_of_points, 1), base_sampling_density, dtype=computation_dtype, device=computation_device)
 
     if not material_domains:
         return {
-            "reluctivity": global_reluctivity_tensor,
-            "coercive_field_x": global_coercive_field_x_tensor,
-            "coercive_field_y": global_coercive_field_y_tensor,
-            "current_density_z": global_current_density_z_tensor,
-            "material_classification": global_material_classification_tensor,
-            "pde_weight": global_pde_weight_tensor,
-            "interface_weight": global_interface_weight_tensor,
-            "sampling_density_multiplier": global_sampling_density_tensor
+            "reluctivity": global_reluctivity,
+            "coercive_field_x": global_hx,
+            "coercive_field_y": global_hy,
+            "current_density_z": global_jz,
+            "material_classification": global_mat_id,
+            "pde_weight": global_pde_weight,
+            "interface_weight": global_interface_weight,
+            "sampling_density_multiplier": global_sampling_density
         }
 
-    masks = []
-    reluctivities = []
-    hxs, hys, jzs = [], [], []
+    best_sdf = torch.full((number_of_points, 1), 1e9, dtype=computation_dtype, device=computation_device)
 
-    for domain_object in material_domains:
-        sdf = domain_object.compute_signed_distance_field(points_tensor)
-        mask = (sdf <= 0.0).float().view(-1, 1)
-        masks.append(mask)
-        reluctivities.append(domain_object.evaluate_reluctivity(points_tensor))
-        hx, hy = domain_object.evaluate_magnetization_vector(points_tensor)
-        hxs.append(hx)
-        hys.append(hy)
-        jzs.append(domain_object.evaluate_current_density(points_tensor))
+    for idx, domain_object in enumerate(material_domains):
+        sdf = domain_object.compute_signed_distance_field(points_tensor).view(-1, 1)
+        is_inside_and_closer = (sdf <= 0.0) & (sdf < best_sdf)
+        best_sdf = torch.where(is_inside_and_closer, sdf, best_sdf)
 
-    total_mask = sum(masks)
-    global_envelope_mask = (total_mask > 0.0).float()
-    safe_total_mask = total_mask + 1e-12
+        nu_dom = domain_object.evaluate_reluctivity(points_tensor)
+        hx_dom, hy_dom = domain_object.evaluate_magnetization_vector(points_tensor)
+        jz_dom = domain_object.evaluate_current_density(points_tensor)
+        domain_id_val = float(domain_object.domain_id) if domain_object.domain_id is not None else float(idx + 1)
 
-    blended_reluctivity = torch.zeros_like(global_reluctivity_tensor)
-    blended_hx = torch.zeros_like(global_coercive_field_x_tensor)
-    blended_hy = torch.zeros_like(global_coercive_field_y_tensor)
-    blended_jz = torch.zeros_like(global_current_density_z_tensor)
-    blended_mat = torch.zeros_like(global_material_classification_tensor)
-
-    blended_pde_weight = torch.zeros_like(global_pde_weight_tensor)
-    blended_interface_weight = torch.zeros_like(global_interface_weight_tensor)
-    blended_sampling_density = torch.zeros_like(global_sampling_density_tensor)
-
-    target_h_mag = torch.zeros_like(global_coercive_field_x_tensor)
-
-    for i in range(len(material_domains)):
-        weight = masks[i] / safe_total_mask
-        blended_reluctivity += weight * reluctivities[i]
-        blended_hx += weight * hxs[i]
-        blended_hy += weight * hys[i]
-        blended_jz += weight * jzs[i]
-        domain_id_val = float(material_domains[i].domain_id) if material_domains[i].domain_id is not None else float(i + 1)
-        blended_mat += weight * domain_id_val
-
-        blended_pde_weight += weight * material_domains[i].training_config.pde_weight
-        blended_interface_weight += weight * material_domains[i].training_config.interface_weight
-        blended_sampling_density += weight * material_domains[i].training_config.sampling_density_multiplier
-
-        seg_h_mag = torch.sqrt(hxs[i]**2 + hys[i]**2)
-        target_h_mag += weight * seg_h_mag
-
-    blended_h_mag = torch.sqrt(blended_hx**2 + blended_hy**2)
-    safe_blended_h_mag = torch.where(blended_h_mag < 1e-6, torch.full_like(blended_h_mag, 1.0), blended_h_mag)
-    scale_factor = target_h_mag / safe_blended_h_mag
-
-    has_field_mask = (target_h_mag > 1.0).float()
-    blended_hx = blended_hx * (1.0 - has_field_mask) + (blended_hx * scale_factor) * has_field_mask
-    blended_hy = blended_hy * (1.0 - has_field_mask) + (blended_hy * scale_factor) * has_field_mask
-
-    global_reluctivity_tensor = (1.0 - global_envelope_mask) * base_reluctivity + global_envelope_mask * blended_reluctivity
-    global_coercive_field_x_tensor = (1.0 - global_envelope_mask) * base_hx + global_envelope_mask * blended_hx
-    global_coercive_field_y_tensor = (1.0 - global_envelope_mask) * base_hy + global_envelope_mask * blended_hy
-    global_current_density_z_tensor = (1.0 - global_envelope_mask) * base_jz + global_envelope_mask * blended_jz
-    global_material_classification_tensor = (1.0 - global_envelope_mask) * torch.full_like(global_material_classification_tensor, base_mat_id) + global_envelope_mask * blended_mat
-
-    global_pde_weight_tensor = (1.0 - global_envelope_mask) * base_pde_weight + global_envelope_mask * blended_pde_weight
-    global_interface_weight_tensor = (1.0 - global_envelope_mask) * base_interface_weight + global_envelope_mask * blended_interface_weight
-    global_sampling_density_tensor = (1.0 - global_envelope_mask) * base_sampling_density + global_envelope_mask * blended_sampling_density
+        global_reluctivity = torch.where(is_inside_and_closer, nu_dom, global_reluctivity)
+        global_hx = torch.where(is_inside_and_closer, hx_dom, global_hx)
+        global_hy = torch.where(is_inside_and_closer, hy_dom, global_hy)
+        global_jz = torch.where(is_inside_and_closer, jz_dom, global_jz)
+        global_mat_id = torch.where(is_inside_and_closer, torch.full_like(global_mat_id, domain_id_val), global_mat_id)
+        global_pde_weight = torch.where(is_inside_and_closer, torch.full_like(global_pde_weight, float(domain_object.training_config.pde_weight)), global_pde_weight)
+        global_interface_weight = torch.where(is_inside_and_closer, torch.full_like(global_interface_weight, float(domain_object.training_config.interface_weight)), global_interface_weight)
+        global_sampling_density = torch.where(is_inside_and_closer, torch.full_like(global_sampling_density, float(domain_object.training_config.sampling_density_multiplier)), global_sampling_density)
 
     return {
-        "reluctivity": global_reluctivity_tensor,
-        "coercive_field_x": global_coercive_field_x_tensor,
-        "coercive_field_y": global_coercive_field_y_tensor,
-        "current_density_z": global_current_density_z_tensor,
-        "material_classification": global_material_classification_tensor,
-        "pde_weight": global_pde_weight_tensor,
-        "interface_weight": global_interface_weight_tensor,
-        "sampling_density_multiplier": global_sampling_density_tensor
+        "reluctivity": global_reluctivity,
+        "coercive_field_x": global_hx,
+        "coercive_field_y": global_hy,
+        "current_density_z": global_jz,
+        "material_classification": global_mat_id,
+        "pde_weight": global_pde_weight,
+        "interface_weight": global_interface_weight,
+        "sampling_density_multiplier": global_sampling_density
     }
 
 ========================================
@@ -1032,9 +1138,10 @@ class SimulationDomain:
         self.electro_magnetic_pinn = electro_magnetic_pinn
         
         self.physics_config = SimpleNamespace(
-            scale_L0=0.05,
-            scale_H0=1200000.0,
-            scale_nu0=VACUUM_RELUCTIVITY
+            scale_L0=0.1,
+            scale_H0=800000.0,
+            scale_nu0=VACUUM_RELUCTIVITY,
+            allow_overlapping_domains=False
         )
 
         self.boundary = Boundary(simulation_domain=self)
@@ -1062,6 +1169,10 @@ class SimulationDomain:
         return (self.H0 * self.L0) / self.nu0
 
     @property
+    def B0(self):
+        return self.H0 / self.nu0
+
+    @property
     def x_boundaries_tuple(self):
         return self.boundary.geometry_config.x_boundaries_tuple
 
@@ -1084,8 +1195,40 @@ class SimulationDomain:
         self.boundary = boundary_object
         return self
 
+    def validate_non_overlapping_domains(self, candidate_domain=None, check_resolution=80):
+        if getattr(self.physics_config, 'allow_overlapping_domains', False):
+            return True
+        mat_domains = [d for d in self.domains_list if getattr(d, 'domain_name', '') != 'background']
+        if candidate_domain is not None and getattr(candidate_domain, 'domain_name', '') != 'background':
+            if candidate_domain not in mat_domains:
+                mat_domains.append(candidate_domain)
+        if len(mat_domains) < 2:
+            return True
+
+        x_min, x_max = self.x_boundaries_tuple
+        y_min, y_max = self.y_boundaries_tuple
+        xs = torch.linspace(x_min, x_max, check_resolution)
+        ys = torch.linspace(y_min, y_max, check_resolution)
+        Xg, Yg = torch.meshgrid(xs, ys, indexing='ij')
+        test_pts = torch.column_stack([Xg.reshape(-1), Yg.reshape(-1)])
+
+        strict_inside_counts = torch.zeros(test_pts.shape[0], dtype=torch.int32)
+        for d in mat_domains:
+            sdf = d.compute_signed_distance_field(test_pts).view(-1)
+            strict_inside_counts += (sdf < -1e-6).int()
+
+        if torch.any(strict_inside_counts > 1):
+            raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau.")
+        return True
+
     def add_material_domain(self, domain_object):
         domain_object.simulation_domain = self
+        if domain_object.outline_tensor is None:
+            domain_object.build_domain()
+
+        if getattr(domain_object, 'domain_name', '') != 'background':
+            self.validate_non_overlapping_domains(candidate_domain=domain_object)
+
         if self.background_domain in self.domains_list:
             insert_idx = len(self.domains_list) - 1
             self.domains_list.insert(insert_idx, domain_object)
@@ -1115,6 +1258,8 @@ class SimulationDomain:
         bg_domain.physics_config.relative_permeability = 1.0
         bg_domain.physics_config.coercive = [0.0, 0.0]
         bg_domain.physics_config.current = 0.0
+        bg_domain.training_config.number_of_interior_points = 4000
+        bg_domain.training_config.number_of_surface_points = 0
 
         if training_config is not None:
             for key, value in vars(training_config).items():
@@ -1164,6 +1309,8 @@ class SimulationDomain:
 
 --- FILE: simulation_domain_engine\boundary\boundary.py ---
 
+import torch
+import numpy as np
 from types import SimpleNamespace
 from simulation_domain_engine.boundary.build_boundary import build_boundary
 from simulation_domain_engine.boundary.compute_boundary_factor import compute_boundary_factor
@@ -1195,6 +1342,25 @@ class Boundary:
 
         self.bounding_box = None
         self.outline_tensor = None
+
+    def sample_boundary_points(self, device=torch.device('cpu')):
+        n_pts = int(self.training_config.number_of_boundary_points)
+        if n_pts <= 0 or self.outline_tensor is None:
+            return torch.empty((0, 2), dtype=torch.float32, device=device)
+
+        outline = self.outline_tensor.cpu().numpy()
+        num_vertices = len(outline)
+        edge_starts = outline
+        edge_ends = np.roll(edge_starts, shift=-1, axis=0)
+        edge_vectors = edge_ends - edge_starts
+        edge_lengths = np.sqrt(np.sum(edge_vectors ** 2, axis=1))
+        total_perimeter = np.sum(edge_lengths)
+        edge_probs = edge_lengths / max(total_perimeter, 1e-12)
+
+        sampled_edges = np.random.choice(num_vertices, size=n_pts, p=edge_probs)
+        t_params = np.random.rand(n_pts, 1)
+        pts_sampled = edge_starts[sampled_edges] + t_params * edge_vectors[sampled_edges]
+        return torch.tensor(pts_sampled, dtype=torch.float32, device=device, requires_grad=True)
 
 ========================================
 
@@ -1244,7 +1410,8 @@ import torch
 import torch.nn as nn
 from types import SimpleNamespace
 from simulation_domain_engine.material_domain.polygon_signed_distance_field import compute_polygon_signed_distance_field
-from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+
+VACUUM_RELUCTIVITY = 795774.715459
 
 class MaterialDomain:
     def __init__(self, domain_name="air_domain", simulation_domain=None):
@@ -1265,19 +1432,23 @@ class MaterialDomain:
         
         self.training_config = SimpleNamespace(
             pde_weight=1.0,
-            interface_weight=10.0,
+            interface_weight=1.0,
+            interface_potential_weight=1000.0,
+            interface_bn_weight=500.0,
+            interface_ht_weight=500.0,
+            pde_fading_beta=150.0,
             sampling_density_multiplier=1.0,
-            number_of_interior_points=2000,
-            number_of_surface_points=500
+            number_of_interior_points=1000,
+            number_of_surface_points=800
         )
         
         self.network_config = SimpleNamespace(
             hidden_layers=4,
-            hidden_neurons=32,
+            hidden_neurons=64,
             activation_function=nn.SiLU(),
-            fourier_features=False,
-            fourier_sigma=1.0,
-            fourier_mapping_size=256
+            fourier_features=True,
+            fourier_sigma=1.2,
+            fourier_mapping_size=128
         )
         
         self.outline_tensor = None
@@ -1286,8 +1457,12 @@ class MaterialDomain:
 
     def build_domain(self):
         if self.geometry_config.outline is not None:
+            if len(self.geometry_config.outline) < 3:
+                raise ValueError(f"Lỗi: Outline của domain '{self.domain_name}' phải có ít nhất 3 đỉnh.")
             self.outline_tensor = torch.tensor(self.geometry_config.outline, dtype=torch.float32)
             self._compute_section_area()
+            if self.section_area <= 1e-12:
+                raise ValueError(f"Lỗi: Diện tích của domain '{self.domain_name}' bằng 0 hoặc suy biến.")
             self._compute_current_density()
         else:
             raise ValueError(f"Lỗi: Domain '{self.domain_name}' chưa được cấp outline trong geometry_config.")
@@ -1298,9 +1473,10 @@ class MaterialDomain:
         return self
 
     def _compute_constant_bh_curve(self):
-        nu0 = self.simulation_domain.nu0 if self.simulation_domain is not None else VACUUM_RELUCTIVITY
-        constant_reluctivity = nu0 / self.physics_config.relative_permeability
-        self.physics_config.bh_curve_data = lambda points_tensor: torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
+        def _default_reluctivity_fn(points_tensor, B_magnitude_tensor=None):
+            const_nu = VACUUM_RELUCTIVITY / float(self.physics_config.relative_permeability)
+            return torch.full((points_tensor.shape[0], 1), const_nu, dtype=points_tensor.dtype, device=points_tensor.device)
+        self.physics_config.bh_curve_data = _default_reluctivity_fn
         return self.physics_config.bh_curve_data
 
     def _compute_section_area(self):
@@ -1313,9 +1489,12 @@ class MaterialDomain:
         return self.section_area
 
     def _compute_current_density(self):
+        if callable(self.physics_config.current):
+            self.current_density = self.physics_config.current
+            return self.current_density
         area = self.section_area 
         if area > 0.0:
-            self.current_density = self.physics_config.current / area
+            self.current_density = float(self.physics_config.current) / area
         else:
             self.current_density = 0.0
         return self.current_density
@@ -1325,16 +1504,35 @@ class MaterialDomain:
             raise RuntimeError(f"Domain '{self.domain_name}' chưa được gọi hàm build_domain().")
         return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
 
-    def evaluate_reluctivity(self, points_tensor):
-        return self.physics_config.bh_curve_data(points_tensor)
+    def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None):
+        if self.physics_config.bh_curve_data is None:
+            self._compute_constant_bh_curve()
+        try:
+            return self.physics_config.bh_curve_data(points_tensor, B_magnitude_tensor)
+        except TypeError:
+            return self.physics_config.bh_curve_data(points_tensor)
 
     def evaluate_magnetization_vector(self, points_tensor):
-        hx_tensor = torch.full((points_tensor.shape[0], 1), self.physics_config.coercive[0], dtype=torch.float32, device=points_tensor.device)
-        hy_tensor = torch.full((points_tensor.shape[0], 1), self.physics_config.coercive[1], dtype=torch.float32, device=points_tensor.device)
+        coercive_cfg = self.physics_config.coercive
+        if callable(coercive_cfg):
+            res = coercive_cfg(points_tensor)
+            return res[:, 0:1], res[:, 1:2]
+        if isinstance(coercive_cfg, torch.Tensor):
+            c_tensor = coercive_cfg.to(device=points_tensor.device, dtype=points_tensor.dtype)
+            if c_tensor.dim() == 1:
+                hx = torch.full((points_tensor.shape[0], 1), c_tensor[0].item(), dtype=points_tensor.dtype, device=points_tensor.device)
+                hy = torch.full((points_tensor.shape[0], 1), c_tensor[1].item(), dtype=points_tensor.dtype, device=points_tensor.device)
+                return hx, hy
+            return c_tensor[:, 0:1], c_tensor[:, 1:2]
+        hx_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[0]), dtype=points_tensor.dtype, device=points_tensor.device)
+        hy_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[1]), dtype=points_tensor.dtype, device=points_tensor.device)
         return hx_tensor, hy_tensor
 
     def evaluate_current_density(self, points_tensor):
-        return torch.full((points_tensor.shape[0], 1), self.current_density, dtype=torch.float32, device=points_tensor.device)
+        if callable(self.current_density):
+            val = self.current_density(points_tensor)
+            return val.view(-1, 1).to(device=points_tensor.device, dtype=points_tensor.dtype)
+        return torch.full((points_tensor.shape[0], 1), float(self.current_density), dtype=points_tensor.dtype, device=points_tensor.device)
 
 ========================================
 
@@ -1445,38 +1643,39 @@ def main():
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 8.0 - Dual Straight I-Shaped Magnets Simulation (XPINN)")
+    print("version 10.2 - Dual Magnets XPINN Simulation with Scaled Constants")
     
     model = ElectroMagneticPINN()
-  
+    
     max_coercive_field = 800000.0
-    model.physics_config.scale_H0 = max_coercive_field * 1.5
-    model.physics_config.scale_L0 = 0.12
+    model.simulation_domain_engine_instance.physics_config.scale_H0 = max_coercive_field * 1.2
+    model.simulation_domain_engine_instance.physics_config.scale_L0 = 0.1 * 1.2
     
     model.simulation_domain_engine_instance.x_boundaries_tuple = (-0.1, 0.1)
     model.simulation_domain_engine_instance.y_boundaries_tuple = (-0.1, 0.1)
     
     model.sampler_config.dynamic_resampling = True
     model.sampler_config.resample_interval = 100
+    model.sampler_config.resample_before_lbfgs = True
     
-    model.training_config.epochs_adam = 5000
-    model.training_config.epochs_lbfgs = 1000
-    model.training_config.learning_rate_adam = 8e-4
-    model.training_config.target_loss = 5e-5
+    model.training_config.epochs_adam = 3500
+    model.training_config.epochs_lbfgs = 1500
+    model.training_config.learning_rate_adam = 1e-3
+    model.training_config.target_loss = 1e-7
     
     model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_iterations = 1000
-    model.training_config.lbfgs_maximum_evaluations = 1250
+    model.training_config.lbfgs_maximum_iterations = 1500
+    model.training_config.lbfgs_maximum_evaluations = 1875
     model.training_config.lbfgs_tolerance_gradient = 1e-8
     model.training_config.lbfgs_tolerance_change = 1e-10
     model.training_config.lbfgs_history_size = 50
     
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 50 
+    model.visualization_config.update_interval = 200 
     model.visualization_config.output_directory = "figure"
     model.visualization_config.resolution = 80
     model.visualization_config.gif_filename = "training_process.gif"
-    model.visualization_config.gif_fps = 15
+    model.visualization_config.gif_fps = 10
     
     i_magnet_left = MaterialDomain(domain_name="i_bar_left")
     i_magnet_left.geometry_config.outline = [
@@ -1487,16 +1686,20 @@ def main():
     ]
     i_magnet_left.physics_config.relative_permeability = 1.05
     i_magnet_left.physics_config.coercive = [0.0, 800000.0]
-    i_magnet_left.training_config.pde_weight = 2.0
-    i_magnet_left.training_config.interface_weight = 20.0
-    i_magnet_left.training_config.number_of_interior_points = 3500
+    i_magnet_left.training_config.pde_weight = 1.0
+    i_magnet_left.training_config.interface_weight = 1.0
+    i_magnet_left.training_config.interface_potential_weight = 1000.0
+    i_magnet_left.training_config.interface_bn_weight = 200.0
+    i_magnet_left.training_config.interface_ht_weight = 200.0
+    i_magnet_left.training_config.pde_fading_beta = 40.0
+    i_magnet_left.training_config.number_of_interior_points = 1200
     i_magnet_left.training_config.number_of_surface_points = 800
-    i_magnet_left.network_config.hidden_layers = 6
-    i_magnet_left.network_config.hidden_neurons = 128
-    i_magnet_left.network_config.activation_function = nn.Tanh()
+    i_magnet_left.network_config.hidden_layers = 4
+    i_magnet_left.network_config.hidden_neurons = 64
+    i_magnet_left.network_config.activation_function = nn.SiLU()
     i_magnet_left.network_config.fourier_features = True
-    i_magnet_left.network_config.fourier_sigma = 0.85
-    i_magnet_left.network_config.fourier_mapping_size = 512
+    i_magnet_left.network_config.fourier_sigma = 1.2
+    i_magnet_left.network_config.fourier_mapping_size = 128
     i_magnet_left.build_domain()
 
     i_magnet_right = MaterialDomain(domain_name="i_bar_right")
@@ -1508,16 +1711,20 @@ def main():
     ]
     i_magnet_right.physics_config.relative_permeability = 1.05
     i_magnet_right.physics_config.coercive = [0.0, -800000.0]
-    i_magnet_right.training_config.pde_weight = 2.0
-    i_magnet_right.training_config.interface_weight = 20.0
-    i_magnet_right.training_config.number_of_interior_points = 3500
+    i_magnet_right.training_config.pde_weight = 1.0
+    i_magnet_right.training_config.interface_weight = 1.0
+    i_magnet_right.training_config.interface_potential_weight = 1000.0
+    i_magnet_right.training_config.interface_bn_weight = 200.0
+    i_magnet_right.training_config.interface_ht_weight = 200.0
+    i_magnet_right.training_config.pde_fading_beta = 40.0
+    i_magnet_right.training_config.number_of_interior_points = 1200
     i_magnet_right.training_config.number_of_surface_points = 800
-    i_magnet_right.network_config.hidden_layers = 6
-    i_magnet_right.network_config.hidden_neurons = 128
-    i_magnet_right.network_config.activation_function = nn.Tanh()
+    i_magnet_right.network_config.hidden_layers = 4
+    i_magnet_right.network_config.hidden_neurons = 64
+    i_magnet_right.network_config.activation_function = nn.SiLU()
     i_magnet_right.network_config.fourier_features = True
-    i_magnet_right.network_config.fourier_sigma = 0.85
-    i_magnet_right.network_config.fourier_mapping_size = 512
+    i_magnet_right.network_config.fourier_sigma = 1.2
+    i_magnet_right.network_config.fourier_mapping_size = 128
     i_magnet_right.build_domain()
 
     model.simulation_domain_engine_instance.add_material_domain(i_magnet_left)
@@ -1525,16 +1732,19 @@ def main():
 
     bg_training_config = type('', (), {})()
     bg_training_config.pde_weight = 1.0
-    bg_training_config.interface_weight = 20.0
+    bg_training_config.interface_weight = 1.0
+    bg_training_config.pde_fading_beta = 40.0
     bg_training_config.sampling_density_multiplier = 1.0
-    bg_training_config.number_of_interior_points = 8000
+    bg_training_config.number_of_interior_points = 5000
     bg_training_config.number_of_surface_points = 0
 
     bg_network_config = type('', (), {})()
     bg_network_config.hidden_layers = 4
     bg_network_config.hidden_neurons = 64
     bg_network_config.activation_function = nn.SiLU()
-    bg_network_config.fourier_features = False
+    bg_network_config.fourier_features = True
+    bg_network_config.fourier_sigma = 1.2
+    bg_network_config.fourier_mapping_size = 128
 
     model.simulation_domain_engine_instance.build_background_domain(
         domain_name="background",
@@ -1547,11 +1757,11 @@ def main():
     xb = model.simulation_domain_engine_instance.x_boundaries_tuple
     yb = model.simulation_domain_engine_instance.y_boundaries_tuple
     
-    model.simulation_domain_engine_instance.plot_problem_definition(resolution=120)
+    model.simulation_domain_engine_instance.plot_problem_definition(resolution=100)
 
     model.execute_training_process()
     
-    resolution = 120
+    resolution = 140
     x_coords = np.linspace(xb[0], xb[1], resolution)
     y_coords = np.linspace(yb[0], yb[1], resolution)
     X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
@@ -1559,11 +1769,12 @@ def main():
     xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
     
     A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
+    assert torch.all(torch.isfinite(A_z_pred)) and torch.all(torch.isfinite(B_x_pred)) and torch.all(torch.isfinite(B_y_pred)), "Kết quả trường từ không hữu hạn!"
     
     A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
     B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
     B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
-    B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
+    B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
     
     fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
     contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
@@ -1571,7 +1782,7 @@ def main():
     axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
     axs[0, 0].set_aspect('equal')
     
-    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
+    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="jet")
     fig1.colorbar(contour_b, ax=axs[0, 1], label=r"$|B|$ (T)")
     axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_aspect('equal')
@@ -1586,20 +1797,26 @@ def main():
     axs[1, 1].set_title(r"Magnetic Field Component ($B_y$)")
     axs[1, 1].set_aspect('equal')
     fig1.tight_layout()
+    plt.savefig('figure/final_fields_grid.png', dpi=150)
     
     fig2, ax2 = plt.subplots(figsize=(8, 7))
-    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
+    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="jet", alpha=0.35)
     fig2.colorbar(contour_b_bg, ax=ax2, label=r"$|B|$ (T)")
     
-    step = 4
-    ax2.quiver(X_grid[::step, ::step], Y_grid[::step, ::step], B_x_grid[::step, ::step], B_y_grid[::step, ::step], color='black', pivot='mid')
+    step = 6
+    B_sub = np.maximum(B_mag_grid[::step, ::step], 1e-12)
+    ax2.quiver(
+        X_grid[::step, ::step], Y_grid[::step, ::step],
+        B_x_grid[::step, ::step] / B_sub, B_y_grid[::step, ::step] / B_sub,
+        scale=35.0, color='black', pivot='mid'
+    )
     ax2.set_title(r"Magnetic Flux Density Vectors ($\mathbf{B}$)")
     ax2.set_aspect('equal')
     fig2.tight_layout()
     
     plt.savefig('figure/final_results.png', dpi=150)
     plt.close('all')
-    print('[*] Đã lưu kết quả mô phỏng vào figure/final_results.png')
+    print('[*] Đã lưu kết quả mô phỏng vào figure/final_results.png và figure/final_fields_grid.png')
 
 
 ========================================
@@ -1609,46 +1826,104 @@ def main():
 import os
 import sys
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-if base_dir not in sys.path:
-    sys.path.append(base_dir)
+current_directory = os.path.dirname(os.path.abspath(__file__))
+parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
+if parent_directory not in sys.path:
+    sys.path.insert(0, parent_directory)
 
-from simulation_domain_engine.simulation_domain import SimulationDomain
+import torch
+from electro_magnetic_pinn import ElectroMagneticPINN
 from simulation_domain_engine.material_domain.material_domain import MaterialDomain
 
-def run_geometry_test():
-    geo = SimulationDomain()
-    
-    air_domain = MaterialDomain(domain_name="air")
-    air_domain.geometry_config.outline = [
-        [-0.05, -0.05],
-        [0.05, -0.05],
-        [0.05, 0.05],
-        [-0.05, 0.05]
+def run_geometry_and_physics_tests():
+    model = ElectroMagneticPINN()
+    sim = model.simulation_domain_engine_instance
+    sim.x_boundaries_tuple = (-0.1, 0.1)
+    sim.y_boundaries_tuple = (-0.1, 0.1)
+    sim.physics_config.scale_L0 = 0.1
+    sim.physics_config.scale_H0 = 800000.0
+
+    mag_left = MaterialDomain(domain_name="magnet_left")
+    mag_left.geometry_config.outline = [
+        [-0.04, -0.04],
+        [-0.02, -0.04],
+        [-0.02, 0.04],
+        [-0.04, 0.04]
     ]
-    air_domain.physics_config.relative_permeability = 1.0
-    air_domain.build_domain()
-    
-    mag_domain = MaterialDomain(domain_name="magnet")
-    mag_domain.geometry_config.outline = [
-        [-0.02, -0.02],
-        [0.02, -0.02],
-        [0.02, 0.02],
-        [-0.02, 0.02]
+    mag_left.physics_config.relative_permeability = 1.05
+    mag_left.physics_config.coercive = [0.0, 800000.0]
+    mag_left.training_config.number_of_interior_points = 400
+    mag_left.training_config.number_of_surface_points = 100
+    mag_left.training_config.sampling_density_multiplier = 1.5
+    mag_left.build_domain()
+
+    mag_right = MaterialDomain(domain_name="magnet_right")
+    mag_right.geometry_config.outline = [
+        [0.02, -0.04],
+        [0.04, -0.04],
+        [0.04, 0.04],
+        [0.02, 0.04]
     ]
-    mag_domain.physics_config.relative_permeability = 1.05
-    mag_domain.physics_config.coercive = [800000.0, 0.0]
-    mag_domain.build_domain()
-    
-    geo.add_material_domain(air_domain)
-    geo.add_material_domain(mag_domain)
-    
-    geo.display(
-        x_boundaries_tuple=(-0.05, 0.05), 
-        y_boundaries_tuple=(-0.05, 0.05), 
-        resolution=150
-    )
-    
+    mag_right.physics_config.relative_permeability = 1.05
+    mag_right.physics_config.coercive = [0.0, -800000.0]
+    mag_right.training_config.number_of_interior_points = 400
+    mag_right.training_config.number_of_surface_points = 100
+    mag_right.training_config.sampling_density_multiplier = 0.5
+    mag_right.build_domain()
+
+    sim.add_material_domain(mag_left)
+    sim.add_material_domain(mag_right)
+    bg = sim.build_background_domain(domain_name="background")
+    bg.training_config.number_of_interior_points = 1000
+    bg.training_config.sampling_density_multiplier = 1.0
+
+    model.update_electromagnetic_pinn()
+
+    surf_sample = model.collocation_sampler_instance.sample_domain_surface_points(mag_left, 200)
+    nx, ny, tx, ty, cw = model.interface_loss_instance._compute_normals_and_tangents_from_outline(mag_left, surf_sample)
+    n_norms = torch.sqrt(nx ** 2 + ny ** 2)
+    t_norms = torch.sqrt(tx ** 2 + ty ** 2)
+    assert torch.allclose(n_norms, torch.ones_like(n_norms), atol=1e-5), "Pháp tuyến giao diện phải có độ dài đơn vị = 1."
+    assert torch.allclose(t_norms, torch.ones_like(t_norms), atol=1e-5), "Tiếp tuyến giao diện phải có độ dài đơn vị = 1."
+    assert torch.all(cw > 0.0), "Trọng số làm mượt góc phải dương tại các điểm lấy mẫu."
+
+    test_pts = torch.tensor([
+        [-0.03, 0.0],
+        [0.03, 0.0],
+        [0.0, 0.0],
+        [-0.1, 0.0],
+        [0.1, 0.05]
+    ], dtype=torch.float32, device=model.computation_device)
+
+    props = sim.evaluate_global_physical_properties(test_pts)
+    mat_ids = props["material_classification"].squeeze().cpu().tolist()
+    assert mat_ids[0] == 1.0, f"Điểm trong nam châm trái phải có ID 1.0, nhận được {mat_ids[0]}"
+    assert mat_ids[1] == 2.0, f"Điểm trong nam châm phải phải có ID 2.0, nhận được {mat_ids[1]}"
+    assert mat_ids[2] == 3.0, f"Điểm giữa khe hở không khí phải có ID 3.0, nhận được {mat_ids[2]}"
+
+    boundary_pts = torch.tensor([
+        [-0.1, 0.0],
+        [0.1, 0.0],
+        [0.0, -0.1],
+        [0.0, 0.1]
+    ], dtype=torch.float32, device=model.computation_device)
+    Az_bound = model.pinn_architecture_instance.forward_network('background', boundary_pts)
+    assert torch.allclose(Az_bound, torch.zeros_like(Az_bound), atol=1e-6), "Az tại biên ngoài Dirichlet phải bằng 0."
+
+    domains_data = model.collocation_sampler_instance.generate_all_domain_points()
+    assert domains_data['domain_1']['interior_points'].shape[0] == 600, "Sai số điểm khi nhân multiplier = 1.5"
+    assert domains_data['domain_1']['surface_points'].shape[0] == 150, "Sai số điểm bề mặt khi nhân multiplier = 1.5"
+    assert domains_data['domain_2']['interior_points'].shape[0] == 200, "Sai số điểm khi nhân multiplier = 0.5"
+    assert domains_data['domain_2']['surface_points'].shape[0] == 50, "Sai số điểm bề mặt khi nhân multiplier = 0.5"
+
+    loss_val = model.training_manager_instance.compute_loss(domains_data)
+    assert torch.isfinite(loss_val) and loss_val.item() > 10.0, "Loss khởi tạo phải hữu hạn và phản ánh nguồn H_c trên giao diện."
+
+    Az_f, Bx_f, By_f = model.evaluate_fields(test_pts)
+    assert torch.all(torch.isfinite(Az_f)) and torch.all(torch.isfinite(Bx_f)) and torch.all(torch.isfinite(By_f)), "Trường dự đoán không hữu hạn."
+
+    print("[*] TẤT CẢ CÁC BÀI KIỂM THỬ HÌNH HỌC, PHÁP TUYẾN GIAO DIỆN, LẤY MẪU VÀ VẬT LÝ ĐỀU ĐẠT (PASSED)!")
+
 
 ========================================
 
@@ -1659,6 +1934,7 @@ def run_geometry_test():
 
 --- FILE: training_engine\training_manager.py ---
 
+import time
 import torch
 import torch.optim as optim
 
@@ -1689,6 +1965,8 @@ class TrainingManager:
             history_size=self.lbfgs_history_size,
             line_search_fn="strong_wolfe"
         )
+        self.last_loss_breakdown = {}
+        self.completed_adam_epochs = 0
 
     @property
     def model(self):
@@ -1715,6 +1993,13 @@ class TrainingManager:
         dummy_param = next(self.model.parameters())
         total_loss = (dummy_param * 0.0).sum()
 
+        raw_pde_sum = 0.0
+        weighted_pde_sum = 0.0
+        az_if_sum = 0.0
+        bn_if_sum = 0.0
+        ht_if_sum = 0.0
+        weighted_if_sum = 0.0
+
         for key, data in domains_data.items():
             domain = data["domain_object"]
             pts = data["interior_points"].to(device)
@@ -1732,22 +2017,52 @@ class TrainingManager:
                 residual_star = self.pde_evaluator.compute_residual(
                     xy=pts, A_z_star=A_z_star, nu=nu, J_z=jz, H_cx=hx, H_cy=hy
                 )
-                weighted_res = residual_star * domain.training_config.pde_weight
-                pde_loss = torch.mean(weighted_res ** 2)
+                fading_w = self.pde_evaluator.compute_fading_weight(domain, pts)
+                raw_pde = torch.mean((residual_star ** 2) * fading_w)
+                pde_loss = float(domain.training_config.pde_weight) * raw_pde
                 total_loss = total_loss + pde_loss
+
+                raw_pde_sum += raw_pde.item()
+                weighted_pde_sum += pde_loss.item()
 
             surf_pts = data["surface_points"].to(device)
             if surf_pts.shape[0] > 0 and key != 'background':
                 if not surf_pts.requires_grad:
                     surf_pts = surf_pts.detach().clone().requires_grad_(True)
                     
-                interface_loss = self.interface_evaluator.compute_loss(
+                w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator.compute_loss_components(
                     network_key=key,
                     domain=domain,
                     surf_pts=surf_pts,
                     background_key='background'
                 )
-                total_loss = total_loss + domain.training_config.interface_weight * interface_loss
+                scaled_if_loss = float(domain.training_config.interface_weight) * w_if_loss
+                total_loss = total_loss + scaled_if_loss
+
+                az_if_sum += val_l.item()
+                bn_if_sum += bn_l.item()
+                ht_if_sum += ht_l.item()
+                weighted_if_sum += scaled_if_loss.item()
+
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        boundary_obj = sim_domain.boundary
+        if getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') == 'soft_loss':
+            b_pts = boundary_obj.sample_boundary_points(device=device)
+            if b_pts.shape[0] > 0:
+                Az_b = self.model.forward_network('background', b_pts)
+                target_b = float(boundary_obj.physics_config.potential_value) / max(sim_domain.A0, 1e-12)
+                b_loss = float(boundary_obj.training_config.boundary_loss_weight) * torch.mean((Az_b - target_b) ** 2)
+                total_loss = total_loss + b_loss
+
+        self.last_loss_breakdown = {
+            "raw_pde": raw_pde_sum,
+            "weighted_pde": weighted_pde_sum,
+            "interface_Az": az_if_sum,
+            "interface_Bn": bn_if_sum,
+            "interface_Ht": ht_if_sum,
+            "weighted_interface": weighted_if_sum,
+            "total": total_loss.item()
+        }
 
         return total_loss
 
@@ -1758,8 +2073,10 @@ class TrainingManager:
             param_group['initial_lr'] = self.base_learning_rate_adam
             param_group['lr'] = self.base_learning_rate_adam
             
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
+        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=1e-6)
         stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
+        non_finite_streak = 0
+        self.completed_adam_epochs = 0
         
         for epoch in range(epochs):
             if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
@@ -1768,15 +2085,21 @@ class TrainingManager:
             self.optimizer_adam.zero_grad(set_to_none=True)
             loss = self.compute_loss(domains_data)
             
-            if torch.isnan(loss):
-                print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss bị NaN. Bỏ qua step này.")
+            if not torch.isfinite(loss):
+                non_finite_streak += 1
+                print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss không hữu hạn ({loss.item()}). Chuỗi lỗi: {non_finite_streak}")
+                if non_finite_streak >= 5:
+                    stop_reason = "Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp 5 lần."
+                    break
                 continue
+            non_finite_streak = 0
                 
-            loss.backward(retain_graph=True)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
             scheduler_adam.step()
             
+            self.completed_adam_epochs = epoch + 1
             current_loss_value = loss.item()
             
             if self.target_loss > 0 and current_loss_value <= self.target_loss:
@@ -1784,1431 +2107,75 @@ class TrainingManager:
                 print(f"Adam Epoch {epoch + 1}: {stop_reason} KẾT THÚC ADAM SỚM!")
                 break
             
-            if (epoch + 1) % 100 == 0:
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {self.optimizer_adam.param_groups[0]['lr']:.3e}")
+            if (epoch + 1) == 1 or (epoch + 1) % 100 == 0:
+                bd = self.last_loss_breakdown
+                print(
+                    f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
+                    f"PDE(raw/w) = {bd.get('raw_pde', 0.0):.3e}/{bd.get('weighted_pde', 0.0):.3e} | "
+                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e} | "
+                    f"LR = {self.optimizer_adam.param_groups[0]['lr']:.2e}"
+                )
                 
             if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
                 self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
                 
         print(f"[*] KẾT THÚC HUẤN LUYỆN ADAM. Lý do: {stop_reason}")
+        return domains_data
 
-    def train_lbfgs(self, epochs, domains_data):
+    def train_lbfgs(self, max_iterations, domains_data):
+        if max_iterations <= 0:
+            return domains_data
+
         self.model.train()
+        self.optimizer_lbfgs = optim.LBFGS(
+            self.model.parameters(),
+            lr=self.lbfgs_learning_rate,
+            max_iter=max_iterations,
+            max_eval=int(max_iterations * 1.25),
+            tolerance_grad=self.lbfgs_tolerance_gradient,
+            tolerance_change=self.lbfgs_tolerance_change,
+            history_size=self.lbfgs_history_size,
+            line_search_fn="strong_wolfe"
+        )
+
         lbfgs_counter = [0]
-        early_stop_triggered = False 
+        last_loss = [0.0]
+        start_time = time.time()
+        base_step = self.completed_adam_epochs
+        stop_reason = f"Hoàn thành tối ưu hóa L-BFGS (tối đa {max_iterations} iterations)."
         
         def closure():
-            nonlocal early_stop_triggered
             self.optimizer_lbfgs.zero_grad(set_to_none=True)
             loss = self.compute_loss(domains_data)
-            loss.backward(retain_graph=True)
+            if not torch.isfinite(loss):
+                return loss
+            loss.backward()
             
             lbfgs_counter[0] += 1
-            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
-                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
+            last_loss[0] = loss.item()
+            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 25 == 0:
+                bd = self.last_loss_breakdown
+                elapsed = time.time() - start_time
+                print(
+                    f"L-BFGS Closure {lbfgs_counter[0]:05d} ({elapsed:.1f}s) | Total = {loss.item():.4e} | "
+                    f"PDE(w) = {bd.get('weighted_pde', 0.0):.3e} | IF(w) = {bd.get('weighted_interface', 0.0):.3e}"
+                )
                 
             if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(50000 + lbfgs_counter[0], loss.item(), domains_data)
+                self.visualizer.save_frame(base_step + lbfgs_counter[0], loss.item(), domains_data)
                 
-            if self.target_loss > 0 and loss.item() <= self.target_loss:
-                early_stop_triggered = True
             return loss
             
-        for epoch in range(epochs):
-            if early_stop_triggered:
-                print(f"L-BFGS Epoch {epoch + 1}: Đạt ngưỡng target_loss. KẾT THÚC L-BFGS SỚM!")
-                break
-            self.optimizer_lbfgs.step(closure)
+        self.optimizer_lbfgs.step(closure)
+        if self.visualizer and lbfgs_counter[0] > 0 and lbfgs_counter[0] % self.visualizer_update_interval != 0:
+            self.visualizer.save_frame(base_step + lbfgs_counter[0], last_loss[0], domains_data)
+        total_elapsed = time.time() - start_time
+        print(f"[*] KẾT THÚC L-BFGS: {lbfgs_counter[0]} closure calls trong {total_elapsed:.2f}s. {stop_reason}")
+        return domains_data
 
 ========================================
 
 --- FILE: utils\modify_project.py ---
-
-import os
-
-def update_entire_project():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_root = os.path.abspath(os.path.join(base_dir, '..'))
-
-    phys_eq_dir = os.path.join(model_root, 'physics_domain', 'physical_equations')
-    os.makedirs(phys_eq_dir, exist_ok=True)
-
-    compute_bf_file = os.path.join(model_root, 'simulation_domain_engine', 'boundary', 'compute_boundary_factor.py')
-    boundary_file = os.path.join(model_root, 'simulation_domain_engine', 'boundary', 'boundary.py')
-    material_domain_file = os.path.join(model_root, 'simulation_domain_engine', 'material_domain', 'material_domain.py')
-    sim_domain_file = os.path.join(model_root, 'simulation_domain_engine', 'simulation_domain.py')
-
-    arch_bf_file = os.path.join(model_root, 'architectures', 'boundary_factor.py')
-    forward_net_file = os.path.join(model_root, 'architectures', 'forward_network.py')
-    xpinn_arch_file = os.path.join(model_root, 'architectures', 'xpinn_architecture.py')
-
-    sampler_file = os.path.join(model_root, 'physics_domain', 'collocation_sampler.py')
-    maxwell_loss_file = os.path.join(phys_eq_dir, 'maxwell_pde_loss.py')
-    interface_loss_file = os.path.join(phys_eq_dir, 'interface_loss.py')
-
-    training_mgr_file = os.path.join(model_root, 'training_engine', 'training_manager.py')
-    visualizer_file = os.path.join(model_root, 'utils', 'training_visualizer.py')
-    electro_pinn_file = os.path.join(model_root, 'electro_magnetic_pinn.py')
-    test_sim_file = os.path.join(model_root, 'tests', 'test_simulation.py')
-
-    compute_bf_content = r'''def compute_boundary_factor(self, points_tensor, domain_scale=None):
-    x_min, x_max = self.geometry_config.x_boundaries_tuple
-    y_min, y_max = self.geometry_config.y_boundaries_tuple
-    x = points_tensor[:, 0:1]
-    y = points_tensor[:, 1:2]
-    x_norm = 2.0 * (x - x_min) / (x_max - x_min) - 1.0
-    y_norm = 2.0 * (y - y_min) / (y_max - y_min) - 1.0
-    x_factor = 1.0 - x_norm ** 2
-    y_factor = 1.0 - y_norm ** 2
-    return x_factor * y_factor
-'''
-    with open(compute_bf_file, 'w', encoding='utf-8') as f:
-        f.write(compute_bf_content)
-
-    boundary_content = r'''from types import SimpleNamespace
-from simulation_domain_engine.boundary.build_boundary import build_boundary
-from simulation_domain_engine.boundary.compute_boundary_factor import compute_boundary_factor
-
-class Boundary:
-    build_boundary = build_boundary
-    compute_boundary_factor = compute_boundary_factor
-
-    def __init__(self, simulation_domain=None, boundary_name="outer_boundary", boundary_type="dirichlet"):
-        self.simulation_domain = simulation_domain
-        self.boundary_name = boundary_name
-        self.boundary_type = boundary_type
-
-        self.geometry_config = SimpleNamespace(
-            x_boundaries_tuple=(-0.05, 0.05),
-            y_boundaries_tuple=(-0.05, 0.05),
-            shape="box"
-        )
-
-        self.physics_config = SimpleNamespace(
-            potential_value=0.0,
-            enforce_method="hard_factor"
-        )
-
-        self.training_config = SimpleNamespace(
-            boundary_loss_weight=100.0,
-            number_of_boundary_points=1000
-        )
-
-        self.bounding_box = None
-        self.outline_tensor = None
-'''
-    with open(boundary_file, 'w', encoding='utf-8') as f:
-        f.write(boundary_content)
-
-    material_domain_content = r'''import torch
-import torch.nn as nn
-from types import SimpleNamespace
-from simulation_domain_engine.material_domain.polygon_signed_distance_field import compute_polygon_signed_distance_field
-from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
-
-class MaterialDomain:
-    def __init__(self, domain_name="air_domain", simulation_domain=None):
-        self.simulation_domain = simulation_domain
-        self.domain_id = None
-        self.domain_name = domain_name
-        
-        self.geometry_config = SimpleNamespace(
-            outline=None
-        )
-        
-        self.physics_config = SimpleNamespace(
-            relative_permeability=1.0,
-            coercive=[0.0, 0.0],
-            current=0.0,
-            bh_curve_data=None
-        )
-        
-        self.training_config = SimpleNamespace(
-            pde_weight=1.0,
-            interface_weight=10.0,
-            sampling_density_multiplier=1.0,
-            number_of_interior_points=2000,
-            number_of_surface_points=500
-        )
-        
-        self.network_config = SimpleNamespace(
-            hidden_layers=4,
-            hidden_neurons=32,
-            activation_function=nn.SiLU(),
-            fourier_features=False,
-            fourier_sigma=1.0,
-            fourier_mapping_size=256
-        )
-        
-        self.outline_tensor = None
-        self.section_area = 0.0
-        self.current_density = 0.0
-
-    def build_domain(self):
-        if self.geometry_config.outline is not None:
-            self.outline_tensor = torch.tensor(self.geometry_config.outline, dtype=torch.float32)
-            self._compute_section_area()
-            self._compute_current_density()
-        else:
-            raise ValueError(f"Lỗi: Domain '{self.domain_name}' chưa được cấp outline trong geometry_config.")
-            
-        if self.physics_config.bh_curve_data is None:
-            self._compute_constant_bh_curve()
-            
-        return self
-
-    def _compute_constant_bh_curve(self):
-        nu0 = self.simulation_domain.nu0 if self.simulation_domain is not None else VACUUM_RELUCTIVITY
-        constant_reluctivity = nu0 / self.physics_config.relative_permeability
-        self.physics_config.bh_curve_data = lambda points_tensor: torch.full((points_tensor.shape[0], 1), constant_reluctivity, dtype=torch.float32, device=points_tensor.device)
-        return self.physics_config.bh_curve_data
-
-    def _compute_section_area(self):
-        if self.geometry_config.outline is None or len(self.geometry_config.outline) < 3:
-            self.section_area = 0.0
-            return self.section_area
-        x = [p[0] for p in self.geometry_config.outline]
-        y = [p[1] for p in self.geometry_config.outline]
-        self.section_area = 0.5 * abs(sum(x[i] * y[i+1] - x[i+1] * y[i] for i in range(-1, len(x)-1)))
-        return self.section_area
-
-    def _compute_current_density(self):
-        area = self.section_area 
-        if area > 0.0:
-            self.current_density = self.physics_config.current / area
-        else:
-            self.current_density = 0.0
-        return self.current_density
-
-    def compute_signed_distance_field(self, points_tensor):
-        if self.outline_tensor is None:
-            raise RuntimeError(f"Domain '{self.domain_name}' chưa được gọi hàm build_domain().")
-        return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
-
-    def evaluate_reluctivity(self, points_tensor):
-        return self.physics_config.bh_curve_data(points_tensor)
-
-    def evaluate_magnetization_vector(self, points_tensor):
-        hx_tensor = torch.full((points_tensor.shape[0], 1), self.physics_config.coercive[0], dtype=torch.float32, device=points_tensor.device)
-        hy_tensor = torch.full((points_tensor.shape[0], 1), self.physics_config.coercive[1], dtype=torch.float32, device=points_tensor.device)
-        return hx_tensor, hy_tensor
-
-    def evaluate_current_density(self, points_tensor):
-        return torch.full((points_tensor.shape[0], 1), self.current_density, dtype=torch.float32, device=points_tensor.device)
-'''
-    with open(material_domain_file, 'w', encoding='utf-8') as f:
-        f.write(material_domain_content)
-
-    sim_domain_content = r'''import torch
-from types import SimpleNamespace
-from simulation_domain_engine.boundary.boundary import Boundary
-from simulation_domain_engine.material_domain.material_domain import MaterialDomain
-from simulation_domain_engine.global_signed_distance_field import compute_global_signed_distance_field
-from simulation_domain_engine.global_physical_properties_evaluation import evaluate_global_physical_properties, VACUUM_RELUCTIVITY
-from simulation_domain_engine.domain_visualizer import display_simulation_domain
-
-class SimulationDomain:
-    def __init__(self, electro_magnetic_pinn=None, x_boundaries_tuple=(-0.05, 0.05), y_boundaries_tuple=(-0.05, 0.05)):
-        self.electro_magnetic_pinn = electro_magnetic_pinn
-        
-        self.physics_config = SimpleNamespace(
-            scale_L0=0.05,
-            scale_H0=1200000.0,
-            scale_nu0=VACUUM_RELUCTIVITY
-        )
-
-        self.boundary = Boundary(simulation_domain=self)
-        self.boundary.geometry_config.x_boundaries_tuple = x_boundaries_tuple
-        self.boundary.geometry_config.y_boundaries_tuple = y_boundaries_tuple
-        self.boundary.build_boundary()
-
-        self.domains_list = []
-        self.background_domain = None
-
-    @property
-    def L0(self):
-        return self.physics_config.scale_L0
-
-    @property
-    def H0(self):
-        return self.physics_config.scale_H0
-
-    @property
-    def nu0(self):
-        return self.physics_config.scale_nu0
-
-    @property
-    def A0(self):
-        return (self.H0 * self.L0) / self.nu0
-
-    @property
-    def x_boundaries_tuple(self):
-        return self.boundary.geometry_config.x_boundaries_tuple
-
-    @x_boundaries_tuple.setter
-    def x_boundaries_tuple(self, bounds):
-        self.boundary.geometry_config.x_boundaries_tuple = bounds
-        self.boundary.build_boundary()
-
-    @property
-    def y_boundaries_tuple(self):
-        return self.boundary.geometry_config.y_boundaries_tuple
-
-    @y_boundaries_tuple.setter
-    def y_boundaries_tuple(self, bounds):
-        self.boundary.geometry_config.y_boundaries_tuple = bounds
-        self.boundary.build_boundary()
-
-    def set_boundary(self, boundary_object):
-        boundary_object.simulation_domain = self
-        self.boundary = boundary_object
-        return self
-
-    def add_material_domain(self, domain_object):
-        domain_object.simulation_domain = self
-        if self.background_domain in self.domains_list:
-            insert_idx = len(self.domains_list) - 1
-            self.domains_list.insert(insert_idx, domain_object)
-        else:
-            self.domains_list.append(domain_object)
-            
-        for idx, dom in enumerate(self.domains_list):
-            dom.domain_id = idx + 1
-        return self
-
-    def build_background_domain(self, domain_name="background", training_config=None, network_config=None):
-        if self.background_domain in self.domains_list:
-            self.domains_list.remove(self.background_domain)
-
-        x_min, x_max = self.boundary.geometry_config.x_boundaries_tuple
-        y_min, y_max = self.boundary.geometry_config.y_boundaries_tuple
-        
-        box_outline = [
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, y_max],
-            [x_min, y_max]
-        ]
-
-        bg_domain = MaterialDomain(domain_name=domain_name, simulation_domain=self)
-        bg_domain.geometry_config.outline = box_outline
-        bg_domain.physics_config.relative_permeability = 1.0
-        bg_domain.physics_config.coercive = [0.0, 0.0]
-        bg_domain.physics_config.current = 0.0
-
-        if training_config is not None:
-            for key, value in vars(training_config).items():
-                setattr(bg_domain.training_config, key, value)
-
-        if network_config is not None:
-            for key, value in vars(network_config).items():
-                setattr(bg_domain.network_config, key, value)
-
-        bg_domain.build_domain()
-
-        total_box_area = (x_max - x_min) * (y_max - y_min)
-        total_sub_material_area = sum(d.section_area for d in self.domains_list)
-        bg_domain.section_area = max(0.0, total_box_area - total_sub_material_area)
-
-        self.background_domain = bg_domain
-        self.domains_list.append(self.background_domain)
-
-        for idx, dom in enumerate(self.domains_list):
-            dom.domain_id = idx + 1
-
-        return self.background_domain
-
-    def get_domain_count(self):
-        return len(self.domains_list)
-
-    def compute_global_signed_distance_field(self, points_tensor):
-        return compute_global_signed_distance_field(self.domains_list, points_tensor)
-
-    def evaluate_global_physical_properties(self, points_tensor):
-        return evaluate_global_physical_properties(self.domains_list, points_tensor)
-
-    def plot_problem_definition(self, resolution=100):
-        display_simulation_domain(self, self.x_boundaries_tuple, self.y_boundaries_tuple, resolution)
-
-    def display(self, x_boundaries_tuple=None, y_boundaries_tuple=None, resolution=150):
-        xb = x_boundaries_tuple if x_boundaries_tuple is not None else self.x_boundaries_tuple
-        yb = y_boundaries_tuple if y_boundaries_tuple is not None else self.y_boundaries_tuple
-        display_simulation_domain(self, xb, yb, resolution)
-'''
-    with open(sim_domain_file, 'w', encoding='utf-8') as f:
-        f.write(sim_domain_content)
-
-    arch_bf_content = r'''def boundary_factor(self, xy):
-    sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-    return sim_domain.boundary.compute_boundary_factor(xy, sim_domain.L0)
-'''
-    with open(arch_bf_file, 'w', encoding='utf-8') as f:
-        f.write(arch_bf_content)
-
-    forward_net_content = r'''import torch
-import numpy as np
-
-def forward_network(self, network_key, xy):
-    if network_key not in self.networks:
-        raise ValueError(f"Lỗi: Không tìm thấy mạng con '{network_key}' trong XPINNArchitecture.")
-        
-    sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-    xy_normalized = xy / sim_domain.L0
-    
-    target_domain = None
-    for domain in sim_domain.domains_list:
-        if getattr(domain, 'domain_name', '') == network_key:
-            target_domain = domain
-            break
-        if f"domain_{domain.domain_id}" == network_key:
-            target_domain = domain
-            break
-            
-    if target_domain is None:
-        raise ValueError(f"Lỗi: Không tìm thấy domain tương ứng với network_key '{network_key}' trong domains_list.")
-
-    config = target_domain.network_config
-    
-    if config.fourier_features:
-        B_matrix = getattr(self, f'B_matrix_{network_key}')
-        if B_matrix.device != xy.device:
-            B_matrix = B_matrix.to(xy.device)
-        projected = (2.0 * np.pi * xy_normalized) @ B_matrix.T
-        x_input = torch.cat([torch.cos(projected), torch.sin(projected)], dim=-1)
-    else:
-        x_input = xy_normalized
-        
-    raw_output = self.networks[network_key](x_input)
-    
-    if network_key == 'background':
-        A_z_star = raw_output * self.boundary_factor(xy)
-    else:
-        A_z_star = raw_output
-        
-    return A_z_star
-'''
-    with open(forward_net_file, 'w', encoding='utf-8') as f:
-        f.write(forward_net_content)
-
-    xpinn_arch_content = r'''import torch
-import torch.nn as nn
-import numpy as np
-
-from .build_single_network import _build_single_network
-from .initialize_weights import _initialize_weights
-from .boundary_factor import boundary_factor
-from .forward_network import forward_network
-from .forward import forward
-
-class XPINNArchitecture(nn.Module):
-    _build_single_network = _build_single_network
-    _initialize_weights = _initialize_weights
-    boundary_factor = boundary_factor
-    forward_network = forward_network
-    forward = forward
-
-    def __init__(self, electro_magnetic_pinn, input_dim=2, output_dim=1, domain_scale=None):
-        super().__init__()
-        
-        self.electro_magnetic_pinn = electro_magnetic_pinn
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        self.domain_scale = domain_scale if domain_scale is not None else sim_domain.L0
-        
-        self.networks = nn.ModuleDict()
-        self.domain_count = sim_domain.get_domain_count()
-        domains_list = sim_domain.domains_list
-        
-        for domain in domains_list:
-            if getattr(domain, 'domain_name', '') == 'background':
-                net_key = 'background'
-            else:
-                net_key = f'domain_{domain.domain_id}'
-                
-            config = domain.network_config
-            if config.fourier_features:
-                actual_input_dim = config.fourier_mapping_size * 2
-                B_mat = torch.randn((config.fourier_mapping_size, self.input_dim)) * config.fourier_sigma
-                self.register_buffer(f'B_matrix_{net_key}', B_mat)
-            else:
-                actual_input_dim = self.input_dim
-                
-            sub_net = self._build_single_network(actual_input_dim, config)
-            self.networks[net_key] = sub_net
-            
-        self._initialize_weights()
-'''
-    with open(xpinn_arch_file, 'w', encoding='utf-8') as f:
-        f.write(xpinn_arch_content)
-
-    sampler_content = r'''import torch
-import numpy as np
-
-class CollocationSampler:
-    def __init__(self, electro_magnetic_pinn=None, device=None):
-        self.electro_magnetic_pinn = electro_magnetic_pinn
-        if device is not None:
-            self.device = device
-        elif electro_magnetic_pinn is not None and hasattr(electro_magnetic_pinn, 'computation_device'):
-            self.device = electro_magnetic_pinn.computation_device
-        else:
-            self.device = torch.device('cpu')
-
-    def sample_domain_interior_points(self, domain_object, bounding_box, number_of_points):
-        if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
-            
-        outline = np.array(domain_object.geometry_config.outline)
-        x_min, x_max = np.min(outline[:, 0]), np.max(outline[:, 0])
-        y_min, y_max = np.min(outline[:, 1]), np.max(outline[:, 1])
-
-        collected_points = []
-        collected_count = 0
-        pool_size = max(number_of_points * 4, 500)
-
-        while collected_count < number_of_points:
-            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
-            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
-            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
-            
-            sdf = domain_object.compute_signed_distance_field(points_pool)
-            inside_mask = sdf <= 0.0
-            
-            if inside_mask.any():
-                valid = points_pool[inside_mask]
-                collected_points.append(valid)
-                collected_count += valid.shape[0]
-
-        pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        return pts
-
-    def sample_domain_surface_points(self, domain_object, number_of_points):
-        if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
-
-        outline = domain_object.geometry_config.outline
-        num_vertices = len(outline)
-        
-        edge_starts = np.array(outline)
-        edge_ends = np.roll(edge_starts, shift=-1, axis=0)
-        
-        edge_vectors = edge_ends - edge_starts
-        edge_lengths = np.sqrt(np.sum(edge_vectors**2, axis=1))
-        total_perimeter = np.sum(edge_lengths)
-        
-        edge_probs = edge_lengths / total_perimeter
-        
-        sampled_edges = np.random.choice(num_vertices, size=number_of_points, p=edge_probs)
-        t_params = np.random.rand(number_of_points, 1)
-        
-        pts_sampled = edge_starts[sampled_edges] + t_params * edge_vectors[sampled_edges]
-        return torch.tensor(pts_sampled, dtype=torch.float32, device=self.device)
-
-    def sample_background_interior_points(self, simulation_domain_object, number_of_points):
-        if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
-
-        x_min, x_max = simulation_domain_object.x_boundaries_tuple
-        y_min, y_max = simulation_domain_object.y_boundaries_tuple
-
-        collected_points = []
-        collected_count = 0
-        pool_size = max(number_of_points * 2, 1000)
-
-        while collected_count < number_of_points:
-            points_pool = torch.rand((pool_size, 2), dtype=torch.float32, device=self.device)
-            points_pool[:, 0] = points_pool[:, 0] * (x_max - x_min) + x_min
-            points_pool[:, 1] = points_pool[:, 1] * (y_max - y_min) + y_min
-
-            global_sdf = simulation_domain_object.compute_global_signed_distance_field(points_pool)
-            air_mask = global_sdf > 0.0
-
-            if air_mask.any():
-                valid = points_pool[air_mask]
-                collected_points.append(valid)
-                collected_count += valid.shape[0]
-
-        pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
-        return pts
-
-    def generate_all_domain_points(self, simulation_domain_object=None):
-        if simulation_domain_object is None:
-            simulation_domain_object = self.electro_magnetic_pinn.simulation_domain_engine_instance
-
-        domains_data = {}
-        bb = (simulation_domain_object.x_boundaries_tuple, simulation_domain_object.y_boundaries_tuple)
-
-        for domain in simulation_domain_object.domains_list:
-            if getattr(domain, 'domain_name', '') == 'background':
-                n_interior = domain.training_config.number_of_interior_points
-                interior_pts = self.sample_background_interior_points(simulation_domain_object, n_interior)
-                surface_pts = torch.empty((0, 2), dtype=torch.float32, device=self.device)
-            else:
-                n_interior = domain.training_config.number_of_interior_points
-                n_surface = domain.training_config.number_of_surface_points
-                interior_pts = self.sample_domain_interior_points(domain, bb, n_interior)
-                surface_pts = self.sample_domain_surface_points(domain, n_surface)
-
-            interior_pts = interior_pts.detach().clone().requires_grad_(True)
-            surface_pts = surface_pts.detach().clone().requires_grad_(True)
-
-            key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{domain.domain_id}'
-            domains_data[key] = {
-                "domain_object": domain,
-                "interior_points": interior_pts,
-                "surface_points": surface_pts
-            }
-
-        return domains_data
-'''
-    with open(sampler_file, 'w', encoding='utf-8') as f:
-        f.write(sampler_content)
-
-    maxwell_loss_content = r'''import torch
-
-class MaxwellPDELoss:
-    def __init__(self, electro_magnetic_pinn=None, L0=0.05, H0=1200000.0, nu0=795774.715459):
-        self.electro_magnetic_pinn = electro_magnetic_pinn
-        self._L0 = L0
-        self._H0 = H0
-        self._nu0 = nu0
-
-    @property
-    def L0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.L0
-        return self._L0
-
-    @property
-    def H0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.H0
-        return self._H0
-
-    @property
-    def nu0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
-        return self._nu0
-
-    def compute_residual(self, xy, A_z_star, nu, J_z, H_cx, H_cy):
-        nu_star = nu / self.nu0
-        H_cx_star = H_cx / self.H0
-        H_cy_star = H_cy / self.H0
-        J_z_star = J_z / (self.H0 / self.L0)
-        
-        grad_A_star = torch.autograd.grad(
-            outputs=A_z_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(A_z_star),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        
-        dAz_star_dx_star = grad_A_star[:, 0:1] * self.L0
-        dAz_star_dy_star = grad_A_star[:, 1:2] * self.L0
-        
-        H_x_star = nu_star * dAz_star_dy_star - H_cx_star
-        H_y_star = -nu_star * dAz_star_dx_star - H_cy_star
-        
-        grad_Hx_star = torch.autograd.grad(
-            outputs=H_x_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_x_star),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
-        
-        grad_Hy_star = torch.autograd.grad(
-            outputs=H_y_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_y_star),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
-        
-        residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
-        return residual_star
-'''
-    with open(maxwell_loss_file, 'w', encoding='utf-8') as f:
-        f.write(maxwell_loss_content)
-
-    interface_loss_content = r'''import torch
-
-class InterfaceLoss:
-    def __init__(self, electro_magnetic_pinn=None, L0=0.05, H0=1200000.0, nu0=795774.715459):
-        self.electro_magnetic_pinn = electro_magnetic_pinn
-        self._L0 = L0
-        self._H0 = H0
-        self._nu0 = nu0
-
-    @property
-    def L0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.L0
-        return self._L0
-
-    @property
-    def H0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.H0
-        return self._H0
-
-    @property
-    def nu0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
-        return self._nu0
-
-    def _compute_edge_unit_tangents(self, domain, surf_pts):
-        vertices = domain.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        start_pts = vertices
-        end_pts = torch.roll(vertices, shifts=-1, dims=0)
-        edge_vecs = end_pts - start_pts
-        edge_lens = torch.sqrt(torch.sum(edge_vecs ** 2, dim=1, keepdim=True) + 1e-12)
-        unit_tangents = edge_vecs / edge_lens
-
-        pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
-        denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
-        proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
-        closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
-        dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
-        edge_idx = torch.argmin(dist_sq, dim=1)
-
-        tx = unit_tangents[edge_idx, 0:1].detach()
-        ty = unit_tangents[edge_idx, 1:2].detach()
-        return tx, ty
-
-    def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
-        model = self.electro_magnetic_pinn.pinn_architecture_instance
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        bg_domain = sim_domain.background_domain
-
-        Az_mat = model.forward_network(network_key, surf_pts)
-        Az_bg = model.forward_network(background_key, surf_pts)
-
-        potential_continuity_loss = torch.mean((Az_mat - Az_bg) ** 2)
-
-        grad_Az_mat = torch.autograd.grad(
-            outputs=Az_mat,
-            inputs=surf_pts,
-            grad_outputs=torch.ones_like(Az_mat),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-
-        grad_Az_bg = torch.autograd.grad(
-            outputs=Az_bg,
-            inputs=surf_pts,
-            grad_outputs=torch.ones_like(Az_bg),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-
-        dAz_mat_dx_star = grad_Az_mat[:, 0:1] * self.L0
-        dAz_mat_dy_star = grad_Az_mat[:, 1:2] * self.L0
-        dAz_bg_dx_star = grad_Az_bg[:, 0:1] * self.L0
-        dAz_bg_dy_star = grad_Az_bg[:, 1:2] * self.L0
-
-        tx, ty = self._compute_edge_unit_tangents(domain, surf_pts)
-
-        bn_continuity_loss = torch.mean(((dAz_mat_dx_star - dAz_bg_dx_star) * tx + (dAz_mat_dy_star - dAz_bg_dy_star) * ty) ** 2)
-
-        nu_mat_star = domain.evaluate_reluctivity(surf_pts) / self.nu0
-        hx_mat, hy_mat = domain.evaluate_magnetization_vector(surf_pts)
-        hx_mat_star = hx_mat / self.H0
-        hy_mat_star = hy_mat / self.H0
-
-        if bg_domain is not None:
-            nu_bg_star = bg_domain.evaluate_reluctivity(surf_pts) / self.nu0
-            hx_bg, hy_bg = bg_domain.evaluate_magnetization_vector(surf_pts)
-            hx_bg_star = hx_bg / self.H0
-            hy_bg_star = hy_bg / self.H0
-        else:
-            nu_bg_star = 1.0
-            hx_bg_star = 0.0
-            hy_bg_star = 0.0
-
-        Hx_mat_star = nu_mat_star * dAz_mat_dy_star - hx_mat_star
-        Hy_mat_star = -nu_mat_star * dAz_mat_dx_star - hy_mat_star
-
-        Hx_bg_star = nu_bg_star * dAz_bg_dy_star - hx_bg_star
-        Hy_bg_star = -nu_bg_star * dAz_bg_dx_star - hy_bg_star
-
-        Ht_mat_star = Hx_mat_star * tx + Hy_mat_star * ty
-        Ht_bg_star = Hx_bg_star * tx + Hy_bg_star * ty
-
-        ht_continuity_loss = torch.mean((Ht_mat_star - Ht_bg_star) ** 2)
-
-        return potential_continuity_loss + bn_continuity_loss + ht_continuity_loss
-'''
-    with open(interface_loss_file, 'w', encoding='utf-8') as f:
-        f.write(interface_loss_content)
-
-    training_mgr_content = r'''import torch
-import torch.optim as optim
-
-class TrainingManager:
-    def __init__(self, electro_magnetic_pinn):
-        self.electro_magnetic_pinn = electro_magnetic_pinn
-        
-        t_cfg = self.electro_magnetic_pinn.training_config
-        self.base_learning_rate_adam = t_cfg.learning_rate_adam
-        self.target_loss = t_cfg.target_loss
-        self.lbfgs_learning_rate = t_cfg.lbfgs_learning_rate
-        self.lbfgs_maximum_iterations = t_cfg.lbfgs_maximum_iterations
-        self.lbfgs_maximum_evaluations = t_cfg.lbfgs_maximum_evaluations
-        self.lbfgs_tolerance_gradient = t_cfg.lbfgs_tolerance_gradient
-        self.lbfgs_tolerance_change = t_cfg.lbfgs_tolerance_change
-        self.lbfgs_history_size = t_cfg.lbfgs_history_size
-        
-        model = self.electro_magnetic_pinn.pinn_architecture_instance
-        self.optimizer_adam = optim.Adam(model.parameters(), lr=self.base_learning_rate_adam)
-        
-        self.optimizer_lbfgs = optim.LBFGS(
-            model.parameters(),
-            lr=self.lbfgs_learning_rate,
-            max_iter=self.lbfgs_maximum_iterations,
-            max_eval=self.lbfgs_maximum_evaluations,
-            tolerance_grad=self.lbfgs_tolerance_gradient,
-            tolerance_change=self.lbfgs_tolerance_change,
-            history_size=self.lbfgs_history_size,
-            line_search_fn="strong_wolfe"
-        )
-
-    @property
-    def model(self):
-        return self.electro_magnetic_pinn.pinn_architecture_instance
-
-    @property
-    def pde_evaluator(self):
-        return self.electro_magnetic_pinn.maxwell_pde_loss_instance
-
-    @property
-    def interface_evaluator(self):
-        return self.electro_magnetic_pinn.interface_loss_instance
-
-    @property
-    def visualizer(self):
-        return self.electro_magnetic_pinn.visualizer_instance
-
-    @property
-    def visualizer_update_interval(self):
-        return self.electro_magnetic_pinn.visualization_config.update_interval
-
-    def compute_loss(self, domains_data):
-        device = next(self.model.parameters()).device
-        dummy_param = next(self.model.parameters())
-        total_loss = (dummy_param * 0.0).sum()
-
-        for key, data in domains_data.items():
-            domain = data["domain_object"]
-            pts = data["interior_points"].to(device)
-            
-            if pts.shape[0] > 0:
-                if not pts.requires_grad:
-                    pts = pts.detach().clone().requires_grad_(True)
-                    
-                A_z_star = self.model.forward_network(key, pts)
-                nu = domain.evaluate_reluctivity(pts).to(device)
-                hx, hy = domain.evaluate_magnetization_vector(pts)
-                hx, hy = hx.to(device), hy.to(device)
-                jz = domain.evaluate_current_density(pts).to(device)
-                
-                residual_star = self.pde_evaluator.compute_residual(
-                    xy=pts, A_z_star=A_z_star, nu=nu, J_z=jz, H_cx=hx, H_cy=hy
-                )
-                weighted_res = residual_star * domain.training_config.pde_weight
-                pde_loss = torch.mean(weighted_res ** 2)
-                total_loss = total_loss + pde_loss
-
-            surf_pts = data["surface_points"].to(device)
-            if surf_pts.shape[0] > 0 and key != 'background':
-                if not surf_pts.requires_grad:
-                    surf_pts = surf_pts.detach().clone().requires_grad_(True)
-                    
-                interface_loss = self.interface_evaluator.compute_loss(
-                    network_key=key,
-                    domain=domain,
-                    surf_pts=surf_pts,
-                    background_key='background'
-                )
-                total_loss = total_loss + domain.training_config.interface_weight * interface_loss
-
-        return total_loss
-
-    def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
-        self.model.train()
-        
-        for param_group in self.optimizer_adam.param_groups:
-            param_group['initial_lr'] = self.base_learning_rate_adam
-            param_group['lr'] = self.base_learning_rate_adam
-            
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=epochs, eta_min=1e-6)
-        stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
-        
-        for epoch in range(epochs):
-            if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
-                domains_data = resample_fn()
-
-            self.optimizer_adam.zero_grad(set_to_none=True)
-            loss = self.compute_loss(domains_data)
-            
-            if torch.isnan(loss):
-                print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss bị NaN. Bỏ qua step này.")
-                continue
-                
-            loss.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer_adam.step()
-            scheduler_adam.step()
-            
-            current_loss_value = loss.item()
-            
-            if self.target_loss > 0 and current_loss_value <= self.target_loss:
-                stop_reason = f"Đạt ngưỡng target_loss ({self.target_loss}) tại epoch {epoch + 1}."
-                print(f"Adam Epoch {epoch + 1}: {stop_reason} KẾT THÚC ADAM SỚM!")
-                break
-            
-            if (epoch + 1) % 100 == 0:
-                print(f"Adam Epoch {epoch + 1}: Loss = {current_loss_value:.6e} | LR = {self.optimizer_adam.param_groups[0]['lr']:.3e}")
-                
-            if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
-                
-        print(f"[*] KẾT THÚC HUẤN LUYỆN ADAM. Lý do: {stop_reason}")
-
-    def train_lbfgs(self, epochs, domains_data):
-        self.model.train()
-        lbfgs_counter = [0]
-        early_stop_triggered = False 
-        
-        def closure():
-            nonlocal early_stop_triggered
-            self.optimizer_lbfgs.zero_grad(set_to_none=True)
-            loss = self.compute_loss(domains_data)
-            loss.backward(retain_graph=True)
-            
-            lbfgs_counter[0] += 1
-            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 20 == 0:
-                print(f"L-BFGS Step {lbfgs_counter[0]}: Loss = {loss.item():.6e}")
-                
-            if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(50000 + lbfgs_counter[0], loss.item(), domains_data)
-                
-            if self.target_loss > 0 and loss.item() <= self.target_loss:
-                early_stop_triggered = True
-            return loss
-            
-        for epoch in range(epochs):
-            if early_stop_triggered:
-                print(f"L-BFGS Epoch {epoch + 1}: Đạt ngưỡng target_loss. KẾT THÚC L-BFGS SỚM!")
-                break
-            self.optimizer_lbfgs.step(closure)
-'''
-    with open(training_mgr_file, 'w', encoding='utf-8') as f:
-        f.write(training_mgr_content)
-
-    visualizer_content = r'''import os
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
-import imageio
-
-class TrainingVisualizer:
-    def __init__(self, electro_magnetic_pinn=None, parent_pinn=None):
-        self.electro_magnetic_pinn = electro_magnetic_pinn if electro_magnetic_pinn is not None else parent_pinn
-        self.parent_pinn = self.electro_magnetic_pinn
-        
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        vis_cfg = self.electro_magnetic_pinn.visualization_config
-        
-        self.output_directory = vis_cfg.output_directory
-        self.x_bounds = sim_domain.x_boundaries_tuple
-        self.y_bounds = sim_domain.y_boundaries_tuple
-        self.resolution = vis_cfg.resolution
-        
-        self.frame_paths = []
-        self.loss_history = []
-        self.epoch_history = []
-        
-        if not os.path.exists(self.output_directory):
-            os.makedirs(self.output_directory)
-            
-        x_coords = np.linspace(self.x_bounds[0], self.x_bounds[1], self.resolution)
-        y_coords = np.linspace(self.y_bounds[0], self.y_bounds[1], self.resolution)
-        self.X_grid, self.Y_grid = np.meshgrid(x_coords, y_coords)
-        self.eval_points_tensor = torch.tensor(
-            np.column_stack((self.X_grid.ravel(), self.Y_grid.ravel())), 
-            dtype=torch.float32
-        )
-
-    def save_frame(self, epoch, loss_value, domains_data):
-        self.loss_history.append(loss_value)
-        self.epoch_history.append(epoch)
-        
-        model = self.electro_magnetic_pinn.pinn_architecture_instance
-        pde_evaluator = self.electro_magnetic_pinn.maxwell_pde_loss_instance
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        
-        model.eval()
-        computation_device = next(model.parameters()).device
-        eval_points = self.eval_points_tensor.to(computation_device).detach().clone().requires_grad_(True)
-        
-        phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
-        mat_id = phys_props["material_classification"]
-        nu_grid = phys_props["reluctivity"].to(computation_device)
-        jz_grid = phys_props["current_density_z"].to(computation_device)
-        hcx_grid = phys_props["coercive_field_x"].to(computation_device)
-        hcy_grid = phys_props["coercive_field_y"].to(computation_device)
-        
-        A_z_star = torch.zeros((eval_points.shape[0], 1), device=computation_device)
-        for domain in sim_domain.domains_list:
-            d_id = domain.domain_id
-            net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
-            mask = (mat_id == float(d_id)).float()
-            if mask.any():
-                Az_sub = model.forward_network(net_key, eval_points)
-                A_z_star = A_z_star + mask * Az_sub
-
-        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
-        
-        A_z_phys = A_z_star * sim_domain.A0
-        grad_A = torch.autograd.grad(
-            outputs=A_z_phys,
-            inputs=eval_points,
-            grad_outputs=torch.ones_like(A_z_phys),
-            create_graph=False
-        )[0]
-        B_x_phys = grad_A[:, 1:2]
-        B_y_phys = -grad_A[:, 0:1]
-        
-        A_z_numpy = A_z_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_x_numpy = B_x_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_y_numpy = B_y_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
-        residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        
-        all_pts = []
-        for key, d in domains_data.items():
-            if d["interior_points"].shape[0] > 0:
-                all_pts.append(d["interior_points"].detach().cpu().numpy())
-            if d["surface_points"].shape[0] > 0:
-                all_pts.append(d["surface_points"].detach().cpu().numpy())
-        points_numpy = np.vstack(all_pts) if all_pts else np.empty((0, 2))
-        
-        fig, axs = plt.subplots(2, 3, figsize=(18, 10))
-        
-        if points_numpy.shape[0] > 0:
-            axs[0, 0].scatter(points_numpy[:, 0], points_numpy[:, 1], s=1, c='black', alpha=0.5)
-        axs[0, 0].set_title("Collocation Points")
-        axs[0, 0].set_xlim(self.x_bounds)
-        axs[0, 0].set_ylim(self.y_bounds)
-        axs[0, 0].set_aspect('equal')
-        
-        res_abs = np.clip(np.abs(residual_numpy), 1e-6, None)
-        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, res_abs, levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
-        fig.colorbar(contour_res, ax=axs[0, 1])
-        axs[0, 1].set_title("PDE Residual Error")
-        axs[0, 1].set_aspect('equal')
-        
-        axs[0, 2].plot(self.epoch_history, self.loss_history, 'b-')
-        axs[0, 2].set_yscale('log')
-        axs[0, 2].set_title("Loss Optimization")
-        axs[0, 2].set_xlabel("Epoch")
-        axs[0, 2].set_ylabel("Loss")
-        axs[0, 2].grid(True, which="both", ls="-", alpha=0.2)
-        
-        contour_az = axs[1, 0].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
-        fig.colorbar(contour_az, ax=axs[1, 0], label="A_z (Wb/m)")
-        axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
-        axs[1, 0].set_aspect('equal')
-
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow")
-        fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
-        axs[1, 1].set_aspect('equal')
-
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow", alpha=0.4)
-        fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
-        
-        step = max(1, self.resolution // 20)
-        axs[1, 2].quiver(self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
-                         B_x_numpy[::step, ::step], B_y_numpy[::step, ::step], 
-                         color='black', pivot='mid')
-        axs[1, 2].set_title("Flux Density Vectors (B)")
-        axs[1, 2].set_aspect('equal')
-        
-        fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
-        plt.tight_layout()
-        
-        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
-        plt.savefig(frame_name, dpi=100)
-        plt.close(fig)
-        
-        self.frame_paths.append(frame_name)
-        model.train()
-
-    def generate_gif(self):
-        output_filename = self.electro_magnetic_pinn.visualization_config.gif_filename
-        fps = self.electro_magnetic_pinn.visualization_config.gif_fps
-        if not self.frame_paths:
-            print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo GIF.")
-            return
-            
-        full_gif_path = os.path.join(self.output_directory, output_filename)
-        images = []
-        for filename in self.frame_paths:
-            if os.path.exists(filename):
-                images.append(imageio.imread(filename))
-                
-        imageio.mimsave(full_gif_path, images, fps=fps)
-        print(f"[*] Đã xuất GIF Animation thành công tại: {full_gif_path}")
-'''
-    with open(visualizer_file, 'w', encoding='utf-8') as f:
-        f.write(visualizer_content)
-
-    electro_pinn_content = r'''import torch
-import torch.nn as nn
-from types import SimpleNamespace
-from architectures.xpinn_architecture import XPINNArchitecture
-from training_engine.training_manager import TrainingManager
-from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
-from physics_domain.physical_equations.interface_loss import InterfaceLoss
-from simulation_domain_engine.simulation_domain import SimulationDomain
-from physics_domain.collocation_sampler import CollocationSampler
-from utils.training_visualizer import TrainingVisualizer
-
-class ElectroMagneticPINN:
-    def __init__(self):
-        self.sampler_config = SimpleNamespace(
-            dynamic_resampling=True,
-            resample_interval=100
-        )
-        
-        self.training_config = SimpleNamespace(
-            learning_rate_adam=1e-3,
-            target_loss=1e-3,
-            epochs_adam=4000,
-            epochs_lbfgs=1000,
-            lbfgs_learning_rate=0.8,
-            lbfgs_maximum_iterations=1000,
-            lbfgs_maximum_evaluations=1250,
-            lbfgs_tolerance_gradient=1e-8,
-            lbfgs_tolerance_change=1e-10,
-            lbfgs_history_size=50
-        )
-        
-        self.visualization_config = SimpleNamespace(
-            active=False,
-            update_interval=100,
-            output_directory="animation_frames",
-            resolution=100,
-            gif_filename="training_process.gif",
-            gif_fps=10
-        )
-        
-        self.simulation_domain_engine_instance = SimulationDomain(electro_magnetic_pinn=self)
-        self.pinn_architecture_instance = None
-        self.training_manager_instance = None
-        self.maxwell_pde_loss_instance = None
-        self.interface_loss_instance = None
-        self.collocation_sampler_instance = None
-        self.visualizer_instance = None
-
-    @property
-    def physics_config(self):
-        return self.simulation_domain_engine_instance.physics_config
-
-    @property
-    def L0(self):
-        return self.simulation_domain_engine_instance.L0
-
-    @property
-    def H0(self):
-        return self.simulation_domain_engine_instance.H0
-
-    @property
-    def nu0(self):
-        return self.simulation_domain_engine_instance.nu0
-
-    @property
-    def A0(self):
-        return self.simulation_domain_engine_instance.A0
-
-    def update_electromagnetic_pinn(self):
-        self._build_system()
-
-    def _build_system(self):
-        self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
-        
-        self.collocation_sampler_instance = CollocationSampler(
-            electro_magnetic_pinn=self,
-            device=self.computation_device
-        )
-        
-        self.pinn_architecture_instance = XPINNArchitecture(
-            electro_magnetic_pinn=self
-        ).to(self.computation_device)
-        
-        self.maxwell_pde_loss_instance = MaxwellPDELoss(electro_magnetic_pinn=self)
-        self.interface_loss_instance = InterfaceLoss(electro_magnetic_pinn=self)
-        
-        self.visualizer_instance = None
-        if self.visualization_config.active:
-            self.visualizer_instance = TrainingVisualizer(electro_magnetic_pinn=self)
-            
-        self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
-
-    def execute_training_process(self):
-        if self.pinn_architecture_instance is None:
-            self._build_system()
-
-        def resample_data_fn():
-            return self.collocation_sampler_instance.generate_all_domain_points()
-
-        domains_data = resample_data_fn()
-        
-        print(f"--- Standard Adam Training ({self.training_config.epochs_adam} Epochs) ---")
-        self.training_manager_instance.train_adam(
-            epochs=self.training_config.epochs_adam, 
-            domains_data=domains_data,
-            dynamic_resampling=self.sampler_config.dynamic_resampling,
-            resample_fn=resample_data_fn,
-            resample_interval=self.sampler_config.resample_interval
-        )
-        
-        print(f"--- L-BFGS Refinement ({self.training_config.epochs_lbfgs} Epochs) ---")
-        self.training_manager_instance.train_lbfgs(
-            epochs=self.training_config.epochs_lbfgs, 
-            domains_data=domains_data
-        )
-        
-        if self.visualizer_instance:
-            print("Đang xuất file GIF Animation...")
-            self.visualizer_instance.generate_gif()
-
-    def evaluate_fields(self, points_tensor):
-        self.pinn_architecture_instance.eval()
-        points_tensor = points_tensor.to(self.computation_device).detach().clone().requires_grad_(True)
-        
-        props = self.simulation_domain_engine_instance.evaluate_global_physical_properties(points_tensor)
-        mat_id = props["material_classification"]
-        
-        A_z_star_total = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
-        
-        for domain in self.simulation_domain_engine_instance.domains_list:
-            d_id = domain.domain_id
-            if getattr(domain, 'domain_name', '') == 'background':
-                net_key = 'background'
-            else:
-                net_key = f'domain_{d_id}'
-                
-            mask = (mat_id == float(d_id)).float()
-            if mask.any():
-                Az_sub = self.pinn_architecture_instance.forward_network(net_key, points_tensor)
-                A_z_star_total = A_z_star_total + mask * Az_sub
-
-        A_z_phys = A_z_star_total * self.A0
-        
-        grad_A = torch.autograd.grad(
-            outputs=A_z_phys, inputs=points_tensor,
-            grad_outputs=torch.ones_like(A_z_phys), create_graph=False
-        )[0]
-        
-        return A_z_phys.detach(), grad_A[:, 1:2].detach(), (-grad_A[:, 0:1]).detach()
-'''
-    with open(electro_pinn_file, 'w', encoding='utf-8') as f:
-        f.write(electro_pinn_content)
-
-    test_sim_content = r'''import os
-import sys
-import shutil
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
-if parent_directory not in sys.path:
-    sys.path.insert(0, parent_directory)
-
-import torch
-import torch.nn as nn
-if torch.cuda.is_available():
-    torch.set_float32_matmul_precision("high")
-
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from simulation_domain_engine.material_domain.material_domain import MaterialDomain
-from electro_magnetic_pinn import ElectroMagneticPINN
-
-def main():
-    if os.path.exists('figure'):
-        shutil.rmtree('figure')
-    os.makedirs('figure')
-    print("version 8.0 - Dual Straight I-Shaped Magnets Simulation (XPINN)")
-    
-    model = ElectroMagneticPINN()
-    
-    max_coercive_field = 800000.0
-    model.simulation_domain_engine_instance.physics_config.scale_H0 = max_coercive_field * 1.5
-    model.simulation_domain_engine_instance.physics_config.scale_L0 = 0.1
-    
-    model.simulation_domain_engine_instance.x_boundaries_tuple = (-0.1, 0.1)
-    model.simulation_domain_engine_instance.y_boundaries_tuple = (-0.1, 0.1)
-    
-    model.sampler_config.dynamic_resampling = True
-    model.sampler_config.resample_interval = 100
-    
-    model.training_config.epochs_adam = 5000
-    model.training_config.epochs_lbfgs = 1000
-    model.training_config.learning_rate_adam = 8e-4
-    model.training_config.target_loss = 5e-5
-    
-    model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_iterations = 1000
-    model.training_config.lbfgs_maximum_evaluations = 1250
-    model.training_config.lbfgs_tolerance_gradient = 1e-8
-    model.training_config.lbfgs_tolerance_change = 1e-10
-    model.training_config.lbfgs_history_size = 50
-    
-    model.visualization_config.active = True
-    model.visualization_config.update_interval = 50 
-    model.visualization_config.output_directory = "figure"
-    model.visualization_config.resolution = 80
-    model.visualization_config.gif_filename = "training_process.gif"
-    model.visualization_config.gif_fps = 15
-    
-    i_magnet_left = MaterialDomain(domain_name="i_bar_left")
-    i_magnet_left.geometry_config.outline = [
-        [-0.04, -0.04], 
-        [-0.02, -0.04], 
-        [-0.02, 0.04], 
-        [-0.04, 0.04]
-    ]
-    i_magnet_left.physics_config.relative_permeability = 1.05
-    i_magnet_left.physics_config.coercive = [0.0, 800000.0]
-    i_magnet_left.training_config.pde_weight = 2.0
-    i_magnet_left.training_config.interface_weight = 20.0
-    i_magnet_left.training_config.number_of_interior_points = 3500
-    i_magnet_left.training_config.number_of_surface_points = 800
-    i_magnet_left.network_config.hidden_layers = 6
-    i_magnet_left.network_config.hidden_neurons = 128
-    i_magnet_left.network_config.activation_function = nn.Tanh()
-    i_magnet_left.network_config.fourier_features = True
-    i_magnet_left.network_config.fourier_sigma = 0.85
-    i_magnet_left.network_config.fourier_mapping_size = 512
-    i_magnet_left.build_domain()
-
-    i_magnet_right = MaterialDomain(domain_name="i_bar_right")
-    i_magnet_right.geometry_config.outline = [
-        [0.02, -0.04], 
-        [0.04, -0.04], 
-        [0.04, 0.04], 
-        [0.02, 0.04]
-    ]
-    i_magnet_right.physics_config.relative_permeability = 1.05
-    i_magnet_right.physics_config.coercive = [0.0, -800000.0]
-    i_magnet_right.training_config.pde_weight = 2.0
-    i_magnet_right.training_config.interface_weight = 20.0
-    i_magnet_right.training_config.number_of_interior_points = 3500
-    i_magnet_right.training_config.number_of_surface_points = 800
-    i_magnet_right.network_config.hidden_layers = 6
-    i_magnet_right.network_config.hidden_neurons = 128
-    i_magnet_right.network_config.activation_function = nn.Tanh()
-    i_magnet_right.network_config.fourier_features = True
-    i_magnet_right.network_config.fourier_sigma = 0.85
-    i_magnet_right.network_config.fourier_mapping_size = 512
-    i_magnet_right.build_domain()
-
-    model.simulation_domain_engine_instance.add_material_domain(i_magnet_left)
-    model.simulation_domain_engine_instance.add_material_domain(i_magnet_right)
-
-    bg_training_config = type('', (), {})()
-    bg_training_config.pde_weight = 1.0
-    bg_training_config.interface_weight = 20.0
-    bg_training_config.sampling_density_multiplier = 1.0
-    bg_training_config.number_of_interior_points = 8000
-    bg_training_config.number_of_surface_points = 0
-
-    bg_network_config = type('', (), {})()
-    bg_network_config.hidden_layers = 4
-    bg_network_config.hidden_neurons = 64
-    bg_network_config.activation_function = nn.SiLU()
-    bg_network_config.fourier_features = False
-
-    model.simulation_domain_engine_instance.build_background_domain(
-        domain_name="background",
-        training_config=bg_training_config,
-        network_config=bg_network_config
-    )
-
-    model.update_electromagnetic_pinn()
-
-    xb = model.simulation_domain_engine_instance.x_boundaries_tuple
-    yb = model.simulation_domain_engine_instance.y_boundaries_tuple
-    
-    model.simulation_domain_engine_instance.plot_problem_definition(resolution=120)
-
-    model.execute_training_process()
-    
-    resolution = 120
-    x_coords = np.linspace(xb[0], xb[1], resolution)
-    y_coords = np.linspace(yb[0], yb[1], resolution)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    
-    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
-    
-    A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(xy_points_tensor)
-    
-    A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
-    B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
-    B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
-    B_mag_grid = np.sqrt(B_x_grid**2 + B_y_grid**2)
-    
-    fig1, axs = plt.subplots(2, 2, figsize=(12, 10))
-    contour_az = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
-    fig1.colorbar(contour_az, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
-    axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
-    axs[0, 0].set_aspect('equal')
-    
-    contour_b = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow")
-    fig1.colorbar(contour_b, ax=axs[0, 1], label=r"$|B|$ (T)")
-    axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
-    axs[0, 1].set_aspect('equal')
-    
-    contour_bx = axs[1, 0].contourf(X_grid, Y_grid, B_x_grid, levels=60, cmap="coolwarm")
-    fig1.colorbar(contour_bx, ax=axs[1, 0], label=r"$B_x$ (T)")
-    axs[1, 0].set_title(r"Magnetic Field Component ($B_x$)")
-    axs[1, 0].set_aspect('equal')
-    
-    contour_by = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
-    fig1.colorbar(contour_by, ax=axs[1, 1], label=r"$B_y$ (T)")
-    axs[1, 1].set_title(r"Magnetic Field Component ($B_y$)")
-    axs[1, 1].set_aspect('equal')
-    fig1.tight_layout()
-    
-    fig2, ax2 = plt.subplots(figsize=(8, 7))
-    contour_b_bg = ax2.contourf(X_grid, Y_grid, B_mag_grid, levels=60, cmap="rainbow", alpha=0.4)
-    fig2.colorbar(contour_b_bg, ax=ax2, label=r"$|B|$ (T)")
-    
-    step = 4
-    ax2.quiver(X_grid[::step, ::step], Y_grid[::step, ::step], B_x_grid[::step, ::step], B_y_grid[::step, ::step], color='black', pivot='mid')
-    ax2.set_title(r"Magnetic Flux Density Vectors ($\mathbf{B}$)")
-    ax2.set_aspect('equal')
-    fig2.tight_layout()
-    
-    plt.savefig('figure/final_results.png', dpi=150)
-    plt.close('all')
-    print('[*] Đã lưu kết quả mô phỏng vào figure/final_results.png')
 
 
 ========================================
@@ -3264,37 +2231,47 @@ class TrainingVisualizer:
         
         phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
         mat_id = phys_props["material_classification"]
-        nu_grid = phys_props["reluctivity"].to(computation_device)
-        jz_grid = phys_props["current_density_z"].to(computation_device)
-        hcx_grid = phys_props["coercive_field_x"].to(computation_device)
-        hcy_grid = phys_props["coercive_field_y"].to(computation_device)
         
-        A_z_star = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        A_z_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        B_x_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        B_y_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+        residual_total = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+
         for domain in sim_domain.domains_list:
             d_id = domain.domain_id
             net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
-            mask = (mat_id == float(d_id)).float()
-            if mask.any():
-                Az_sub = model.forward_network(net_key, eval_points)
-                A_z_star = A_z_star + mask * Az_sub
+            mask_bool = (mat_id == float(d_id))
+            if mask_bool.any():
+                Az_sub_star = model.forward_network(net_key, eval_points)
+                grad_sub_star = torch.autograd.grad(
+                    outputs=Az_sub_star,
+                    inputs=eval_points,
+                    grad_outputs=torch.ones_like(Az_sub_star),
+                    create_graph=True
+                )[0]
+                Az_sub_phys = Az_sub_star * sim_domain.A0
+                Bx_sub_phys = grad_sub_star[:, 1:2] * sim_domain.A0
+                By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
-        residual_pred = pde_evaluator.compute_residual(eval_points, A_z_star, nu_grid, jz_grid, hcx_grid, hcy_grid)
+                nu_dom = domain.evaluate_reluctivity(eval_points).to(computation_device)
+                hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
+                hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
+                jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
+
+                res_sub = pde_evaluator.compute_residual(
+                    eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
+                )
+
+                A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
+                B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
+                B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
+                residual_total = torch.where(mask_bool, torch.abs(res_sub.detach()), residual_total)
         
-        A_z_phys = A_z_star * sim_domain.A0
-        grad_A = torch.autograd.grad(
-            outputs=A_z_phys,
-            inputs=eval_points,
-            grad_outputs=torch.ones_like(A_z_phys),
-            create_graph=False
-        )[0]
-        B_x_phys = grad_A[:, 1:2]
-        B_y_phys = -grad_A[:, 0:1]
-        
-        A_z_numpy = A_z_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_x_numpy = B_x_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_y_numpy = B_y_phys.detach().cpu().numpy().reshape(self.resolution, self.resolution)
-        B_mag_numpy = np.sqrt(B_x_numpy**2 + B_y_numpy**2)
-        residual_numpy = residual_pred.detach().cpu().numpy().reshape(self.resolution, self.resolution)
+        A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
+        B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
+        residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
         all_pts = []
         for key, d in domains_data.items():
@@ -3313,7 +2290,7 @@ class TrainingVisualizer:
         axs[0, 0].set_ylim(self.y_bounds)
         axs[0, 0].set_aspect('equal')
         
-        res_abs = np.clip(np.abs(residual_numpy), 1e-6, None)
+        res_abs = np.clip(np.abs(residual_numpy), 1e-6, 1e2)
         contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, res_abs, levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
         fig.colorbar(contour_res, ax=axs[0, 1])
         axs[0, 1].set_title("PDE Residual Error")
@@ -3322,7 +2299,7 @@ class TrainingVisualizer:
         axs[0, 2].plot(self.epoch_history, self.loss_history, 'b-')
         axs[0, 2].set_yscale('log')
         axs[0, 2].set_title("Loss Optimization")
-        axs[0, 2].set_xlabel("Epoch")
+        axs[0, 2].set_xlabel("Step / Epoch")
         axs[0, 2].set_ylabel("Loss")
         axs[0, 2].grid(True, which="both", ls="-", alpha=0.2)
         
@@ -3331,25 +2308,28 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow")
+        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="jet")
         fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
         axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
         axs[1, 1].set_aspect('equal')
 
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="rainbow", alpha=0.4)
+        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=50, cmap="jet", alpha=0.3)
         fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
         
         step = max(1, self.resolution // 20)
-        axs[1, 2].quiver(self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
-                         B_x_numpy[::step, ::step], B_y_numpy[::step, ::step], 
-                         color='black', pivot='mid')
+        B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
+        axs[1, 2].quiver(
+            self.X_grid[::step, ::step], self.Y_grid[::step, ::step], 
+            B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub, 
+            scale=30.0, color='black', pivot='mid'
+        )
         axs[1, 2].set_title("Flux Density Vectors (B)")
         axs[1, 2].set_aspect('equal')
         
-        fig.suptitle(f"PINN Training Process - Epoch {epoch}", fontsize=16)
+        fig.suptitle(f"PINN Training Process - Step {epoch}", fontsize=16)
         plt.tight_layout()
         
-        frame_name = os.path.join(self.output_directory, f"frame_{epoch:05d}.png")
+        frame_name = os.path.join(self.output_directory, f"frame_{len(self.frame_paths) + 1:05d}.png")
         plt.savefig(frame_name, dpi=100)
         plt.close(fig)
         

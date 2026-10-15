@@ -35,8 +35,14 @@ class ElectroMagneticPINN:
             update_interval=200,
             output_directory="animation_frames",
             resolution=80,
+            generate_gif_animation=True,
             gif_filename="training_process.gif",
-            gif_fps=10
+            generate_mp4_video=True,
+            mp4_filename="training_process.mp4",
+            animation_fps=5,
+            gif_fps=5,
+            mp4_codec="libx264",
+            mp4_quality=8
         )
         
         self.simulation_domain_engine_instance = SimulationDomain(electro_magnetic_pinn=self)
@@ -127,8 +133,7 @@ class ElectroMagneticPINN:
         )
         
         if self.visualizer_instance:
-            print("Đang xuất file GIF Animation...")
-            self.visualizer_instance.generate_gif()
+            self.visualizer_instance.generate_animations()
 
     def evaluate_fields(self, points_tensor):
         self.pinn_architecture_instance.eval()

@@ -53,11 +53,15 @@ def main():
     model.training_config.lbfgs_history_size = 50
     
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 200 
+    model.visualization_config.update_interval = 50 
     model.visualization_config.output_directory = "figure"
     model.visualization_config.resolution = 80
+    model.visualization_config.generate_gif_animation = True
     model.visualization_config.gif_filename = "training_process.gif"
-    model.visualization_config.gif_fps = 10
+    model.visualization_config.generate_mp4_video = True
+    model.visualization_config.mp4_filename = "training_process.mp4"
+    model.visualization_config.animation_fps = 5
+    model.visualization_config.gif_fps = 5
     
     i_magnet_left = MaterialDomain(domain_name="i_bar_left")
     i_magnet_left.geometry_config.outline = [
