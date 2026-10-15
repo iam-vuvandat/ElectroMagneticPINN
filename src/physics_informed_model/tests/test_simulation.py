@@ -25,7 +25,7 @@ def main():
     if os.path.exists('figure'):
         shutil.rmtree('figure')
     os.makedirs('figure')
-    print("version 10.5 - Dual Magnets XPINN Simulation without Seam Border")
+    print("version 10.6 - Dual Magnets XPINN Simulation with Enhanced Convergence Configuration")
     
     model = ElectroMagneticPINN()
     
@@ -40,17 +40,17 @@ def main():
     model.sampler_config.resample_interval = 100
     model.sampler_config.resample_before_lbfgs = True
     
-    model.training_config.epochs_adam = 3500
-    model.training_config.epochs_lbfgs = 1500
+    model.training_config.epochs_adam = 4000
+    model.training_config.epochs_lbfgs = 2500
     model.training_config.learning_rate_adam = 1e-3
-    model.training_config.target_loss = 1e-7
+    model.training_config.target_loss = 1e-8
     
     model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_iterations = 1500
-    model.training_config.lbfgs_maximum_evaluations = 1875
-    model.training_config.lbfgs_tolerance_gradient = 1e-8
-    model.training_config.lbfgs_tolerance_change = 1e-10
-    model.training_config.lbfgs_history_size = 50
+    model.training_config.lbfgs_maximum_iterations = 2500
+    model.training_config.lbfgs_maximum_evaluations = 3125
+    model.training_config.lbfgs_tolerance_gradient = 1e-9
+    model.training_config.lbfgs_tolerance_change = 1e-11
+    model.training_config.lbfgs_history_size = 100
     
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50 
@@ -75,16 +75,16 @@ def main():
     i_magnet_left.training_config.pde_weight = 1.0
     i_magnet_left.training_config.interface_weight = 1.0
     i_magnet_left.training_config.interface_potential_weight = 1000.0
-    i_magnet_left.training_config.interface_bn_weight = 350.0
-    i_magnet_left.training_config.interface_ht_weight = 350.0
-    i_magnet_left.training_config.pde_fading_beta = 90.0
-    i_magnet_left.training_config.number_of_interior_points = 1200
-    i_magnet_left.training_config.number_of_surface_points = 800
-    i_magnet_left.network_config.hidden_layers = 4
-    i_magnet_left.network_config.hidden_neurons = 64
+    i_magnet_left.training_config.interface_bn_weight = 400.0
+    i_magnet_left.training_config.interface_ht_weight = 400.0
+    i_magnet_left.training_config.pde_fading_beta = 100.0
+    i_magnet_left.training_config.number_of_interior_points = 2000
+    i_magnet_left.training_config.number_of_surface_points = 1200
+    i_magnet_left.network_config.hidden_layers = 5
+    i_magnet_left.network_config.hidden_neurons = 96
     i_magnet_left.network_config.activation_function = nn.SiLU()
     i_magnet_left.network_config.fourier_features = True
-    i_magnet_left.network_config.fourier_sigma = 1.2
+    i_magnet_left.network_config.fourier_sigma = 1.5
     i_magnet_left.network_config.fourier_mapping_size = 128
     i_magnet_left.build_domain()
 
@@ -100,16 +100,16 @@ def main():
     i_magnet_right.training_config.pde_weight = 1.0
     i_magnet_right.training_config.interface_weight = 1.0
     i_magnet_right.training_config.interface_potential_weight = 1000.0
-    i_magnet_right.training_config.interface_bn_weight = 350.0
-    i_magnet_right.training_config.interface_ht_weight = 350.0
-    i_magnet_right.training_config.pde_fading_beta = 90.0
-    i_magnet_right.training_config.number_of_interior_points = 1200
-    i_magnet_right.training_config.number_of_surface_points = 800
-    i_magnet_right.network_config.hidden_layers = 4
-    i_magnet_right.network_config.hidden_neurons = 64
+    i_magnet_right.training_config.interface_bn_weight = 400.0
+    i_magnet_right.training_config.interface_ht_weight = 400.0
+    i_magnet_right.training_config.pde_fading_beta = 100.0
+    i_magnet_right.training_config.number_of_interior_points = 2000
+    i_magnet_right.training_config.number_of_surface_points = 1200
+    i_magnet_right.network_config.hidden_layers = 5
+    i_magnet_right.network_config.hidden_neurons = 96
     i_magnet_right.network_config.activation_function = nn.SiLU()
     i_magnet_right.network_config.fourier_features = True
-    i_magnet_right.network_config.fourier_sigma = 1.2
+    i_magnet_right.network_config.fourier_sigma = 1.5
     i_magnet_right.network_config.fourier_mapping_size = 128
     i_magnet_right.build_domain()
 
@@ -119,17 +119,17 @@ def main():
     bg_training_config = type('', (), {})()
     bg_training_config.pde_weight = 1.0
     bg_training_config.interface_weight = 1.0
-    bg_training_config.pde_fading_beta = 90.0
+    bg_training_config.pde_fading_beta = 100.0
     bg_training_config.sampling_density_multiplier = 1.0
-    bg_training_config.number_of_interior_points = 5000
+    bg_training_config.number_of_interior_points = 8000
     bg_training_config.number_of_surface_points = 0
 
     bg_network_config = type('', (), {})()
-    bg_network_config.hidden_layers = 4
-    bg_network_config.hidden_neurons = 64
+    bg_network_config.hidden_layers = 5
+    bg_network_config.hidden_neurons = 96
     bg_network_config.activation_function = nn.SiLU()
     bg_network_config.fourier_features = True
-    bg_network_config.fourier_sigma = 1.2
+    bg_network_config.fourier_sigma = 1.5
     bg_network_config.fourier_mapping_size = 128
 
     model.simulation_domain_engine_instance.build_background_domain(
