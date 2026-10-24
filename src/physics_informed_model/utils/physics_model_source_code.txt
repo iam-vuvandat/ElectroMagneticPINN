@@ -17,6 +17,7 @@ physics_informed_model/
             interface_loss.py
             maxwell_pde_loss.py
     simulation_domain_engine/
+        add_material_domain.py
         domain_visualizer.py
         global_physical_properties_evaluation.py
         global_signed_distance_field.py
@@ -28,8 +29,27 @@ physics_informed_model/
             compute_boundary_factor.py
         material_domain/
             __init__.py
+            assign_coercive_direction.py
+            assign_material.py
+            build_domain.py
+            compute_constant_bh_curve.py
+            compute_current_density.py
+            compute_section_area.py
+            evaluate_current_density.py
+            evaluate_magnetization_vector.py
+            evaluate_reluctivity.py
             material_domain.py
             polygon_signed_distance_field.py
+        material_library/
+            __init__.py
+            material_data.py
+        simulation_domain_methods/
+            add_material_domain_method.py
+            build_background_domain.py
+            display_methods.py
+            get_domain_count.py
+            set_boundary.py
+            validate_non_overlapping_domains.py
     tests/
         __init__.py
         test_simulation.py
@@ -452,6 +472,50 @@ class CollocationSampler:
         pts = torch.cat(collected_points, dim=0)[:number_of_points, :]
         return pts
 
+    def _build_split_subsegments(self, domain_object):
+        outline = np.array(domain_object.geometry_config.outline, dtype=np.float64)
+        edge_starts = outline
+        edge_ends = np.roll(edge_starts, shift=-1, axis=0)
+
+        other_vertices = []
+        if self.electro_magnetic_pinn is not None:
+            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+            for d in sim_domain.domains_list:
+                if d is not domain_object and getattr(d, 'domain_name', '') != 'background':
+                    if d.geometry_config.outline is not None:
+                        other_vertices.append(np.array(d.geometry_config.outline, dtype=np.float64))
+        all_other_verts = np.vstack(other_vertices) if other_vertices else np.empty((0, 2), dtype=np.float64)
+
+        sub_starts = []
+        sub_ends = []
+        for s_pt, e_pt in zip(edge_starts, edge_ends):
+            vec = e_pt - s_pt
+            seg_len_sq = float(np.dot(vec, vec))
+            if seg_len_sq <= 1e-16:
+                continue
+            t_splits = [0.0, 1.0]
+            if all_other_verts.shape[0] > 0:
+                rel = all_other_verts - s_pt
+                t_proj = np.dot(rel, vec) / seg_len_sq
+                valid_t = (t_proj > 1e-3) & (t_proj < 1.0 - 1e-3)
+                if np.any(valid_t):
+                    cand_t = t_proj[valid_t]
+                    cand_verts = all_other_verts[valid_t]
+                    proj_pts = s_pt + cand_t[:, None] * vec[None, :]
+                    dists = np.linalg.norm(cand_verts - proj_pts, axis=1)
+                    on_edge = dists <= 1e-5
+                    if np.any(on_edge):
+                        t_splits.extend(cand_t[on_edge].tolist())
+            t_unique = np.unique(np.round(np.array(t_splits, dtype=np.float64), decimals=6))
+            t_unique.sort()
+            for idx in range(len(t_unique) - 1):
+                t0, t1 = t_unique[idx], t_unique[idx + 1]
+                if t1 - t0 > 1e-4:
+                    sub_starts.append(s_pt + t0 * vec)
+                    sub_ends.append(s_pt + t1 * vec)
+
+        return np.array(sub_starts, dtype=np.float32), np.array(sub_ends, dtype=np.float32)
+
     def sample_domain_surface_points(self, domain_object, number_of_points):
         if number_of_points <= 0:
             return torch.empty((0, 2), dtype=torch.float32, device=self.device)
@@ -460,23 +524,36 @@ class CollocationSampler:
         if outline is None or len(outline) < 3:
             raise ValueError(f"Lỗi lấy mẫu bề mặt: Domain '{domain_object.domain_name}' có outline không hợp lệ.")
 
-        num_vertices = len(outline)
-        edge_starts = np.array(outline, dtype=np.float32)
-        edge_ends = np.roll(edge_starts, shift=-1, axis=0)
-        
-        edge_vectors = edge_ends - edge_starts
-        edge_lengths = np.sqrt(np.sum(edge_vectors ** 2, axis=1))
-        total_perimeter = float(np.sum(edge_lengths))
+        sub_starts, sub_ends = self._build_split_subsegments(domain_object)
+        if sub_starts.shape[0] == 0:
+            raise ValueError(f"Lỗi lấy mẫu bề mặt: Chu vi của domain '{domain_object.domain_name}' bằng 0.")
+
+        sub_vecs = sub_ends - sub_starts
+        sub_lens = np.sqrt(np.sum(sub_vecs ** 2, axis=1))
+        total_perimeter = float(np.sum(sub_lens))
         if total_perimeter <= 1e-12:
             raise ValueError(f"Lỗi lấy mẫu bề mặt: Chu vi của domain '{domain_object.domain_name}' bằng 0.")
-        
-        edge_probs = edge_lengths / total_perimeter
-        sampled_edges = np.random.choice(num_vertices, size=number_of_points, p=edge_probs)
-        
-        uv_1d = self.sobol_engine.draw(number_of_points)[:, 0:1].cpu().numpy()
-        t_params = 0.02 + 0.96 * uv_1d
-        
-        pts_sampled = edge_starts[sampled_edges] + t_params * edge_vectors[sampled_edges]
+
+        num_subs = sub_starts.shape[0]
+        raw_counts = (sub_lens / total_perimeter) * number_of_points
+        counts = np.floor(raw_counts).astype(int)
+        remainder = int(number_of_points - np.sum(counts))
+        if remainder > 0:
+            fracs = raw_counts - counts
+            top_indices = np.argsort(-fracs)[:remainder]
+            counts[top_indices] += 1
+
+        pts_list = []
+        for idx in range(num_subs):
+            c = int(counts[idx])
+            if c <= 0:
+                continue
+            u_base = (np.arange(c, dtype=np.float32) + 0.5) / float(c)
+            t_local = (0.02 + 0.96 * u_base)[:, None]
+            seg_pts = sub_starts[idx:idx+1, :] + t_local * sub_vecs[idx:idx+1, :]
+            pts_list.append(seg_pts)
+
+        pts_sampled = np.vstack(pts_list) if pts_list else np.empty((0, 2), dtype=np.float32)
         return torch.tensor(pts_sampled, dtype=torch.float32, device=self.device)
 
     def _sample_air_box(self, simulation_domain_object, target_count, x_min, x_max, y_min, y_max):
@@ -517,6 +594,7 @@ class CollocationSampler:
         all_outlines = np.vstack([np.array(d.geometry_config.outline) for d in mat_domains])
         mx_min, mx_max = float(np.min(all_outlines[:, 0])), float(np.max(all_outlines[:, 0]))
         my_min, my_max = float(np.min(all_outlines[:, 1])), float(np.max(all_outlines[:, 1]))
+        
         pad_x = 0.15 * (x_max - x_min)
         pad_y = 0.15 * (y_max - y_min)
         gx_min = max(x_min, mx_min - pad_x)
@@ -524,12 +602,21 @@ class CollocationSampler:
         gy_min = max(y_min, my_min - pad_y)
         gy_max = min(y_max, my_max + pad_y)
 
+        tight_pad_x = 0.03 * (x_max - x_min)
+        tight_pad_y = 0.03 * (y_max - y_min)
+        tx_min = max(x_min, mx_min - tight_pad_x)
+        tx_max = min(x_max, mx_max + tight_pad_x)
+        ty_min = max(y_min, my_min - tight_pad_y)
+        ty_max = min(y_max, my_max + tight_pad_y)
+
+        n_tight = int(round(number_of_points * 0.25))
         n_focus = int(round(number_of_points * 0.35))
-        n_uniform = number_of_points - n_focus
+        n_uniform = number_of_points - n_focus - n_tight
 
         pts_uniform = self._sample_air_box(simulation_domain_object, n_uniform, x_min, x_max, y_min, y_max)
         pts_focus = self._sample_air_box(simulation_domain_object, n_focus, gx_min, gx_max, gy_min, gy_max)
-        return torch.cat([pts_uniform, pts_focus], dim=0)
+        pts_tight = self._sample_air_box(simulation_domain_object, n_tight, tx_min, tx_max, ty_min, ty_max)
+        return torch.cat([pts_uniform, pts_focus, pts_tight], dim=0)
 
     def generate_all_domain_points(self, simulation_domain_object=None):
         if simulation_domain_object is None:
@@ -622,6 +709,20 @@ class InterfaceLoss:
         t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
         corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
 
+        if self.electro_magnetic_pinn is not None:
+            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+            mat_verts = [
+                d.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
+                for d in sim_domain.domains_list
+                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+            ]
+            if mat_verts:
+                all_verts = torch.cat(mat_verts, dim=0)
+                v_dists = torch.cdist(surf_pts.detach(), all_verts, p=2.0)
+                min_v_dist, _ = torch.min(v_dists, dim=1, keepdim=True)
+                vertex_w = (torch.tanh(25.0 * (min_v_dist / self.L0)) ** 2).detach()
+                corner_w = corner_w * vertex_w
+
         nx = unit_normals[edge_idx, 0:1].detach()
         ny = unit_normals[edge_idx, 1:2].detach()
         tx = unit_tangents[edge_idx, 0:1].detach()
@@ -635,6 +736,10 @@ class InterfaceLoss:
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
+
+        if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
+            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_outline(domain_b, pts)
+            corner_w = torch.minimum(corner_w, corner_w_b)
 
         Az_a = model.forward_network(key_a, pts)
         Az_b = model.forward_network(key_b, pts)
@@ -675,9 +780,9 @@ class InterfaceLoss:
             hx_b_star = hx_b / self.H0
             hy_b_star = hy_b / self.H0
         else:
-            nu_b_star = 1.0
-            hx_b_star = 0.0
-            hy_b_star = 0.0
+            nu_b_star = torch.ones_like(nu_a_star)
+            hx_b_star = torch.zeros_like(hx_a_star)
+            hy_b_star = torch.zeros_like(hy_a_star)
 
         Hx_a_star = nu_a_star * Bx_a_star - hx_a_star
         Hy_a_star = nu_a_star * By_a_star - hy_a_star
@@ -686,7 +791,9 @@ class InterfaceLoss:
 
         Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
-        loss_Ht = torch.mean(corner_w * ((Ht_a_star - Ht_b_star) ** 2))
+        nu_pair_scale = torch.clamp(torch.maximum(nu_a_star.detach(), nu_b_star.detach()), min=1e-6)
+        ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
+        loss_Ht = torch.mean(corner_w * (ht_diff_normalized ** 2))
 
         return loss_val, loss_Bn, loss_Ht
 
@@ -698,6 +805,8 @@ class InterfaceLoss:
             if d is not domain and getattr(d, 'domain_name', '') != 'background'
         ]
 
+        nx_a, ny_a, _, _, _ = self._compute_normals_and_tangents_from_outline(domain, surf_pts)
+
         remaining_mask = torch.ones(surf_pts.shape[0], dtype=torch.bool, device=surf_pts.device)
         total_val = torch.tensor(0.0, device=surf_pts.device)
         total_bn = torch.tensor(0.0, device=surf_pts.device)
@@ -707,7 +816,9 @@ class InterfaceLoss:
             if not remaining_mask.any():
                 break
             other_sdf = other_dom.compute_signed_distance_field(surf_pts).view(-1)
-            contact_mask = remaining_mask & (torch.abs(other_sdf) <= contact_tol)
+            nx_b, ny_b, _, _, _ = self._compute_normals_and_tangents_from_outline(other_dom, surf_pts)
+            normal_dot = (nx_a * nx_b + ny_a * ny_b).view(-1)
+            contact_mask = remaining_mask & (torch.abs(other_sdf) <= contact_tol) & (normal_dot < -0.85)
             if contact_mask.any():
                 other_key = f"domain_{other_dom.domain_id}"
                 v_l, bn_l, ht_l = self._compute_pair_components(
@@ -806,21 +917,40 @@ class MaxwellPDELoss:
         dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
         
         residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
-        return residual_star
+        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
+        return residual_star / nu_scale
 
     def compute_fading_weight(self, domain, xy):
         beta = float(getattr(domain.training_config, 'pde_fading_beta', 150.0))
         if beta <= 0.0:
             return torch.ones((xy.shape[0], 1), dtype=xy.dtype, device=xy.device)
 
-        if getattr(domain, 'domain_name', '') == 'background' and self.electro_magnetic_pinn is not None:
+        if self.electro_magnetic_pinn is not None:
             sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-            sdf = sim_domain.compute_global_signed_distance_field(xy).view(-1, 1)
-        else:
-            sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
+            mat_verts = [
+                d.outline_tensor.to(device=xy.device, dtype=xy.dtype)
+                for d in sim_domain.domains_list
+                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+            ]
+            if mat_verts:
+                all_verts = torch.cat(mat_verts, dim=0)
+                dists = torch.cdist(xy.detach(), all_verts, p=2.0)
+                min_corner_dist, _ = torch.min(dists, dim=1, keepdim=True)
+                corner_dist_star = min_corner_dist / self.L0
+                return 1.0 - torch.exp(-beta * corner_dist_star)
 
+        sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
         abs_sdf_star = torch.abs(sdf.detach()) / self.L0
         return 1.0 - torch.exp(-beta * abs_sdf_star)
+
+========================================
+
+--- FILE: simulation_domain_engine\add_material_domain.py ---
+
+from simulation_domain_engine.material_domain.material_domain import MaterialDomain
+
+def add_material_domain(simulation_domain):
+    return simulation_domain.domains_list.append(MaterialDomain())
 
 ========================================
 
@@ -1133,18 +1263,38 @@ def compute_global_signed_distance_field(domains_list, points_tensor):
 
 --- FILE: simulation_domain_engine\simulation_domain.py ---
 
-import torch
+from typing import List, Tuple, Dict, Any, Optional
 from types import SimpleNamespace
+import torch
+
 from simulation_domain_engine.boundary.boundary import Boundary
 from simulation_domain_engine.material_domain.material_domain import MaterialDomain
+from simulation_domain_engine.material_library.material_data import MaterialData
 from simulation_domain_engine.global_signed_distance_field import compute_global_signed_distance_field
-from simulation_domain_engine.global_physical_properties_evaluation import evaluate_global_physical_properties, VACUUM_RELUCTIVITY
-from simulation_domain_engine.domain_visualizer import display_simulation_domain
+from simulation_domain_engine.global_physical_properties_evaluation import (
+    evaluate_global_physical_properties,
+    VACUUM_RELUCTIVITY
+)
+
+from simulation_domain_engine.simulation_domain_methods import set_boundary as _set_boundary_fn
+from simulation_domain_engine.simulation_domain_methods import validate_non_overlapping_domains as _validate_domains_fn
+from simulation_domain_engine.simulation_domain_methods import add_material_domain_method as _add_material_domain_fn
+from simulation_domain_engine.simulation_domain_methods import build_background_domain as _build_bg_domain_fn
+from simulation_domain_engine.simulation_domain_methods import get_domain_count as _get_domain_count_fn
+from simulation_domain_engine.simulation_domain_methods import display_methods as _display_methods_module
+
 
 class SimulationDomain:
-    def __init__(self, electro_magnetic_pinn=None, x_boundaries_tuple=(-0.05, 0.05), y_boundaries_tuple=(-0.05, 0.05)):
+
+    def __init__(
+        self,
+        electro_magnetic_pinn: Optional[Any] = None,
+        x_boundaries_tuple: Tuple[float, float] = (-0.05, 0.05),
+        y_boundaries_tuple: Tuple[float, float] = (-0.05, 0.05)
+    ) -> None:
         self.electro_magnetic_pinn = electro_magnetic_pinn
-        
+        self.material_data = MaterialData()
+
         self.physics_config = SimpleNamespace(
             scale_L0=0.1,
             scale_H0=800000.0,
@@ -1157,156 +1307,99 @@ class SimulationDomain:
         self.boundary.geometry_config.y_boundaries_tuple = y_boundaries_tuple
         self.boundary.build_boundary()
 
-        self.domains_list = []
-        self.background_domain = None
+        self.domains_list: List[MaterialDomain] = []
+        self.background_domain: Optional[MaterialDomain] = None
 
     @property
-    def L0(self):
-        return self.physics_config.scale_L0
+    def L0(self) -> float:
+        return float(self.physics_config.scale_L0)
 
     @property
-    def H0(self):
-        return self.physics_config.scale_H0
+    def H0(self) -> float:
+        return float(self.physics_config.scale_H0)
 
     @property
-    def nu0(self):
-        return self.physics_config.scale_nu0
+    def nu0(self) -> float:
+        return float(self.physics_config.scale_nu0)
 
     @property
-    def A0(self):
+    def A0(self) -> float:
         return (self.H0 * self.L0) / self.nu0
 
     @property
-    def B0(self):
+    def B0(self) -> float:
         return self.H0 / self.nu0
 
     @property
-    def x_boundaries_tuple(self):
+    def x_boundaries_tuple(self) -> Tuple[float, float]:
         return self.boundary.geometry_config.x_boundaries_tuple
 
     @x_boundaries_tuple.setter
-    def x_boundaries_tuple(self, bounds):
+    def x_boundaries_tuple(self, bounds: Tuple[float, float]) -> None:
         self.boundary.geometry_config.x_boundaries_tuple = bounds
         self.boundary.build_boundary()
 
     @property
-    def y_boundaries_tuple(self):
+    def y_boundaries_tuple(self) -> Tuple[float, float]:
         return self.boundary.geometry_config.y_boundaries_tuple
 
     @y_boundaries_tuple.setter
-    def y_boundaries_tuple(self, bounds):
+    def y_boundaries_tuple(self, bounds: Tuple[float, float]) -> None:
         self.boundary.geometry_config.y_boundaries_tuple = bounds
         self.boundary.build_boundary()
 
-    def set_boundary(self, boundary_object):
-        boundary_object.simulation_domain = self
-        self.boundary = boundary_object
-        return self
+    def set_boundary(self, boundary_object: Boundary) -> "SimulationDomain":
+        return _set_boundary_fn.set_boundary(self, boundary_object)
 
-    def validate_non_overlapping_domains(self, candidate_domain=None, check_resolution=80):
-        if getattr(self.physics_config, 'allow_overlapping_domains', False):
-            return True
-        mat_domains = [d for d in self.domains_list if getattr(d, 'domain_name', '') != 'background']
-        if candidate_domain is not None and getattr(candidate_domain, 'domain_name', '') != 'background':
-            if candidate_domain not in mat_domains:
-                mat_domains.append(candidate_domain)
-        if len(mat_domains) < 2:
-            return True
+    def validate_non_overlapping_domains(
+        self,
+        candidate_domain: Optional[MaterialDomain] = None,
+        check_resolution: int = 80
+    ) -> bool:
+        return _validate_domains_fn.validate_non_overlapping_domains(
+            self, candidate_domain=candidate_domain, check_resolution=check_resolution
+        )
 
-        x_min, x_max = self.x_boundaries_tuple
-        y_min, y_max = self.y_boundaries_tuple
-        xs = torch.linspace(x_min, x_max, check_resolution)
-        ys = torch.linspace(y_min, y_max, check_resolution)
-        Xg, Yg = torch.meshgrid(xs, ys, indexing='ij')
-        test_pts = torch.column_stack([Xg.reshape(-1), Yg.reshape(-1)])
+    def add_material_domain(self, domain_object: MaterialDomain) -> "SimulationDomain":
+        return _add_material_domain_fn.add_material_domain(self, domain_object)
 
-        strict_inside_counts = torch.zeros(test_pts.shape[0], dtype=torch.int32)
-        for d in mat_domains:
-            sdf = d.compute_signed_distance_field(test_pts).view(-1)
-            strict_inside_counts += (sdf < -1e-6).int()
+    def build_background_domain(
+        self,
+        domain_name: str = "background",
+        training_config: Optional[Any] = None,
+        network_config: Optional[Any] = None
+    ) -> MaterialDomain:
+        return _build_bg_domain_fn.build_background_domain(
+            self,
+            domain_name=domain_name,
+            training_config=training_config,
+            network_config=network_config
+        )
 
-        if torch.any(strict_inside_counts > 1):
-            raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau.")
-        return True
+    def get_domain_count(self) -> int:
+        return _get_domain_count_fn.get_domain_count(self)
 
-    def add_material_domain(self, domain_object):
-        domain_object.simulation_domain = self
-        if domain_object.outline_tensor is None:
-            domain_object.build_domain()
-
-        if getattr(domain_object, 'domain_name', '') != 'background':
-            self.validate_non_overlapping_domains(candidate_domain=domain_object)
-
-        if self.background_domain in self.domains_list:
-            insert_idx = len(self.domains_list) - 1
-            self.domains_list.insert(insert_idx, domain_object)
-        else:
-            self.domains_list.append(domain_object)
-            
-        for idx, dom in enumerate(self.domains_list):
-            dom.domain_id = idx + 1
-        return self
-
-    def build_background_domain(self, domain_name="background", training_config=None, network_config=None):
-        if self.background_domain in self.domains_list:
-            self.domains_list.remove(self.background_domain)
-
-        x_min, x_max = self.boundary.geometry_config.x_boundaries_tuple
-        y_min, y_max = self.boundary.geometry_config.y_boundaries_tuple
-        
-        box_outline = [
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, y_max],
-            [x_min, y_max]
-        ]
-
-        bg_domain = MaterialDomain(domain_name=domain_name, simulation_domain=self)
-        bg_domain.geometry_config.outline = box_outline
-        bg_domain.physics_config.relative_permeability = 1.0
-        bg_domain.physics_config.coercive = [0.0, 0.0]
-        bg_domain.physics_config.current = 0.0
-        bg_domain.training_config.number_of_interior_points = 4000
-        bg_domain.training_config.number_of_surface_points = 0
-
-        if training_config is not None:
-            for key, value in vars(training_config).items():
-                setattr(bg_domain.training_config, key, value)
-
-        if network_config is not None:
-            for key, value in vars(network_config).items():
-                setattr(bg_domain.network_config, key, value)
-
-        bg_domain.build_domain()
-
-        total_box_area = (x_max - x_min) * (y_max - y_min)
-        total_sub_material_area = sum(d.section_area for d in self.domains_list)
-        bg_domain.section_area = max(0.0, total_box_area - total_sub_material_area)
-
-        self.background_domain = bg_domain
-        self.domains_list.append(self.background_domain)
-
-        for idx, dom in enumerate(self.domains_list):
-            dom.domain_id = idx + 1
-
-        return self.background_domain
-
-    def get_domain_count(self):
-        return len(self.domains_list)
-
-    def compute_global_signed_distance_field(self, points_tensor):
+    def compute_global_signed_distance_field(self, points_tensor: torch.Tensor) -> torch.Tensor:
         return compute_global_signed_distance_field(self.domains_list, points_tensor)
 
-    def evaluate_global_physical_properties(self, points_tensor):
+    def evaluate_global_physical_properties(self, points_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
         return evaluate_global_physical_properties(self.domains_list, points_tensor)
 
-    def plot_problem_definition(self, resolution=100):
-        display_simulation_domain(self, self.x_boundaries_tuple, self.y_boundaries_tuple, resolution)
+    def plot_problem_definition(self, resolution: int = 100) -> None:
+        _display_methods_module.plot_problem_definition(self, resolution=resolution)
 
-    def display(self, x_boundaries_tuple=None, y_boundaries_tuple=None, resolution=150):
-        xb = x_boundaries_tuple if x_boundaries_tuple is not None else self.x_boundaries_tuple
-        yb = y_boundaries_tuple if y_boundaries_tuple is not None else self.y_boundaries_tuple
-        display_simulation_domain(self, xb, yb, resolution)
+    def display(
+        self,
+        x_boundaries_tuple: Optional[Tuple[float, float]] = None,
+        y_boundaries_tuple: Optional[Tuple[float, float]] = None,
+        resolution: int = 150
+    ) -> None:
+        _display_methods_module.display(
+            self,
+            x_boundaries_tuple=x_boundaries_tuple,
+            y_boundaries_tuple=y_boundaries_tuple,
+            resolution=resolution
+        )
 
 ========================================
 
@@ -1412,19 +1505,201 @@ def compute_boundary_factor(self, points_tensor, domain_scale=None):
 
 ========================================
 
---- FILE: simulation_domain_engine\material_domain\material_domain.py ---
+--- FILE: simulation_domain_engine\material_domain\assign_coercive_direction.py ---
+
+import math
+
+def assign_coercive_direction(self, direction=(0, 1)):
+    """
+    Tính lại độ lớn lực kháng từ Hc theo Pythagoras từ Hc hiện tại,
+    sau đó chuẩn hóa hướng truyền vào và cập nhật lại self.physics_config.coercive.
+    """
+    current_coercive = self.physics_config.coercive
+
+    if callable(current_coercive):
+        raise TypeError("Không thể áp dụng assign_coercive_direction khi coercive là một hàm/callable.")
+
+    if isinstance(current_coercive, (list, tuple)):
+        hc_x = float(current_coercive[0])
+        hc_y = float(current_coercive[1])
+    elif hasattr(current_coercive, 'tolist'):
+        c_list = current_coercive.tolist()
+        hc_x, hc_y = float(c_list[0]), float(c_list[1])
+    else:
+        raise ValueError("Kiểu dữ liệu của coercive không hợp lệ.")
+
+    # 1. Tính cường độ Hc hiện tại bằng Pythagoras
+    hc_magnitude = math.sqrt(hc_x**2 + hc_y**2)
+
+    dir_x, dir_y = float(direction[0]), float(direction[1])
+    dir_norm = math.sqrt(dir_x**2 + dir_y**2)
+
+    if dir_norm <= 1e-12:
+        raise ValueError("Vectơ hướng (direction) không được bằng 0.")
+
+    # 2. Chuẩn hóa vectơ hướng
+    unit_x = dir_x / dir_norm
+    unit_y = dir_y / dir_norm
+
+    # 3. Cập nhật lại thuộc tính coercive theo hướng mới
+    self.physics_config.coercive = [hc_magnitude * unit_x, hc_magnitude * unit_y]
+
+    print(f"[*] Domain '{self.domain_name}': Đã cập nhật hướng Hc thành {direction} với độ lớn |Hc| = {hc_magnitude:.2f} A/m.")
+    return self
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\assign_material.py ---
+
+def assign_material(self, material_name="air"):
+    if self.simulation_domain is None or not hasattr(self.simulation_domain, 'material_data'):
+        raise RuntimeError(f"Lỗi: Domain '{self.domain_name}' chưa được gán vào SimulationDomain nên không thể tra cứu vật liệu.")
+
+    mat = self.simulation_domain.material_data.get_material(material_name)
+    self.physics_config.relative_permeability = mat.relative_permeability
+    self.physics_config.coercive = mat.coercive
+    self.physics_config.bh_curve_data = mat.bh_curve_data
+    
+    print(f"[*] Domain '{self.domain_name}': Đã gán thành công vật liệu '{mat.name}'.")
+    return self
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\build_domain.py ---
 
 import torch
-import torch.nn as nn
-from types import SimpleNamespace
-from simulation_domain_engine.material_domain.polygon_signed_distance_field import compute_polygon_signed_distance_field
+
+def build_domain(self):
+    if self.geometry_config.outline is not None:
+        if len(self.geometry_config.outline) < 3:
+            raise ValueError(f"Lỗi: Outline của domain '{self.domain_name}' phải có ít nhất 3 đỉnh.")
+        self.outline_tensor = torch.tensor(self.geometry_config.outline, dtype=torch.float32)
+        self._compute_section_area()
+        if self.section_area <= 1e-12:
+            raise ValueError(f"Lỗi: Diện tích của domain '{self.domain_name}' bằng 0 hoặc suy biến.")
+        self._compute_current_density()
+    else:
+        raise ValueError(f"Lỗi: Domain '{self.domain_name}' chưa được cấp outline trong geometry_config.")
+        
+    if self.physics_config.bh_curve_data is None:
+        self._compute_constant_bh_curve()
+        
+    return self
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\compute_constant_bh_curve.py ---
+
+import torch
 
 VACUUM_RELUCTIVITY = 795774.715459
 
+def compute_constant_bh_curve(self):
+    def _default_reluctivity_fn(points_tensor, B_magnitude_tensor=None):
+        const_nu = VACUUM_RELUCTIVITY / float(self.physics_config.relative_permeability)
+        return torch.full((points_tensor.shape[0], 1), const_nu, dtype=points_tensor.dtype, device=points_tensor.device)
+    self.physics_config.bh_curve_data = _default_reluctivity_fn
+    return self.physics_config.bh_curve_data
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\compute_current_density.py ---
+
+def compute_current_density(self):
+    if callable(self.physics_config.current):
+        self.current_density = self.physics_config.current
+        return self.current_density
+    area = self.section_area 
+    if area > 0.0:
+        self.current_density = float(self.physics_config.current) / area
+    else:
+        self.current_density = 0.0
+    return self.current_density
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\compute_section_area.py ---
+
+def compute_section_area(self):
+    if self.geometry_config.outline is None or len(self.geometry_config.outline) < 3:
+        self.section_area = 0.0
+        return self.section_area
+    x = [p[0] for p in self.geometry_config.outline]
+    y = [p[1] for p in self.geometry_config.outline]
+    self.section_area = 0.5 * abs(sum(x[i] * y[i+1] - x[i+1] * y[i] for i in range(-1, len(x)-1)))
+    return self.section_area
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\evaluate_current_density.py ---
+
+import torch
+
+def evaluate_current_density(self, points_tensor):
+    if callable(self.current_density):
+        val = self.current_density(points_tensor)
+        return val.view(-1, 1).to(device=points_tensor.device, dtype=points_tensor.dtype)
+    return torch.full((points_tensor.shape[0], 1), float(self.current_density), dtype=points_tensor.dtype, device=points_tensor.device)
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\evaluate_magnetization_vector.py ---
+
+import torch
+
+def evaluate_magnetization_vector(self, points_tensor):
+    coercive_cfg = self.physics_config.coercive
+    if callable(coercive_cfg):
+        res = coercive_cfg(points_tensor)
+        return res[:, 0:1], res[:, 1:2]
+    if isinstance(coercive_cfg, torch.Tensor):
+        c_tensor = coercive_cfg.to(device=points_tensor.device, dtype=points_tensor.dtype)
+        if c_tensor.dim() == 1:
+            hx = torch.full((points_tensor.shape[0], 1), c_tensor[0].item(), dtype=points_tensor.dtype, device=points_tensor.device)
+            hy = torch.full((points_tensor.shape[0], 1), c_tensor[1].item(), dtype=points_tensor.dtype, device=points_tensor.device)
+            return hx, hy
+        return c_tensor[:, 0:1], c_tensor[:, 1:2]
+    hx_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[0]), dtype=points_tensor.dtype, device=points_tensor.device)
+    hy_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[1]), dtype=points_tensor.dtype, device=points_tensor.device)
+    return hx_tensor, hy_tensor
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\evaluate_reluctivity.py ---
+
+def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None):
+    if self.physics_config.bh_curve_data is None:
+        self._compute_constant_bh_curve()
+    try:
+        return self.physics_config.bh_curve_data(points_tensor, B_magnitude_tensor)
+    except TypeError:
+        return self.physics_config.bh_curve_data(points_tensor)
+
+========================================
+
+--- FILE: simulation_domain_engine\material_domain\material_domain.py ---
+
+from typing import Tuple, Union, List, Optional, Any
+from types import SimpleNamespace
+import torch
+import torch.nn as nn
+
+from simulation_domain_engine.material_domain.polygon_signed_distance_field import compute_polygon_signed_distance_field
+from simulation_domain_engine.material_domain import assign_material as _assign_material_module
+from simulation_domain_engine.material_domain import assign_coercive_direction as _assign_coercive_direction_module
+from simulation_domain_engine.material_domain import build_domain as _build_domain_module
+from simulation_domain_engine.material_domain import compute_constant_bh_curve as _compute_constant_bh_curve_module
+from simulation_domain_engine.material_domain import compute_section_area as _compute_section_area_module
+from simulation_domain_engine.material_domain import compute_current_density as _compute_current_density_module
+from simulation_domain_engine.material_domain import evaluate_reluctivity as _evaluate_reluctivity_module
+from simulation_domain_engine.material_domain import evaluate_magnetization_vector as _evaluate_magnetization_vector_module
+from simulation_domain_engine.material_domain import evaluate_current_density as _evaluate_current_density_module
+
 class MaterialDomain:
-    def __init__(self, domain_name="air_domain", simulation_domain=None):
+
+    def __init__(self, domain_name: str = "air_domain", simulation_domain: Optional[Any] = None) -> None:
         self.simulation_domain = simulation_domain
-        self.domain_id = None
+        self.domain_id: Optional[int] = None
         self.domain_name = domain_name
         
         self.geometry_config = SimpleNamespace(
@@ -1459,88 +1734,45 @@ class MaterialDomain:
             fourier_mapping_size=128
         )
         
-        self.outline_tensor = None
-        self.section_area = 0.0
-        self.current_density = 0.0
+        self.outline_tensor: Optional[torch.Tensor] = None
+        self.section_area: float = 0.0
+        self.current_density: Union[float, Any] = 0.0
 
-    def build_domain(self):
-        if self.geometry_config.outline is not None:
-            if len(self.geometry_config.outline) < 3:
-                raise ValueError(f"Lỗi: Outline của domain '{self.domain_name}' phải có ít nhất 3 đỉnh.")
-            self.outline_tensor = torch.tensor(self.geometry_config.outline, dtype=torch.float32)
-            self._compute_section_area()
-            if self.section_area <= 1e-12:
-                raise ValueError(f"Lỗi: Diện tích của domain '{self.domain_name}' bằng 0 hoặc suy biến.")
-            self._compute_current_density()
-        else:
-            raise ValueError(f"Lỗi: Domain '{self.domain_name}' chưa được cấp outline trong geometry_config.")
-            
-        if self.physics_config.bh_curve_data is None:
-            self._compute_constant_bh_curve()
-            
-        return self
+    def assign_material(self, material_name: str = "air") -> "MaterialDomain":
+        return _assign_material_module.assign_material(self, material_name=material_name)
 
-    def _compute_constant_bh_curve(self):
-        def _default_reluctivity_fn(points_tensor, B_magnitude_tensor=None):
-            const_nu = VACUUM_RELUCTIVITY / float(self.physics_config.relative_permeability)
-            return torch.full((points_tensor.shape[0], 1), const_nu, dtype=points_tensor.dtype, device=points_tensor.device)
-        self.physics_config.bh_curve_data = _default_reluctivity_fn
-        return self.physics_config.bh_curve_data
+    def assign_coercive_direction(self, direction: Tuple[float, float] = (0, 1)) -> "MaterialDomain":
+        return _assign_coercive_direction_module.assign_coercive_direction(self, direction=direction)
 
-    def _compute_section_area(self):
-        if self.geometry_config.outline is None or len(self.geometry_config.outline) < 3:
-            self.section_area = 0.0
-            return self.section_area
-        x = [p[0] for p in self.geometry_config.outline]
-        y = [p[1] for p in self.geometry_config.outline]
-        self.section_area = 0.5 * abs(sum(x[i] * y[i+1] - x[i+1] * y[i] for i in range(-1, len(x)-1)))
-        return self.section_area
+    def build_domain(self) -> "MaterialDomain":
+        return _build_domain_module.build_domain(self)
 
-    def _compute_current_density(self):
-        if callable(self.physics_config.current):
-            self.current_density = self.physics_config.current
-            return self.current_density
-        area = self.section_area 
-        if area > 0.0:
-            self.current_density = float(self.physics_config.current) / area
-        else:
-            self.current_density = 0.0
-        return self.current_density
+    def _compute_constant_bh_curve(self) -> Any:
+        return _compute_constant_bh_curve_module.compute_constant_bh_curve(self)
 
-    def compute_signed_distance_field(self, points_tensor):
+    def _compute_section_area(self) -> float:
+        return _compute_section_area_module.compute_section_area(self)
+
+    def _compute_current_density(self) -> Union[float, Any]:
+        return _compute_current_density_module.compute_current_density(self)
+
+    def compute_signed_distance_field(self, points_tensor: torch.Tensor) -> torch.Tensor:
         if self.outline_tensor is None:
             raise RuntimeError(f"Domain '{self.domain_name}' chưa được gọi hàm build_domain().")
         return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
 
-    def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None):
-        if self.physics_config.bh_curve_data is None:
-            self._compute_constant_bh_curve()
-        try:
-            return self.physics_config.bh_curve_data(points_tensor, B_magnitude_tensor)
-        except TypeError:
-            return self.physics_config.bh_curve_data(points_tensor)
+    def evaluate_reluctivity(
+        self,
+        points_tensor: torch.Tensor,
+        B_magnitude_tensor: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        return _evaluate_reluctivity_module.evaluate_reluctivity(self, points_tensor, B_magnitude_tensor)
 
-    def evaluate_magnetization_vector(self, points_tensor):
-        coercive_cfg = self.physics_config.coercive
-        if callable(coercive_cfg):
-            res = coercive_cfg(points_tensor)
-            return res[:, 0:1], res[:, 1:2]
-        if isinstance(coercive_cfg, torch.Tensor):
-            c_tensor = coercive_cfg.to(device=points_tensor.device, dtype=points_tensor.dtype)
-            if c_tensor.dim() == 1:
-                hx = torch.full((points_tensor.shape[0], 1), c_tensor[0].item(), dtype=points_tensor.dtype, device=points_tensor.device)
-                hy = torch.full((points_tensor.shape[0], 1), c_tensor[1].item(), dtype=points_tensor.dtype, device=points_tensor.device)
-                return hx, hy
-            return c_tensor[:, 0:1], c_tensor[:, 1:2]
-        hx_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[0]), dtype=points_tensor.dtype, device=points_tensor.device)
-        hy_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[1]), dtype=points_tensor.dtype, device=points_tensor.device)
-        return hx_tensor, hy_tensor
+    def evaluate_magnetization_vector(self, points_tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        return _evaluate_magnetization_vector_module.evaluate_magnetization_vector(self, points_tensor)
 
-    def evaluate_current_density(self, points_tensor):
-        if callable(self.current_density):
-            val = self.current_density(points_tensor)
-            return val.view(-1, 1).to(device=points_tensor.device, dtype=points_tensor.dtype)
-        return torch.full((points_tensor.shape[0], 1), float(self.current_density), dtype=points_tensor.dtype, device=points_tensor.device)
+    def evaluate_current_density(self, points_tensor: torch.Tensor) -> torch.Tensor:
+        return _evaluate_current_density_module.evaluate_current_density(self, points_tensor)
 
 ========================================
 
@@ -1614,6 +1846,213 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     )
     
     return distance_sign * minimum_distances
+
+========================================
+
+--- FILE: simulation_domain_engine\material_library\__init__.py ---
+
+# __init__.py for material_library module
+from .material_data import MaterialData, MaterialDatabase
+
+__all__ = ["MaterialData", "MaterialDatabase"]
+
+========================================
+
+--- FILE: simulation_domain_engine\material_library\material_data.py ---
+
+import torch
+import numpy as np
+from types import SimpleNamespace
+
+VACUUM_RELUCTIVITY = 795774.715459  # nu0 = 1 / mu0
+VACUUM_PERMEABILITY = 1.2566370614359173e-06  # mu0
+
+class MaterialData:
+
+    def __init__(self):
+        self.data = [
+            SimpleNamespace(
+                name="air",
+                relative_permeability=1.0,
+                coercive=[0.0, 0.0],
+                bh_curve_data=None
+            ),
+            SimpleNamespace(
+                name="N30UH",
+                relative_permeability=1.05,
+                coercive=[0.0, 852000.0],
+                bh_curve_data=None
+            ),
+            SimpleNamespace(
+                name="NdFe30",
+                relative_permeability=1.0445730167132,
+                coercive=[0.0, 838000.0],
+                bh_curve_data=None
+            ),
+            SimpleNamespace(
+                name="steel_1008",
+                relative_permeability=1000.0,  # mu_r ban đầu
+                coercive=[0.0, 0.0],
+                bh_curve_data=[
+                    # B_points (Tesla)
+                    [0.0, 0.2402, 0.8654, 1.1106, 1.2458, 1.331, 1.5, 1.6, 1.683, 
+                     1.741, 1.78, 1.905, 2.025, 2.085, 2.13, 2.165, 2.28, 2.485, 2.5851],
+                    # H_points (A/m)
+                    [0.0, 159.2, 318.3, 477.5, 636.6, 795.8, 1591.5, 3183.1, 4774.6, 
+                     6366.2, 7957.7, 15915.5, 31831.0, 47746.5, 63662.0, 79577.5, 
+                     159155.0, 318310.0, 397887.0]
+                ]
+            )
+        ]
+
+    def get_material(self, name: str) -> SimpleNamespace:
+        
+        for mat in self.data:
+            if mat.name.lower() == name.lower():
+                return mat
+        raise KeyError(f"Lỗi: Không tìm thấy vật liệu '{name}' trong MaterialData!")
+
+    def __getitem__(self, index):
+        """Cho phép truy cập dạng index: mat_data[0]"""
+        return self.data[index]
+
+    def __len__(self):
+        """Trả về số lượng vật liệu trong kho"""
+        return len(self.data)
+
+========================================
+
+--- FILE: simulation_domain_engine\simulation_domain_methods\add_material_domain_method.py ---
+
+def add_material_domain(self, domain_object):
+    domain_object.simulation_domain = self
+    if domain_object.outline_tensor is None:
+        domain_object.build_domain()
+
+    if getattr(domain_object, 'domain_name', '') != 'background':
+        self.validate_non_overlapping_domains(candidate_domain=domain_object)
+
+    if self.background_domain in self.domains_list:
+        insert_idx = len(self.domains_list) - 1
+        self.domains_list.insert(insert_idx, domain_object)
+    else:
+        self.domains_list.append(domain_object)
+        
+    for idx, dom in enumerate(self.domains_list):
+        dom.domain_id = idx + 1
+    return self
+
+========================================
+
+--- FILE: simulation_domain_engine\simulation_domain_methods\build_background_domain.py ---
+
+from simulation_domain_engine.material_domain.material_domain import MaterialDomain
+
+def build_background_domain(self, domain_name="background", training_config=None, network_config=None):
+    if self.background_domain in self.domains_list:
+        self.domains_list.remove(self.background_domain)
+
+    x_min, x_max = self.boundary.geometry_config.x_boundaries_tuple
+    y_min, y_max = self.boundary.geometry_config.y_boundaries_tuple
+    
+    box_outline = [
+        [x_min, y_min],
+        [x_max, y_min],
+        [x_max, y_max],
+        [x_min, y_max]
+    ]
+
+    bg_domain = MaterialDomain(domain_name=domain_name, simulation_domain=self)
+    bg_domain.geometry_config.outline = box_outline
+    bg_domain.physics_config.relative_permeability = 1.0
+    bg_domain.physics_config.coercive = [0.0, 0.0]
+    bg_domain.physics_config.current = 0.0
+    bg_domain.training_config.number_of_interior_points = 4000
+    bg_domain.training_config.number_of_surface_points = 0
+
+    if training_config is not None:
+        for key, value in vars(training_config).items():
+            setattr(bg_domain.training_config, key, value)
+
+    if network_config is not None:
+        for key, value in vars(network_config).items():
+            setattr(bg_domain.network_config, key, value)
+
+    bg_domain.build_domain()
+
+    total_box_area = (x_max - x_min) * (y_max - y_min)
+    total_sub_material_area = sum(d.section_area for d in self.domains_list)
+    bg_domain.section_area = max(0.0, total_box_area - total_sub_material_area)
+
+    self.background_domain = bg_domain
+    self.domains_list.append(self.background_domain)
+
+    for idx, dom in enumerate(self.domains_list):
+        dom.domain_id = idx + 1
+
+    return self.background_domain
+
+========================================
+
+--- FILE: simulation_domain_engine\simulation_domain_methods\display_methods.py ---
+
+from simulation_domain_engine.domain_visualizer import display_simulation_domain
+
+def plot_problem_definition(self, resolution=100):
+    display_simulation_domain(self, self.x_boundaries_tuple, self.y_boundaries_tuple, resolution)
+
+def display(self, x_boundaries_tuple=None, y_boundaries_tuple=None, resolution=150):
+    xb = x_boundaries_tuple if x_boundaries_tuple is not None else self.x_boundaries_tuple
+    yb = y_boundaries_tuple if y_boundaries_tuple is not None else self.y_boundaries_tuple
+    display_simulation_domain(self, xb, yb, resolution)
+
+========================================
+
+--- FILE: simulation_domain_engine\simulation_domain_methods\get_domain_count.py ---
+
+def get_domain_count(self):
+    return len(self.domains_list)
+
+========================================
+
+--- FILE: simulation_domain_engine\simulation_domain_methods\set_boundary.py ---
+
+def set_boundary(self, boundary_object):
+    boundary_object.simulation_domain = self
+    self.boundary = boundary_object
+    return self
+
+========================================
+
+--- FILE: simulation_domain_engine\simulation_domain_methods\validate_non_overlapping_domains.py ---
+
+import torch
+
+def validate_non_overlapping_domains(self, candidate_domain=None, check_resolution=80):
+    if getattr(self.physics_config, 'allow_overlapping_domains', False):
+        return True
+    mat_domains = [d for d in self.domains_list if getattr(d, 'domain_name', '') != 'background']
+    if candidate_domain is not None and getattr(candidate_domain, 'domain_name', '') != 'background':
+        if candidate_domain not in mat_domains:
+            mat_domains.append(candidate_domain)
+    if len(mat_domains) < 2:
+        return True
+
+    x_min, x_max = self.x_boundaries_tuple
+    y_min, y_max = self.y_boundaries_tuple
+    xs = torch.linspace(x_min, x_max, check_resolution)
+    ys = torch.linspace(y_min, y_max, check_resolution)
+    Xg, Yg = torch.meshgrid(xs, ys, indexing='ij')
+    test_pts = torch.column_stack([Xg.reshape(-1), Yg.reshape(-1)])
+
+    strict_inside_counts = torch.zeros(test_pts.shape[0], dtype=torch.int32)
+    for d in mat_domains:
+        sdf = d.compute_signed_distance_field(test_pts).view(-1)
+        strict_inside_counts += (sdf < -1e-6).int()
+
+    if torch.any(strict_inside_counts > 1):
+        raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau.")
+    return True
 
 ========================================
 
@@ -2293,7 +2732,7 @@ def main():
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
-    print("version 1.0 - Dual Magnets on Constant Permeability Iron Yoke Simulation")
+    print("version 2.0 - Dual Magnets on Constant Permeability Iron Yoke Simulation (Fixed Multi-Material Interface)")
     
     model = ElectroMagneticPINN()
     
@@ -2318,7 +2757,7 @@ def main():
     model.training_config.lbfgs_maximum_evaluations = 2500
     model.training_config.lbfgs_tolerance_gradient = 1e-8
     model.training_config.lbfgs_tolerance_change = 1e-10
-    model.training_config.lbfgs_history_size = 50
+    model.training_config.lbfgs_history_size = 80
     
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50
@@ -2344,11 +2783,11 @@ def main():
     iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.0
     iron_yoke.training_config.interface_potential_weight = 1000.0
-    iron_yoke.training_config.interface_bn_weight = 350.0
-    iron_yoke.training_config.interface_ht_weight = 350.0
-    iron_yoke.training_config.pde_fading_beta = 90.0
-    iron_yoke.training_config.number_of_interior_points = 2500
-    iron_yoke.training_config.number_of_surface_points = 1200
+    iron_yoke.training_config.interface_bn_weight = 400.0
+    iron_yoke.training_config.interface_ht_weight = 400.0
+    iron_yoke.training_config.pde_fading_beta = 80.0
+    iron_yoke.training_config.number_of_interior_points = 3000
+    iron_yoke.training_config.number_of_surface_points = 1600
     iron_yoke.network_config.hidden_layers = 4
     iron_yoke.network_config.hidden_neurons = 64
     iron_yoke.network_config.activation_function = nn.SiLU()
@@ -2370,11 +2809,11 @@ def main():
     magnet_left.training_config.pde_weight = 1.0
     magnet_left.training_config.interface_weight = 1.0
     magnet_left.training_config.interface_potential_weight = 1000.0
-    magnet_left.training_config.interface_bn_weight = 350.0
-    magnet_left.training_config.interface_ht_weight = 350.0
-    magnet_left.training_config.pde_fading_beta = 90.0
-    magnet_left.training_config.number_of_interior_points = 1500
-    magnet_left.training_config.number_of_surface_points = 800
+    magnet_left.training_config.interface_bn_weight = 400.0
+    magnet_left.training_config.interface_ht_weight = 400.0
+    magnet_left.training_config.pde_fading_beta = 80.0
+    magnet_left.training_config.number_of_interior_points = 2000
+    magnet_left.training_config.number_of_surface_points = 1200
     magnet_left.network_config.hidden_layers = 4
     magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.SiLU()
@@ -2396,11 +2835,11 @@ def main():
     magnet_right.training_config.pde_weight = 1.0
     magnet_right.training_config.interface_weight = 1.0
     magnet_right.training_config.interface_potential_weight = 1000.0
-    magnet_right.training_config.interface_bn_weight = 350.0
-    magnet_right.training_config.interface_ht_weight = 350.0
-    magnet_right.training_config.pde_fading_beta = 90.0
-    magnet_right.training_config.number_of_interior_points = 1500
-    magnet_right.training_config.number_of_surface_points = 800
+    magnet_right.training_config.interface_bn_weight = 400.0
+    magnet_right.training_config.interface_ht_weight = 400.0
+    magnet_right.training_config.pde_fading_beta = 80.0
+    magnet_right.training_config.number_of_interior_points = 2000
+    magnet_right.training_config.number_of_surface_points = 1200
     magnet_right.network_config.hidden_layers = 4
     magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.SiLU()
@@ -2416,9 +2855,9 @@ def main():
     bg_training_config = type('', (), {})()
     bg_training_config.pde_weight = 1.0
     bg_training_config.interface_weight = 1.0
-    bg_training_config.pde_fading_beta = 90.0
+    bg_training_config.pde_fading_beta = 80.0
     bg_training_config.sampling_density_multiplier = 1.0
-    bg_training_config.number_of_interior_points = 7000
+    bg_training_config.number_of_interior_points = 8000
     bg_training_config.number_of_surface_points = 0
 
     bg_network_config = type('', (), {})()
@@ -2861,6 +3300,278 @@ class TrainingManager:
 ========================================
 
 --- FILE: utils\modify_project.py ---
+
+import os
+
+def update_material_domain_with_coercive_direction():
+    current_directory = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_directory, '..'))
+
+    sim_engine_dir = os.path.join(project_root, 'simulation_domain_engine')
+    mat_domain_dir = os.path.join(sim_engine_dir, 'material_domain')
+
+    os.makedirs(mat_domain_dir, exist_ok=True)
+
+    files_to_create = {}
+
+    # 1. File mới: assign_coercive_direction.py
+    files_to_create[os.path.join(mat_domain_dir, 'assign_coercive_direction.py')] = '''import math
+
+def assign_coercive_direction(self, direction=(0, 1)):
+    """
+    Tính lại độ lớn lực kháng từ Hc theo Pythagoras từ Hc hiện tại,
+    sau đó chuẩn hóa hướng truyền vào và cập nhật lại self.physics_config.coercive.
+    """
+    current_coercive = self.physics_config.coercive
+
+    if callable(current_coercive):
+        raise TypeError("Không thể áp dụng assign_coercive_direction khi coercive là một hàm/callable.")
+
+    if isinstance(current_coercive, (list, tuple)):
+        hc_x = float(current_coercive[0])
+        hc_y = float(current_coercive[1])
+    elif hasattr(current_coercive, 'tolist'):
+        c_list = current_coercive.tolist()
+        hc_x, hc_y = float(c_list[0]), float(c_list[1])
+    else:
+        raise ValueError("Kiểu dữ liệu của coercive không hợp lệ.")
+
+    # 1. Tính cường độ Hc hiện tại bằng Pythagoras
+    hc_magnitude = math.sqrt(hc_x**2 + hc_y**2)
+
+    dir_x, dir_y = float(direction[0]), float(direction[1])
+    dir_norm = math.sqrt(dir_x**2 + dir_y**2)
+
+    if dir_norm <= 1e-12:
+        raise ValueError("Vectơ hướng (direction) không được bằng 0.")
+
+    # 2. Chuẩn hóa vectơ hướng
+    unit_x = dir_x / dir_norm
+    unit_y = dir_y / dir_norm
+
+    # 3. Cập nhật lại thuộc tính coercive theo hướng mới
+    self.physics_config.coercive = [hc_magnitude * unit_x, hc_magnitude * unit_y]
+
+    print(f"[*] Domain '{self.domain_name}': Đã cập nhật hướng Hc thành {direction} với độ lớn |Hc| = {hc_magnitude:.2f} A/m.")
+    return self
+'''
+
+    # 2. assign_material.py
+    files_to_create[os.path.join(mat_domain_dir, 'assign_material.py')] = '''def assign_material(self, material_name="air"):
+    if self.simulation_domain is None or not hasattr(self.simulation_domain, 'material_data'):
+        raise RuntimeError(f"Lỗi: Domain '{self.domain_name}' chưa được gán vào SimulationDomain nên không thể tra cứu vật liệu.")
+
+    mat = self.simulation_domain.material_data.get_material(material_name)
+    self.physics_config.relative_permeability = mat.relative_permeability
+    self.physics_config.coercive = mat.coercive
+    self.physics_config.bh_curve_data = mat.bh_curve_data
+    
+    print(f"[*] Domain '{self.domain_name}': Đã gán thành công vật liệu '{mat.name}'.")
+    return self
+'''
+
+    # 3. build_domain.py
+    files_to_create[os.path.join(mat_domain_dir, 'build_domain.py')] = '''import torch
+
+def build_domain(self):
+    if self.geometry_config.outline is not None:
+        if len(self.geometry_config.outline) < 3:
+            raise ValueError(f"Lỗi: Outline của domain '{self.domain_name}' phải có ít nhất 3 đỉnh.")
+        self.outline_tensor = torch.tensor(self.geometry_config.outline, dtype=torch.float32)
+        self._compute_section_area()
+        if self.section_area <= 1e-12:
+            raise ValueError(f"Lỗi: Diện tích của domain '{self.domain_name}' bằng 0 hoặc suy biến.")
+        self._compute_current_density()
+    else:
+        raise ValueError(f"Lỗi: Domain '{self.domain_name}' chưa được cấp outline trong geometry_config.")
+        
+    if self.physics_config.bh_curve_data is None:
+        self._compute_constant_bh_curve()
+        
+    return self
+'''
+
+    # 4. compute_constant_bh_curve.py
+    files_to_create[os.path.join(mat_domain_dir, 'compute_constant_bh_curve.py')] = '''import torch
+
+VACUUM_RELUCTIVITY = 795774.715459
+
+def compute_constant_bh_curve(self):
+    def _default_reluctivity_fn(points_tensor, B_magnitude_tensor=None):
+        const_nu = VACUUM_RELUCTIVITY / float(self.physics_config.relative_permeability)
+        return torch.full((points_tensor.shape[0], 1), const_nu, dtype=points_tensor.dtype, device=points_tensor.device)
+    self.physics_config.bh_curve_data = _default_reluctivity_fn
+    return self.physics_config.bh_curve_data
+'''
+
+    # 5. compute_section_area.py
+    files_to_create[os.path.join(mat_domain_dir, 'compute_section_area.py')] = '''def compute_section_area(self):
+    if self.geometry_config.outline is None or len(self.geometry_config.outline) < 3:
+        self.section_area = 0.0
+        return self.section_area
+    x = [p[0] for p in self.geometry_config.outline]
+    y = [p[1] for p in self.geometry_config.outline]
+    self.section_area = 0.5 * abs(sum(x[i] * y[i+1] - x[i+1] * y[i] for i in range(-1, len(x)-1)))
+    return self.section_area
+'''
+
+    # 6. compute_current_density.py
+    files_to_create[os.path.join(mat_domain_dir, 'compute_current_density.py')] = '''def compute_current_density(self):
+    if callable(self.physics_config.current):
+        self.current_density = self.physics_config.current
+        return self.current_density
+    area = self.section_area 
+    if area > 0.0:
+        self.current_density = float(self.physics_config.current) / area
+    else:
+        self.current_density = 0.0
+    return self.current_density
+'''
+
+    # 7. evaluate_reluctivity.py
+    files_to_create[os.path.join(mat_domain_dir, 'evaluate_reluctivity.py')] = '''def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None):
+    if self.physics_config.bh_curve_data is None:
+        self._compute_constant_bh_curve()
+    try:
+        return self.physics_config.bh_curve_data(points_tensor, B_magnitude_tensor)
+    except TypeError:
+        return self.physics_config.bh_curve_data(points_tensor)
+'''
+
+    # 8. evaluate_magnetization_vector.py
+    files_to_create[os.path.join(mat_domain_dir, 'evaluate_magnetization_vector.py')] = '''import torch
+
+def evaluate_magnetization_vector(self, points_tensor):
+    coercive_cfg = self.physics_config.coercive
+    if callable(coercive_cfg):
+        res = coercive_cfg(points_tensor)
+        return res[:, 0:1], res[:, 1:2]
+    if isinstance(coercive_cfg, torch.Tensor):
+        c_tensor = coercive_cfg.to(device=points_tensor.device, dtype=points_tensor.dtype)
+        if c_tensor.dim() == 1:
+            hx = torch.full((points_tensor.shape[0], 1), c_tensor[0].item(), dtype=points_tensor.dtype, device=points_tensor.device)
+            hy = torch.full((points_tensor.shape[0], 1), c_tensor[1].item(), dtype=points_tensor.dtype, device=points_tensor.device)
+            return hx, hy
+        return c_tensor[:, 0:1], c_tensor[:, 1:2]
+    hx_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[0]), dtype=points_tensor.dtype, device=points_tensor.device)
+    hy_tensor = torch.full((points_tensor.shape[0], 1), float(coercive_cfg[1]), dtype=points_tensor.dtype, device=points_tensor.device)
+    return hx_tensor, hy_tensor
+'''
+
+    # 9. evaluate_current_density.py
+    files_to_create[os.path.join(mat_domain_dir, 'evaluate_current_density.py')] = '''import torch
+
+def evaluate_current_density(self, points_tensor):
+    if callable(self.current_density):
+        val = self.current_density(points_tensor)
+        return val.view(-1, 1).to(device=points_tensor.device, dtype=points_tensor.dtype)
+    return torch.full((points_tensor.shape[0], 1), float(self.current_density), dtype=points_tensor.dtype, device=points_tensor.device)
+'''
+
+    # 10. FILE MẸ: material_domain.py
+    files_to_create[os.path.join(mat_domain_dir, 'material_domain.py')] = '''from typing import Tuple, Union, List, Optional, Any
+from types import SimpleNamespace
+import torch
+import torch.nn as nn
+
+from simulation_domain_engine.material_domain.polygon_signed_distance_field import compute_polygon_signed_distance_field
+from simulation_domain_engine.material_domain import assign_material as _assign_material_module
+from simulation_domain_engine.material_domain import assign_coercive_direction as _assign_coercive_direction_module
+from simulation_domain_engine.material_domain import build_domain as _build_domain_module
+from simulation_domain_engine.material_domain import compute_constant_bh_curve as _compute_constant_bh_curve_module
+from simulation_domain_engine.material_domain import compute_section_area as _compute_section_area_module
+from simulation_domain_engine.material_domain import compute_current_density as _compute_current_density_module
+from simulation_domain_engine.material_domain import evaluate_reluctivity as _evaluate_reluctivity_module
+from simulation_domain_engine.material_domain import evaluate_magnetization_vector as _evaluate_magnetization_vector_module
+from simulation_domain_engine.material_domain import evaluate_current_density as _evaluate_current_density_module
+
+class MaterialDomain:
+
+    def __init__(self, domain_name: str = "air_domain", simulation_domain: Optional[Any] = None) -> None:
+        self.simulation_domain = simulation_domain
+        self.domain_id: Optional[int] = None
+        self.domain_name = domain_name
+        
+        self.geometry_config = SimpleNamespace(
+            outline=None
+        )
+        
+        self.physics_config = SimpleNamespace(
+            relative_permeability=1.0,
+            coercive=[0.0, 0.0],
+            current=0.0,
+            bh_curve_data=None
+        )
+        
+        self.training_config = SimpleNamespace(
+            pde_weight=1.0,
+            interface_weight=1.0,
+            interface_potential_weight=1000.0,
+            interface_bn_weight=500.0,
+            interface_ht_weight=500.0,
+            pde_fading_beta=150.0,
+            sampling_density_multiplier=1.0,
+            number_of_interior_points=1000,
+            number_of_surface_points=800
+        )
+        
+        self.network_config = SimpleNamespace(
+            hidden_layers=4,
+            hidden_neurons=64,
+            activation_function=nn.SiLU(),
+            fourier_features=True,
+            fourier_sigma=1.2,
+            fourier_mapping_size=128
+        )
+        
+        self.outline_tensor: Optional[torch.Tensor] = None
+        self.section_area: float = 0.0
+        self.current_density: Union[float, Any] = 0.0
+
+    def assign_material(self, material_name: str = "air") -> "MaterialDomain":
+        return _assign_material_module.assign_material(self, material_name=material_name)
+
+    def assign_coercive_direction(self, direction: Tuple[float, float] = (0, 1)) -> "MaterialDomain":
+        return _assign_coercive_direction_module.assign_coercive_direction(self, direction=direction)
+
+    def build_domain(self) -> "MaterialDomain":
+        return _build_domain_module.build_domain(self)
+
+    def _compute_constant_bh_curve(self) -> Any:
+        return _compute_constant_bh_curve_module.compute_constant_bh_curve(self)
+
+    def _compute_section_area(self) -> float:
+        return _compute_section_area_module.compute_section_area(self)
+
+    def _compute_current_density(self) -> Union[float, Any]:
+        return _compute_current_density_module.compute_current_density(self)
+
+    def compute_signed_distance_field(self, points_tensor: torch.Tensor) -> torch.Tensor:
+        if self.outline_tensor is None:
+            raise RuntimeError(f"Domain '{self.domain_name}' chưa được gọi hàm build_domain().")
+        return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
+
+    def evaluate_reluctivity(
+        self,
+        points_tensor: torch.Tensor,
+        B_magnitude_tensor: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        return _evaluate_reluctivity_module.evaluate_reluctivity(self, points_tensor, B_magnitude_tensor)
+
+    def evaluate_magnetization_vector(self, points_tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        return _evaluate_magnetization_vector_module.evaluate_magnetization_vector(self, points_tensor)
+
+    def evaluate_current_density(self, points_tensor: torch.Tensor) -> torch.Tensor:
+        return _evaluate_current_density_module.evaluate_current_density(self, points_tensor)
+'''
+
+    # Ghi file
+    for file_path, content in files_to_create.items():
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content.strip() + '\n')
+        print(f"[*] Đã tạo/cập nhật: {os.path.relpath(file_path, project_root)}")
+
+    print("\n[✔] Cập nhật thành công phương thức assign_coercive_direction vào MaterialDomain!")
 
 
 ========================================

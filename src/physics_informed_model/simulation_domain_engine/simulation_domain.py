@@ -1,15 +1,36 @@
-import torch
+from typing import List, Tuple, Dict, Any, Optional
 from types import SimpleNamespace
+import torch
+
 from simulation_domain_engine.boundary.boundary import Boundary
 from simulation_domain_engine.material_domain.material_domain import MaterialDomain
+from simulation_domain_engine.material_library.material_data import MaterialData
 from simulation_domain_engine.global_signed_distance_field import compute_global_signed_distance_field
-from simulation_domain_engine.global_physical_properties_evaluation import evaluate_global_physical_properties, VACUUM_RELUCTIVITY
-from simulation_domain_engine.domain_visualizer import display_simulation_domain
+from simulation_domain_engine.global_physical_properties_evaluation import (
+    evaluate_global_physical_properties,
+    VACUUM_RELUCTIVITY
+)
+
+from simulation_domain_engine import set_boundary as _set_boundary_fn
+from simulation_domain_engine import validate_non_overlapping_domains as _validate_domains_fn
+from simulation_domain_engine import add_material_domain_method as _add_material_domain_fn
+from simulation_domain_engine import create_material_domain as _create_material_domain_fn
+from simulation_domain_engine import build_background_domain as _build_bg_domain_fn
+from simulation_domain_engine import get_domain_count as _get_domain_count_fn
+from simulation_domain_engine import display_methods as _display_methods_module
+
 
 class SimulationDomain:
-    def __init__(self, electro_magnetic_pinn=None, x_boundaries_tuple=(-0.05, 0.05), y_boundaries_tuple=(-0.05, 0.05)):
+
+    def __init__(
+        self,
+        electro_magnetic_pinn: Optional[Any] = None,
+        x_boundaries_tuple: Tuple[float, float] = (-0.05, 0.05),
+        y_boundaries_tuple: Tuple[float, float] = (-0.05, 0.05)
+    ) -> None:
         self.electro_magnetic_pinn = electro_magnetic_pinn
-        
+        self.material_data = MaterialData()
+
         self.physics_config = SimpleNamespace(
             scale_L0=0.1,
             scale_H0=800000.0,
@@ -22,153 +43,111 @@ class SimulationDomain:
         self.boundary.geometry_config.y_boundaries_tuple = y_boundaries_tuple
         self.boundary.build_boundary()
 
-        self.domains_list = []
-        self.background_domain = None
+        self.domains_list: List[MaterialDomain] = []
+        self.background_domain: Optional[MaterialDomain] = None
 
     @property
-    def L0(self):
-        return self.physics_config.scale_L0
+    def L0(self) -> float:
+        return float(self.physics_config.scale_L0)
 
     @property
-    def H0(self):
-        return self.physics_config.scale_H0
+    def H0(self) -> float:
+        return float(self.physics_config.scale_H0)
 
     @property
-    def nu0(self):
-        return self.physics_config.scale_nu0
+    def nu0(self) -> float:
+        return float(self.physics_config.scale_nu0)
 
     @property
-    def A0(self):
+    def A0(self) -> float:
         return (self.H0 * self.L0) / self.nu0
 
     @property
-    def B0(self):
+    def B0(self) -> float:
         return self.H0 / self.nu0
 
     @property
-    def x_boundaries_tuple(self):
+    def x_boundaries_tuple(self) -> Tuple[float, float]:
         return self.boundary.geometry_config.x_boundaries_tuple
 
     @x_boundaries_tuple.setter
-    def x_boundaries_tuple(self, bounds):
+    def x_boundaries_tuple(self, bounds: Tuple[float, float]) -> None:
         self.boundary.geometry_config.x_boundaries_tuple = bounds
         self.boundary.build_boundary()
 
     @property
-    def y_boundaries_tuple(self):
+    def y_boundaries_tuple(self) -> Tuple[float, float]:
         return self.boundary.geometry_config.y_boundaries_tuple
 
     @y_boundaries_tuple.setter
-    def y_boundaries_tuple(self, bounds):
+    def y_boundaries_tuple(self, bounds: Tuple[float, float]) -> None:
         self.boundary.geometry_config.y_boundaries_tuple = bounds
         self.boundary.build_boundary()
 
-    def set_boundary(self, boundary_object):
-        boundary_object.simulation_domain = self
-        self.boundary = boundary_object
-        return self
+    def set_boundary(self, boundary_object: Boundary) -> "SimulationDomain":
+        return _set_boundary_fn.set_boundary(self, boundary_object)
 
-    def validate_non_overlapping_domains(self, candidate_domain=None, check_resolution=80):
-        if getattr(self.physics_config, 'allow_overlapping_domains', False):
-            return True
-        mat_domains = [d for d in self.domains_list if getattr(d, 'domain_name', '') != 'background']
-        if candidate_domain is not None and getattr(candidate_domain, 'domain_name', '') != 'background':
-            if candidate_domain not in mat_domains:
-                mat_domains.append(candidate_domain)
-        if len(mat_domains) < 2:
-            return True
+    def validate_non_overlapping_domains(
+        self,
+        candidate_domain: Optional[MaterialDomain] = None,
+        check_resolution: int = 80
+    ) -> bool:
+        return _validate_domains_fn.validate_non_overlapping_domains(
+            self, candidate_domain=candidate_domain, check_resolution=check_resolution
+        )
 
-        x_min, x_max = self.x_boundaries_tuple
-        y_min, y_max = self.y_boundaries_tuple
-        xs = torch.linspace(x_min, x_max, check_resolution)
-        ys = torch.linspace(y_min, y_max, check_resolution)
-        Xg, Yg = torch.meshgrid(xs, ys, indexing='ij')
-        test_pts = torch.column_stack([Xg.reshape(-1), Yg.reshape(-1)])
+    def add_material_domain(self, domain_object: MaterialDomain) -> "SimulationDomain":
+        return _add_material_domain_fn.add_material_domain(self, domain_object)
 
-        strict_inside_counts = torch.zeros(test_pts.shape[0], dtype=torch.int32)
-        for d in mat_domains:
-            sdf = d.compute_signed_distance_field(test_pts).view(-1)
-            strict_inside_counts += (sdf < -1e-6).int()
+    def create_material_domain(
+        self,
+        domain_name: str,
+        material_name: Optional[str] = None,
+        outline: Optional[list] = None,
+        coercive_direction: Optional[Tuple[float, float]] = None
+    ) -> MaterialDomain:
+        return _create_material_domain_fn.create_material_domain(
+            self,
+            domain_name=domain_name,
+            material_name=material_name,
+            outline=outline,
+            coercive_direction=coercive_direction
+        )
 
-        if torch.any(strict_inside_counts > 1):
-            raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau.")
-        return True
+    def build_background_domain(
+        self,
+        domain_name: str = "background",
+        training_config: Optional[Any] = None,
+        network_config: Optional[Any] = None
+    ) -> MaterialDomain:
+        return _build_bg_domain_fn.build_background_domain(
+            self,
+            domain_name=domain_name,
+            training_config=training_config,
+            network_config=network_config
+        )
 
-    def add_material_domain(self, domain_object):
-        domain_object.simulation_domain = self
-        if domain_object.outline_tensor is None:
-            domain_object.build_domain()
+    def get_domain_count(self) -> int:
+        return _get_domain_count_fn.get_domain_count(self)
 
-        if getattr(domain_object, 'domain_name', '') != 'background':
-            self.validate_non_overlapping_domains(candidate_domain=domain_object)
-
-        if self.background_domain in self.domains_list:
-            insert_idx = len(self.domains_list) - 1
-            self.domains_list.insert(insert_idx, domain_object)
-        else:
-            self.domains_list.append(domain_object)
-            
-        for idx, dom in enumerate(self.domains_list):
-            dom.domain_id = idx + 1
-        return self
-
-    def build_background_domain(self, domain_name="background", training_config=None, network_config=None):
-        if self.background_domain in self.domains_list:
-            self.domains_list.remove(self.background_domain)
-
-        x_min, x_max = self.boundary.geometry_config.x_boundaries_tuple
-        y_min, y_max = self.boundary.geometry_config.y_boundaries_tuple
-        
-        box_outline = [
-            [x_min, y_min],
-            [x_max, y_min],
-            [x_max, y_max],
-            [x_min, y_max]
-        ]
-
-        bg_domain = MaterialDomain(domain_name=domain_name, simulation_domain=self)
-        bg_domain.geometry_config.outline = box_outline
-        bg_domain.physics_config.relative_permeability = 1.0
-        bg_domain.physics_config.coercive = [0.0, 0.0]
-        bg_domain.physics_config.current = 0.0
-        bg_domain.training_config.number_of_interior_points = 4000
-        bg_domain.training_config.number_of_surface_points = 0
-
-        if training_config is not None:
-            for key, value in vars(training_config).items():
-                setattr(bg_domain.training_config, key, value)
-
-        if network_config is not None:
-            for key, value in vars(network_config).items():
-                setattr(bg_domain.network_config, key, value)
-
-        bg_domain.build_domain()
-
-        total_box_area = (x_max - x_min) * (y_max - y_min)
-        total_sub_material_area = sum(d.section_area for d in self.domains_list)
-        bg_domain.section_area = max(0.0, total_box_area - total_sub_material_area)
-
-        self.background_domain = bg_domain
-        self.domains_list.append(self.background_domain)
-
-        for idx, dom in enumerate(self.domains_list):
-            dom.domain_id = idx + 1
-
-        return self.background_domain
-
-    def get_domain_count(self):
-        return len(self.domains_list)
-
-    def compute_global_signed_distance_field(self, points_tensor):
+    def compute_global_signed_distance_field(self, points_tensor: torch.Tensor) -> torch.Tensor:
         return compute_global_signed_distance_field(self.domains_list, points_tensor)
 
-    def evaluate_global_physical_properties(self, points_tensor):
+    def evaluate_global_physical_properties(self, points_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
         return evaluate_global_physical_properties(self.domains_list, points_tensor)
 
-    def plot_problem_definition(self, resolution=100):
-        display_simulation_domain(self, self.x_boundaries_tuple, self.y_boundaries_tuple, resolution)
+    def plot_problem_definition(self, resolution: int = 100) -> None:
+        _display_methods_module.plot_problem_definition(self, resolution=resolution)
 
-    def display(self, x_boundaries_tuple=None, y_boundaries_tuple=None, resolution=150):
-        xb = x_boundaries_tuple if x_boundaries_tuple is not None else self.x_boundaries_tuple
-        yb = y_boundaries_tuple if y_boundaries_tuple is not None else self.y_boundaries_tuple
-        display_simulation_domain(self, xb, yb, resolution)
+    def display(
+        self,
+        x_boundaries_tuple: Optional[Tuple[float, float]] = None,
+        y_boundaries_tuple: Optional[Tuple[float, float]] = None,
+        resolution: int = 150
+    ) -> None:
+        _display_methods_module.display(
+            self,
+            x_boundaries_tuple=x_boundaries_tuple,
+            y_boundaries_tuple=y_boundaries_tuple,
+            resolution=resolution
+        )
