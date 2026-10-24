@@ -35,20 +35,24 @@ def run_modern_simulation_test():
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
 
+    # Cấu hình chuẩn hóa trường vật lý
     sim_domain.physics_config.scale_H0 = 800000.0 * 1.2
     sim_domain.physics_config.scale_L0 = 0.12
     sim_domain.x_boundaries_tuple = (-0.1, 0.1)
     sim_domain.y_boundaries_tuple = (-0.1, 0.1)
 
+    # Cấu hình lấy mẫu động
     model.sampler_config.dynamic_resampling = True
     model.sampler_config.resample_interval = 100
     model.sampler_config.resample_before_lbfgs = True
 
+    # Cấu hình số vòng huấn luyện
     model.training_config.epochs_adam = 3000
     model.training_config.epochs_lbfgs = 1500
     model.training_config.learning_rate_adam = 1e-3
     model.training_config.target_loss = 1e-7
 
+    # Cấu hình hình ảnh hóa
     model.visualization_config.active = True
     model.visualization_config.update_interval = 50
     model.visualization_config.output_directory = output_dir
@@ -58,7 +62,7 @@ def run_modern_simulation_test():
     model.visualization_config.generate_mp4_video = True
     model.visualization_config.mp4_filename = "modern_training.mp4"
 
-    def apply_standard_config(domain, int_pts=2000, surf_pts=1200, pde_nonlin_w=2.0):
+    def apply_standard_config(domain, int_pts=2000, surf_pts=1200, pde_nonlin_w=1.0):
         domain.training_config.pde_weight = 1.0
         domain.training_config.pde_nonlinear_weight = pde_nonlin_w
         domain.training_config.interface_weight = 1.0
@@ -90,7 +94,7 @@ def run_modern_simulation_test():
     )
     apply_standard_config(iron_yoke, int_pts=3000, surf_pts=1600, pde_nonlin_w=2.0)
 
-    # 2. Nam châm trái (N30UH)
+    # 2. Nam châm trái (N30UH - Tuyến tính)
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left",
         material_name="N30UH",
@@ -102,9 +106,9 @@ def run_modern_simulation_test():
         ],
         coercive_direction=(0, 1)
     )
-    apply_standard_config(magnet_left)
+    apply_standard_config(magnet_left, int_pts=2000, surf_pts=1200, pde_nonlin_w=1.0)
 
-    # 3. Nam châm phải (N30UH)
+    # 3. Nam châm phải (N30UH - Tuyến tính)
     magnet_right = sim_domain.create_material_domain(
         domain_name="magnet_right",
         material_name="N30UH",
@@ -116,7 +120,7 @@ def run_modern_simulation_test():
         ],
         coercive_direction=(0, -1)
     )
-    apply_standard_config(magnet_right)
+    apply_standard_config(magnet_right, int_pts=2000, surf_pts=1200, pde_nonlin_w=1.0)
 
     # 4. Background Air
     bg_training_cfg = SimpleNamespace(
@@ -155,7 +159,9 @@ def run_modern_simulation_test():
     y_coords = np.linspace(yb[0], yb[1], resolution)
     X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
     
-    eval_pts = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
+    # Đưa tensor đánh giá về đúng device tính toán
+    device = model.computation_device
+    eval_pts = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32, device=device)
     A_z_pred, B_x_pred, B_y_pred = model.evaluate_fields(eval_pts)
     
     assert torch.all(torch.isfinite(A_z_pred)) and torch.all(torch.isfinite(B_x_pred)), "Lỗi: Trường dự đoán chứa NaN/Inf!"
@@ -165,11 +171,32 @@ def run_modern_simulation_test():
     B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
 
-    # Đánh giá độ từ thẩm mu_r động tại kết quả cuối
-    B_mag_phys_tensor = torch.tensor(B_mag_grid.ravel(), dtype=torch.float32).unsqueeze(1)
-    nu_pred = iron_yoke.evaluate_reluctivity(eval_pts, B_magnitude_tensor=B_mag_phys_tensor, is_nonlinear=True)
-    mu_r_grid = (VACUUM_RELUCTIVITY / torch.clamp(nu_pred, min=1e-6)).cpu().numpy().reshape(resolution, resolution)
+    # Đánh giá độ từ thẩm mu_r phân loại chính xác theo từng miền vật liệu
+    props = sim_domain.evaluate_global_physical_properties(eval_pts)
+    mat_ids = props["material_classification"].squeeze()
+    
+    B_mag_phys_tensor = torch.tensor(B_mag_grid.ravel(), dtype=torch.float32, device=device).unsqueeze(1)
+    
+    # Tính mu_r cho sắt
+    nu_iron = iron_yoke.evaluate_reluctivity(eval_pts, B_magnitude_tensor=B_mag_phys_tensor, is_nonlinear=True)
+    mu_r_iron = (VACUUM_RELUCTIVITY / torch.clamp(nu_iron, min=1e-6)).squeeze()
 
+    # Tạo mảng mu_r tổng thể cho toàn miền
+    mu_r_tensor = torch.ones_like(mat_ids, device=device) # Mặc định không khí mu_r = 1.0
+    
+    # Miền sắt (Iron Yoke - ID 1)
+    iron_mask = (mat_ids == float(iron_yoke.domain_id))
+    mu_r_tensor[iron_mask] = mu_r_iron[iron_mask]
+    
+    # Miền nam châm (Magnet Left & Right - ID 2, 3)
+    mag_left_mask = (mat_ids == float(magnet_left.domain_id))
+    mag_right_mask = (mat_ids == float(magnet_right.domain_id))
+    mu_r_tensor[mag_left_mask] = getattr(magnet_left.physics_config, 'relative_permeability', 1.05)
+    mu_r_tensor[mag_right_mask] = getattr(magnet_right.physics_config, 'relative_permeability', 1.05)
+
+    mu_r_grid = mu_r_tensor.cpu().numpy().reshape(resolution, resolution)
+
+    # Vẽ kết quả
     fig, axs = plt.subplots(2, 2, figsize=(12, 10))
     c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
     fig.colorbar(c0, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
@@ -184,7 +211,7 @@ def run_modern_simulation_test():
 
     c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_grid, levels=60, cmap="cividis")
     fig.colorbar(c2, ax=axs[1, 0], label=r"$\mu_r$")
-    axs[1, 0].set_title(r"Final Permeability Distribution ($\mu_r$)")
+    axs[1, 0].set_title(r"Physical Permeability Distribution ($\mu_r$)")
     axs[1, 0].set_aspect('equal')
 
     c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
@@ -198,5 +225,8 @@ def run_modern_simulation_test():
 
     print(f"[✔] HOÀN THÀNH BÀI KIỂM THỬ MÔ HÌNH PHI TUYẾN 3 GIAI ĐOẠN! Kết quả đã được lưu tại {output_dir}/")
 
-if __name__ == '__main__':
+def test_simulation4():
     run_modern_simulation_test()
+
+# Gọi trực tiếp ở top-level để tương thích với extract_project
+run_modern_simulation_test()
