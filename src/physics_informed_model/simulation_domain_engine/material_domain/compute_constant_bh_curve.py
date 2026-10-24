@@ -1,10 +1,12 @@
-import torch
-
-VACUUM_RELUCTIVITY = 795774.715459
+from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
 def compute_constant_bh_curve(self):
-    def _default_reluctivity_fn(points_tensor, B_magnitude_tensor=None):
-        const_nu = VACUUM_RELUCTIVITY / float(self.physics_config.relative_permeability)
-        return torch.full((points_tensor.shape[0], 1), const_nu, dtype=points_tensor.dtype, device=points_tensor.device)
-    self.physics_config.bh_curve_data = _default_reluctivity_fn
+    mu_r = float(getattr(self.physics_config, 'relative_permeability', 1.0))
+    nu_val = VACUUM_RELUCTIVITY / mu_r
+
+
+    b_samples = [0.0, 10.0]
+    h_samples = [0.0, 10.0 * nu_val]
+
+    self.physics_config.bh_curve_data = [b_samples, h_samples]
     return self.physics_config.bh_curve_data
