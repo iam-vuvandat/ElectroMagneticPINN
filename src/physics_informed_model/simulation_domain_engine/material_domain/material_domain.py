@@ -29,11 +29,13 @@ class MaterialDomain:
             relative_permeability=1.0,
             coercive=[0.0, 0.0],
             current=0.0,
-            bh_curve_data=None
+            bh_curve_data=None,
+            is_nonlinear=False
         )
         
         self.training_config = SimpleNamespace(
             pde_weight=1.0,
+            pde_nonlinear_weight=1.0,
             interface_weight=1.0,
             interface_potential_weight=1000.0,
             interface_bn_weight=500.0,
@@ -56,6 +58,13 @@ class MaterialDomain:
         self.outline_tensor: Optional[torch.Tensor] = None
         self.section_area: float = 0.0
         self.current_density: Union[float, Any] = 0.0
+        self.coercive_magnitude: float = 0.0
+
+        self.precomputed_edge_starts: Optional[torch.Tensor] = None
+        self.precomputed_edge_vecs: Optional[torch.Tensor] = None
+        self.precomputed_edge_lens: Optional[torch.Tensor] = None
+        self.precomputed_unit_tangents: Optional[torch.Tensor] = None
+        self.precomputed_unit_normals: Optional[torch.Tensor] = None
 
     def assign_material(self, material_name: str = "air") -> "MaterialDomain":
         return _assign_material_module.assign_material(self, material_name=material_name)
@@ -83,9 +92,12 @@ class MaterialDomain:
     def evaluate_reluctivity(
         self,
         points_tensor: torch.Tensor,
-        B_magnitude_tensor: Optional[torch.Tensor] = None
+        B_magnitude_tensor: Optional[torch.Tensor] = None,
+        is_nonlinear: Optional[bool] = None
     ) -> torch.Tensor:
-        return _evaluate_reluctivity_module.evaluate_reluctivity(self, points_tensor, B_magnitude_tensor)
+        return _evaluate_reluctivity_module.evaluate_reluctivity(
+            self, points_tensor, B_magnitude_tensor=B_magnitude_tensor, is_nonlinear=is_nonlinear
+        )
 
     def evaluate_magnetization_vector(self, points_tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return _evaluate_magnetization_vector_module.evaluate_magnetization_vector(self, points_tensor)

@@ -107,26 +107,45 @@ class ElectroMagneticPINN:
             return self.collocation_sampler_instance.generate_all_domain_points()
 
         domains_data = resample_data_fn()
-        for key, d in domains_data.items():
-            print(
-                f"  - Domain [{key} ({d['domain_object'].domain_name})]: "
-                f"interior = {d['interior_points'].shape[0]}, surface = {d['surface_points'].shape[0]}"
-            )
-        
-        print(f"--- Standard Adam Training ({self.training_config.epochs_adam} Epochs) ---")
+        sim_domain = self.simulation_domain_engine_instance
+
+        total_adam_epochs = self.training_config.epochs_adam
+        epochs_stage_1a = int(total_adam_epochs * 0.3)
+        epochs_stage_1b = total_adam_epochs - epochs_stage_1a
+
+        # STAGE 1A: ADAM - LINEAR WARM-UP
+        print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_stage_1a} Epochs) ---")
+        for domain in sim_domain.domains_list:
+            domain.physics_config.is_nonlinear = False
+
         domains_data = self.training_manager_instance.train_adam(
-            epochs=self.training_config.epochs_adam, 
+            epochs=epochs_stage_1a, 
             domains_data=domains_data,
             dynamic_resampling=self.sampler_config.dynamic_resampling,
             resample_fn=resample_data_fn,
             resample_interval=self.sampler_config.resample_interval
         )
-        
+
+        # STAGE 1B: ADAM - NON-LINEAR ADAPTATION
+        print(f"\n--- [STAGE 1B] Adam Non-linear Adaptation ({epochs_stage_1b} Epochs) ---")
+        for domain in sim_domain.domains_list:
+            if getattr(domain.physics_config, 'bh_curve_data', None) is not None:
+                domain.physics_config.is_nonlinear = True
+
+        domains_data = self.training_manager_instance.train_adam(
+            epochs=epochs_stage_1b, 
+            domains_data=domains_data,
+            dynamic_resampling=self.sampler_config.dynamic_resampling,
+            resample_fn=resample_data_fn,
+            resample_interval=self.sampler_config.resample_interval
+        )
+
+        # STAGE 2: L-BFGS REFINEMENT
         if getattr(self.sampler_config, 'resample_before_lbfgs', True):
             domains_data = resample_data_fn()
 
         lbfgs_iters = int(self.training_config.epochs_lbfgs)
-        print(f"--- L-BFGS Refinement (Max {lbfgs_iters} Iterations) ---")
+        print(f"\n--- [STAGE 2] L-BFGS Refinement (Max {lbfgs_iters} Iterations) ---")
         self.training_manager_instance.train_lbfgs(
             max_iterations=lbfgs_iters, 
             domains_data=domains_data
@@ -168,6 +187,6 @@ class ElectroMagneticPINN:
 
                 A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
                 B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
-                B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
+                B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), By_sub_phys)
         
         return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()

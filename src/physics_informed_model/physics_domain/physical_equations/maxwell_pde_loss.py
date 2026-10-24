@@ -25,8 +25,9 @@ class MaxwellPDELoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def compute_residual(self, xy, A_z_star, nu, J_z, H_cx, H_cy):
-        nu_star = nu / self.nu0
+    def compute_residual_components(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_linear_phys):
+        nu_star = nu_phys / self.nu0
+        nu_lin_star = nu_linear_phys / self.nu0
         H_cx_star = H_cx / self.H0
         H_cy_star = H_cy / self.H0
         J_z_star = J_z / (self.H0 / self.L0)
@@ -41,28 +42,25 @@ class MaxwellPDELoss:
         dAz_star_dx_star = grad_A_star[:, 0:1] * self.L0
         dAz_star_dy_star = grad_A_star[:, 1:2] * self.L0
         
-        H_x_star = nu_star * dAz_star_dy_star - H_cx_star
-        H_y_star = -nu_star * dAz_star_dx_star - H_cy_star
+        Hx_lin_star = nu_lin_star * dAz_star_dy_star - H_cx_star
+        Hy_lin_star = -nu_lin_star * dAz_star_dx_star - H_cy_star
         
-        grad_Hx_star = torch.autograd.grad(
-            outputs=H_x_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_x_star),
-            create_graph=True
-        )[0]
-        dHx_star_dy_star = grad_Hx_star[:, 1:2] * self.L0
+        grad_Hx_lin = torch.autograd.grad(outputs=Hx_lin_star, inputs=xy, grad_outputs=torch.ones_like(Hx_lin_star), create_graph=True)[0]
+        grad_Hy_lin = torch.autograd.grad(outputs=Hy_lin_star, inputs=xy, grad_outputs=torch.ones_like(Hy_lin_star), create_graph=True)[0]
         
-        grad_Hy_star = torch.autograd.grad(
-            outputs=H_y_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(H_y_star),
-            create_graph=True
-        )[0]
-        dHy_star_dx_star = grad_Hy_star[:, 0:1] * self.L0
+        res_linear_star = grad_Hy_lin[:, 0:1] * self.L0 - grad_Hx_lin[:, 1:2] * self.L0 - J_z_star
+
+        delta_nu_star = nu_star - nu_lin_star
+        Hx_nonlin_star = delta_nu_star * dAz_star_dy_star
+        Hy_nonlin_star = -delta_nu_star * dAz_star_dx_star
         
-        residual_star = dHy_star_dx_star - dHx_star_dy_star - J_z_star
+        grad_Hx_nonlin = torch.autograd.grad(outputs=Hx_nonlin_star, inputs=xy, grad_outputs=torch.ones_like(Hx_nonlin_star), create_graph=True)[0]
+        grad_Hy_nonlin = torch.autograd.grad(outputs=Hy_nonlin_star, inputs=xy, grad_outputs=torch.ones_like(Hy_nonlin_star), create_graph=True)[0]
+        
+        res_nonlin_star = grad_Hy_nonlin[:, 0:1] * self.L0 - grad_Hx_nonlin[:, 1:2] * self.L0
+
         nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
-        return residual_star / nu_scale
+        return res_linear_star / nu_scale, res_nonlin_star / nu_scale
 
     def compute_fading_weight(self, domain, xy):
         beta = float(getattr(domain.training_config, 'pde_fading_beta', 150.0))

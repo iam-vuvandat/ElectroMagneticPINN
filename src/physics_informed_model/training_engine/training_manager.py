@@ -57,7 +57,8 @@ class TrainingManager:
         dummy_param = next(self.model.parameters())
         total_loss = (dummy_param * 0.0).sum()
 
-        raw_pde_sum = 0.0
+        raw_pde_lin_sum = 0.0
+        raw_pde_nonlin_sum = 0.0
         weighted_pde_sum = 0.0
         az_if_sum = 0.0
         bn_if_sum = 0.0
@@ -73,21 +74,36 @@ class TrainingManager:
                     pts = pts.detach().clone().requires_grad_(True)
                     
                 A_z_star = self.model.forward_network(key, pts)
-                nu = domain.evaluate_reluctivity(pts).to(device)
+
+                grad_A_star = torch.autograd.grad(outputs=A_z_star, inputs=pts, grad_outputs=torch.ones_like(A_z_star), create_graph=True)[0]
+                Bx_star = grad_A_star[:, 1:2] * self.pde_evaluator.L0
+                By_star = -grad_A_star[:, 0:1] * self.pde_evaluator.L0
+                B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * (self.pde_evaluator.H0 / self.pde_evaluator.nu0)
+
+                nu_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys).to(device)
+                nu_lin_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+
                 hx, hy = domain.evaluate_magnetization_vector(pts)
                 hx, hy = hx.to(device), hy.to(device)
                 jz = domain.evaluate_current_density(pts).to(device)
                 
-                residual_star = self.pde_evaluator.compute_residual(
-                    xy=pts, A_z_star=A_z_star, nu=nu, J_z=jz, H_cx=hx, H_cy=hy
+                res_lin, res_nonlin = self.pde_evaluator.compute_residual_components(
+                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_linear_phys=nu_lin_phys
                 )
                 fading_w = self.pde_evaluator.compute_fading_weight(domain, pts)
-                raw_pde = torch.mean((residual_star ** 2) * fading_w)
-                pde_loss = float(domain.training_config.pde_weight) * raw_pde
-                total_loss = total_loss + pde_loss
+                
+                loss_lin = torch.mean((res_lin ** 2) * fading_w)
+                loss_nonlin = torch.mean((res_nonlin ** 2) * fading_w)
 
-                raw_pde_sum += raw_pde.item()
-                weighted_pde_sum += pde_loss.item()
+                w_pde = float(domain.training_config.pde_weight)
+                w_pde_nonlin = float(getattr(domain.training_config, 'pde_nonlinear_weight', 1.0))
+
+                pde_domain_loss = w_pde * loss_lin + w_pde_nonlin * loss_nonlin
+                total_loss = total_loss + pde_domain_loss
+
+                raw_pde_lin_sum += loss_lin.item()
+                raw_pde_nonlin_sum += loss_nonlin.item()
+                weighted_pde_sum += pde_domain_loss.item()
 
             surf_pts = data["surface_points"].to(device)
             if surf_pts.shape[0] > 0 and key != 'background':
@@ -108,18 +124,9 @@ class TrainingManager:
                 ht_if_sum += ht_l.item()
                 weighted_if_sum += scaled_if_loss.item()
 
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        boundary_obj = sim_domain.boundary
-        if getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') == 'soft_loss':
-            b_pts = boundary_obj.sample_boundary_points(device=device)
-            if b_pts.shape[0] > 0:
-                Az_b = self.model.forward_network('background', b_pts)
-                target_b = float(boundary_obj.physics_config.potential_value) / max(sim_domain.A0, 1e-12)
-                b_loss = float(boundary_obj.training_config.boundary_loss_weight) * torch.mean((Az_b - target_b) ** 2)
-                total_loss = total_loss + b_loss
-
         self.last_loss_breakdown = {
-            "raw_pde": raw_pde_sum,
+            "raw_pde_lin": raw_pde_lin_sum,
+            "raw_pde_nonlin": raw_pde_nonlin_sum,
             "weighted_pde": weighted_pde_sum,
             "interface_Az": az_if_sum,
             "interface_Bn": bn_if_sum,
@@ -151,7 +158,6 @@ class TrainingManager:
             
             if not torch.isfinite(loss):
                 non_finite_streak += 1
-                print(f"Adam Epoch {epoch + 1}: CẢNH BÁO - Loss không hữu hạn ({loss.item()}). Chuỗi lỗi: {non_finite_streak}")
                 if non_finite_streak >= 5:
                     stop_reason = "Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp 5 lần."
                     break
@@ -166,24 +172,18 @@ class TrainingManager:
             self.completed_adam_epochs = epoch + 1
             current_loss_value = loss.item()
             
-            if self.target_loss > 0 and current_loss_value <= self.target_loss:
-                stop_reason = f"Đạt ngưỡng target_loss ({self.target_loss}) tại epoch {epoch + 1}."
-                print(f"Adam Epoch {epoch + 1}: {stop_reason} KẾT THÚC ADAM SỚM!")
-                break
-            
             if (epoch + 1) == 1 or (epoch + 1) % 100 == 0:
                 bd = self.last_loss_breakdown
                 print(
                     f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
-                    f"PDE(raw/w) = {bd.get('raw_pde', 0.0):.3e}/{bd.get('weighted_pde', 0.0):.3e} | "
-                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e} | "
-                    f"LR = {self.optimizer_adam.param_groups[0]['lr']:.2e}"
+                    f"PDE(Lin/NonLin) = {bd.get('raw_pde_lin', 0.0):.3e}/{bd.get('raw_pde_nonlin', 0.0):.3e} | "
+                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
                 )
                 
             if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
                 self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
                 
-        print(f"[*] KẾT THÚC HUẤN LUYỆN ADAM. Lý do: {stop_reason}")
+        print(f"[*] KẾT THÚC ADAM. Lý do: {stop_reason}")
         return domains_data
 
     def train_lbfgs(self, max_iterations, domains_data):
@@ -206,7 +206,6 @@ class TrainingManager:
         last_loss = [0.0]
         start_time = time.time()
         base_step = self.completed_adam_epochs
-        stop_reason = f"Hoàn thành tối ưu hóa L-BFGS (tối đa {max_iterations} iterations)."
         
         def closure():
             self.optimizer_lbfgs.zero_grad(set_to_none=True)
@@ -219,20 +218,11 @@ class TrainingManager:
             last_loss[0] = loss.item()
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 25 == 0:
                 bd = self.last_loss_breakdown
-                elapsed = time.time() - start_time
                 print(
-                    f"L-BFGS Closure {lbfgs_counter[0]:05d} ({elapsed:.1f}s) | Total = {loss.item():.4e} | "
-                    f"PDE(w) = {bd.get('weighted_pde', 0.0):.3e} | IF(w) = {bd.get('weighted_interface', 0.0):.3e}"
+                    f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
+                    f"PDE(Lin/NonLin) = {bd.get('raw_pde_lin', 0.0):.3e}/{bd.get('raw_pde_nonlin', 0.0):.3e}"
                 )
-                
-            if self.visualizer and lbfgs_counter[0] % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(base_step + lbfgs_counter[0], loss.item(), domains_data)
-                
             return loss
             
         self.optimizer_lbfgs.step(closure)
-        if self.visualizer and lbfgs_counter[0] > 0 and lbfgs_counter[0] % self.visualizer_update_interval != 0:
-            self.visualizer.save_frame(base_step + lbfgs_counter[0], last_loss[0], domains_data)
-        total_elapsed = time.time() - start_time
-        print(f"[*] KẾT THÚC L-BFGS: {lbfgs_counter[0]} closure calls trong {total_elapsed:.2f}s. {stop_reason}")
         return domains_data

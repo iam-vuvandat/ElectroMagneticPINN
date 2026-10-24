@@ -26,17 +26,11 @@ class InterfaceLoss:
         return self._nu0
 
     def _compute_normals_and_tangents_from_outline(self, domain, surf_pts):
-        vertices = domain.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        start_pts = vertices
-        end_pts = torch.roll(vertices, shifts=-1, dims=0)
-        edge_vecs = end_pts - start_pts
-        edge_lens = torch.sqrt(torch.sum(edge_vecs ** 2, dim=1, keepdim=True) + 1e-12)
-
-        signed_area = 0.5 * torch.sum(start_pts[:, 0] * end_pts[:, 1] - end_pts[:, 0] * start_pts[:, 1])
-        orient = 1.0 if signed_area.item() >= 0.0 else -1.0
-
-        unit_tangents = orient * (edge_vecs / edge_lens)
-        unit_normals = torch.cat([unit_tangents[:, 1:2], -unit_tangents[:, 0:1]], dim=1)
+        start_pts = domain.precomputed_edge_starts.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        edge_vecs = domain.precomputed_edge_vecs.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        edge_lens = domain.precomputed_edge_lens.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        unit_tangents = domain.precomputed_unit_tangents.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        unit_normals = domain.precomputed_unit_normals.to(device=surf_pts.device, dtype=surf_pts.dtype)
 
         pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
         denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
@@ -108,13 +102,15 @@ class InterfaceLoss:
         Bn_b_star = Bx_b_star * nx + By_b_star * ny
         loss_Bn = torch.mean(corner_w * ((Bn_a_star - Bn_b_star) ** 2))
 
-        nu_a_star = domain_a.evaluate_reluctivity(pts) / self.nu0
+        B_mag_a_phys = torch.sqrt(Bx_a_star**2 + By_a_star**2 + 1e-12) * (self.H0 / self.nu0)
+        nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys) / self.nu0
         hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
         hx_a_star = hx_a / self.H0
         hy_a_star = hy_a / self.H0
 
         if domain_b is not None:
-            nu_b_star = domain_b.evaluate_reluctivity(pts) / self.nu0
+            B_mag_b_phys = torch.sqrt(Bx_b_star**2 + By_b_star**2 + 1e-12) * (self.H0 / self.nu0)
+            nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys) / self.nu0
             hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
             hx_b_star = hx_b / self.H0
             hy_b_star = hy_b / self.H0

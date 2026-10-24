@@ -1,5 +1,6 @@
 from typing import List, Tuple, Dict, Any, Optional
 from types import SimpleNamespace
+from functools import cached_property
 import torch
 
 from simulation_domain_engine.boundary.boundary import Boundary
@@ -58,13 +59,17 @@ class SimulationDomain:
     def nu0(self) -> float:
         return float(self.physics_config.scale_nu0)
 
-    @property
+    @cached_property
     def A0(self) -> float:
         return (self.H0 * self.L0) / self.nu0
 
-    @property
+    @cached_property
     def B0(self) -> float:
         return self.H0 / self.nu0
+
+    def clear_scale_cache(self) -> None:
+        self.__dict__.pop('A0', None)
+        self.__dict__.pop('B0', None)
 
     @property
     def x_boundaries_tuple(self) -> Tuple[float, float]:
