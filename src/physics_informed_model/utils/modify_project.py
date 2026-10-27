@@ -1,167 +1,187 @@
 import os
 
-def restore_geometric_outline_interface_updates():
+def apply_three_stage_stable_test_update():
     current_directory = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_directory, '..'))
 
-    equations_dir = os.path.join(project_root, 'physics_domain', 'physical_equations')
+    test_file = os.path.join(project_root, 'tests', 'test_simulation.py')
 
     files_to_update = {}
 
     # =========================================================================
-    # CẬP NHẬT: physics_domain/physical_equations/interface_loss.py
-    # (Khôi phục thuật toán tính pháp tuyến và tiếp tuyến từ outline đa giác)
+    # CẬP NHẬT: tests/test_simulation.py
+    # (Kích hoạt đủ 3 giai đoạn huấn luyện + Trọng số loss phi tuyến nhỏ = 0.01)
     # =========================================================================
-    files_to_update[os.path.join(equations_dir, 'interface_loss.py')] = '''import torch
+    files_to_update[test_file] = '''import os
+import sys
+import shutil
+from types import SimpleNamespace
 
-class InterfaceLoss:
-    def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
-        self.electro_magnetic_pinn = electro_magnetic_pinn
-        self._L0 = L0
-        self._H0 = H0
-        self._nu0 = nu0
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-    @property
-    def L0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.L0
-        return self._L0
+current_directory = os.path.dirname(os.path.abspath(__file__))
+parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
+if parent_directory not in sys.path:
+    sys.path.insert(0, parent_directory)
 
-    @property
-    def H0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.H0
-        return self._H0
+import torch
+import torch.nn as nn
+if torch.cuda.is_available():
+    torch.set_float32_matmul_precision("high")
 
-    @property
-    def nu0(self):
-        if self.electro_magnetic_pinn is not None:
-            return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
-        return self._nu0
+from electro_magnetic_pinn import ElectroMagneticPINN
 
-    def _compute_normals_and_tangents_from_outline(self, domain, surf_pts):
-        """
-        Khôi phục lại thuật toán tính toán chính xác vectơ pháp tuyến (nx, ny), tiếp tuyến (tx, ty)
-        và trọng số dập mượt góc (corner_w) dựa trên cấu trúc các cạnh đa giác outline.
-        """
-        start_pts = domain.precomputed_edge_starts.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        edge_vecs = domain.precomputed_edge_vecs.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        edge_lens = domain.precomputed_edge_lens.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        unit_tangents = domain.precomputed_unit_tangents.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        unit_normals = domain.precomputed_unit_normals.to(device=surf_pts.device, dtype=surf_pts.dtype)
+def run_modern_simulation_test():
+    output_dir = "figure_modern_test"
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir)
+    
+    print("[*] Bắt đầu kiểm thử XPINN với đầy đủ 3 Giai đoạn Huấn luyện (Warm-up, Adaptation, L-BFGS)...")
 
-        pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
-        denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
-        proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
-        closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
-        dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
-        edge_idx = torch.argmin(dist_sq, dim=1)
+    model = ElectroMagneticPINN()
+    sim_domain = model.simulation_domain_engine_instance
 
-        t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
-        corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
+    # 1. Cấu hình chuẩn hóa trường vật lý
+    sim_domain.physics_config.scale_H0 = 800000.0 * 1.2
+    sim_domain.physics_config.scale_L0 = 0.12
+    sim_domain.x_boundaries_tuple = (-0.1, 0.1)
+    sim_domain.y_boundaries_tuple = (-0.1, 0.1)
 
-        if self.electro_magnetic_pinn is not None:
-            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-            mat_verts = [
-                d.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
-                for d in sim_domain.domains_list
-                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
-            ]
-            if mat_verts:
-                all_verts = torch.cat(mat_verts, dim=0)
-                v_dists = torch.cdist(surf_pts.detach(), all_verts, p=2.0)
-                min_v_dist, _ = torch.min(v_dists, dim=1, keepdim=True)
-                vertex_w = (torch.tanh(25.0 * (min_v_dist / self.L0)) ** 2).detach()
-                corner_w = corner_w * vertex_w
+    # 2. Cấu hình Lấy mẫu động
+    model.sampler_config.dynamic_resampling = True
+    model.sampler_config.resample_interval = 100
+    model.sampler_config.resample_points_before_lbfgs_stage = True
 
-        nx = unit_normals[edge_idx, 0:1].detach()
-        ny = unit_normals[edge_idx, 1:2].detach()
-        tx = unit_tangents[edge_idx, 0:1].detach()
-        ty = unit_tangents[edge_idx, 1:2].detach()
-        return nx, ny, tx, ty, corner_w
+    # 3. KÍCH HOẠT ĐỦ 3 GIAI ĐOẠN HUẤN LUYỆN
+    model.training_config.enable_linear_warmup_stage = True
+    model.training_config.enable_nonlinear_adaptation_stage = True
+    model.training_config.enable_lbfgs_refinement_stage = True
 
-    def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
-        if pts.shape[0] == 0:
-            zero = torch.tensor(0.0, device=pts.device)
-            return zero, zero, zero, zero
+    # Phân bổ Epochs: 1000 Adam Warm-up (40%) + 1500 Adam Non-linear Adaptation (60%) + 600 L-BFGS
+    model.training_config.number_of_adam_epochs = 2500
+    model.training_config.linear_warmup_epochs_ratio = 0.4
+    model.training_config.adam_learning_rate = 1e-3
+    model.training_config.target_loss_threshold = 1e-7
 
-        model = self.electro_magnetic_pinn.pinn_architecture_instance
-        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
+    model.training_config.number_of_lbfgs_iterations = 600
+    model.training_config.lbfgs_learning_rate = 0.5
+    model.training_config.lbfgs_maximum_evaluations = 800
 
-        if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
-            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_outline(domain_b, pts)
-            corner_w = torch.minimum(corner_w, corner_w_b)
+    # 4. Cấu hình Trực quan hóa
+    model.visualization_config.active = True
+    model.visualization_config.update_interval = 200
+    model.visualization_config.output_directory = output_dir
+    model.visualization_config.resolution = 80
+    model.visualization_config.generate_gif_animation = True
+    model.visualization_config.gif_filename = "three_stage_training.gif"
+    model.visualization_config.generate_mp4_video = True
+    model.visualization_config.mp4_filename = "three_stage_training.mp4"
 
-        Az_a = model.forward_network(key_a, pts)
-        Az_b = model.forward_network(key_b, pts)
+    # Đặt trọng số pde_nonlin_w ở mức rất nhỏ (mặc định = 0.01) để tăng độ ổn định gradient
+    def apply_standard_config(domain, int_pts=2000, surf_pts=1200, pde_nonlin_w=0.01):
+        domain.training_config.pde_weight = 1.0
+        domain.training_config.pde_nonlinear_weight = pde_nonlin_w  # Trọng số phi tuyến nhỏ dập bùng nổ gradient
+        domain.training_config.interface_weight = 1.5
+        domain.training_config.interface_potential_weight = 1000.0
+        domain.training_config.interface_bn_weight = 400.0
+        domain.training_config.interface_ht_weight = 400.0
+        domain.training_config.pde_fading_beta = 80.0
+        domain.training_config.number_of_interior_points = int_pts
+        domain.training_config.number_of_surface_points = surf_pts
+        
+        domain.network_config.hidden_layers = 4
+        domain.network_config.hidden_neurons = 64
+        domain.network_config.activation_function = nn.SiLU()
+        domain.network_config.fourier_features = True
+        domain.network_config.fourier_sigma = 1.2
+        domain.network_config.fourier_mapping_size = 128
+        return domain.build_domain()
 
-        loss_val = torch.mean((Az_a - Az_b) ** 2)
+    # 1. Khung Ách sắt (Iron Yoke - steel_1008 phi tuyến)
+    iron_yoke = sim_domain.create_material_domain(
+        domain_name="iron_yoke",
+        material_name="steel_1008",
+        outline=[
+            [-0.06, -0.03], 
+            [0.06, -0.03], 
+            [0.06, 0.0], 
+            [-0.06, 0.0]
+        ]
+    )
+    apply_standard_config(iron_yoke, int_pts=3000, surf_pts=1600, pde_nonlin_w=0.01)
 
-        grad_a = torch.autograd.grad(
-            outputs=Az_a,
-            inputs=pts,
-            grad_outputs=torch.ones_like(Az_a),
-            create_graph=True
-        )[0]
+    # 2. Nam châm trái (N30UH)
+    magnet_left = sim_domain.create_material_domain(
+        domain_name="magnet_left",
+        material_name="N30UH",
+        outline=[
+            [-0.05, 0.0], 
+            [-0.005, 0.0], 
+            [-0.005, 0.018], 
+            [-0.05, 0.018]
+        ],
+        coercive_direction=(0, 1)
+    )
+    apply_standard_config(magnet_left, int_pts=2000, surf_pts=1200, pde_nonlin_w=0.01)
 
-        grad_b = torch.autograd.grad(
-            outputs=Az_b,
-            inputs=pts,
-            grad_outputs=torch.ones_like(Az_b),
-            create_graph=True
-        )[0]
+    # 3. Nam châm phải (N30UH)
+    magnet_right = sim_domain.create_material_domain(
+        domain_name="magnet_right",
+        material_name="N30UH",
+        outline=[
+            [0.005, 0.0], 
+            [0.05, 0.0], 
+            [0.05, 0.018], 
+            [0.005, 0.018]
+        ],
+        coercive_direction=(0, -1)
+    )
+    apply_standard_config(magnet_right, int_pts=2000, surf_pts=1200, pde_nonlin_w=0.01)
 
-        Bx_a_star = grad_a[:, 1:2] * self.L0
-        By_a_star = -grad_a[:, 0:1] * self.L0
-        Bx_b_star = grad_b[:, 1:2] * self.L0
-        By_b_star = -grad_b[:, 0:1] * self.L0
+    # 4. Background Air
+    bg_training_cfg = SimpleNamespace(
+        pde_weight=1.0,
+        pde_nonlinear_weight=0.01,
+        interface_weight=1.5,
+        pde_fading_beta=80.0,
+        sampling_density_multiplier=1.0,
+        number_of_interior_points=8000,
+        number_of_surface_points=0
+    )
+    bg_network_cfg = SimpleNamespace(
+        hidden_layers=4,
+        hidden_neurons=64,
+        activation_function=nn.SiLU(),
+        fourier_features=True,
+        fourier_sigma=1.2,
+        fourier_mapping_size=128
+    )
+    sim_domain.build_background_domain(
+        domain_name="background",
+        training_config=bg_training_cfg,
+        network_config=bg_network_cfg
+    )
 
-        Bn_a_star = Bx_a_star * nx + By_a_star * ny
-        Bn_b_star = Bx_b_star * nx + By_b_star * ny
-        loss_Bn = torch.mean(corner_w * ((Bn_a_star - Bn_b_star) ** 2))
+    model.update_electromagnetic_pinn()
+    sim_domain.plot_problem_definition(resolution=100)
+    
+    print("[*] Chạy tiến trình huấn luyện 3 giai đoạn...")
+    model.execute_training_process()
 
-        B_mag_a_phys = torch.sqrt(Bx_a_star**2 + By_a_star**2 + 1e-12) * (self.H0 / self.nu0)
-        nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys) / self.nu0
-        hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
-        hx_a_star = hx_a / self.H0
-        hy_a_star = hy_a / self.H0
+    print("[*] Đang xuất biểu đồ kết quả trường từ sau khi hoàn thành L-BFGS...")
+    model.plot_fields(
+        resolution=180, 
+        save_path=f"{output_dir}/three_stage_final_fields.png"
+    )
 
-        if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
-            B_mag_b_phys = torch.sqrt(Bx_b_star**2 + By_b_star**2 + 1e-12) * (self.H0 / self.nu0)
-            nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys) / self.nu0
-            hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
-            hx_b_star = hx_b / self.H0
-            hy_b_star = hy_b / self.H0
-        else:
-            nu_b_star = torch.ones_like(nu_a_star)
-            hx_b_star = torch.zeros_like(hx_a_star)
-            hy_b_star = torch.zeros_like(hy_a_star)
+    print(f"[✔] HOÀN THÀNH KIỂM THỬ 3 GIAI ĐOẠN! Kết quả lưu tại {output_dir}/")
 
-        Hx_a_star = nu_a_star * Bx_a_star - hx_a_star
-        Hy_a_star = nu_a_star * By_a_star - hy_a_star
-        Hx_b_star = nu_b_star * Bx_b_star - hx_b_star
-        Hy_b_star = nu_b_star * By_b_star - hy_b_star
+def test_simulation4():
+    run_modern_simulation_test()
 
-        Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
-        Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
-        nu_pair_scale = torch.clamp(torch.maximum(nu_a_star.detach(), nu_b_star.detach()), min=1e-6)
-        ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
-        loss_Ht = torch.mean(corner_w * (ht_diff_normalized ** 2))
-
-        w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1000.0))
-        w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 500.0))
-        w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 500.0))
-
-        weighted_interface = w_az * loss_val + w_bn * loss_Bn + w_ht * loss_Ht
-        return weighted_interface, loss_val, loss_Bn, loss_Ht
-
-    def compute_loss_components(self, network_key, domain, surf_pts, background_key='background', contact_tol=1e-4):
-        bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
-        return self._compute_pair_components(network_key, domain, background_key, bg_domain, surf_pts)
-
-    def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
-        weighted_interface, _, _, _ = self.compute_loss_components(network_key, domain, surf_pts, background_key)
-        return weighted_interface
+if __name__ == "__main__":
+    run_modern_simulation_test()
 '''
 
     for file_path, code_content in files_to_update.items():
@@ -169,7 +189,7 @@ class InterfaceLoss:
             f.write(code_content)
         print(f"[*] Đã ghi và cập nhật thành công: {os.path.relpath(file_path, project_root)}")
 
-    print("\n[✔] HOÀN THÀNH KHÔI PHỤC THUẬT TOÁN HÌNH HỌC OUTLINE CŨ CHO INTERFACE LOSS!")
+    print("\n[✔] HOÀN THÀNH CẬP NHẬT FILE TEST VỚI 3 GIAI ĐOẠN HUẤN LUYỆN VÀ LOSS PHÍ TUYẾN ỔN ĐỊNH!")
 
 if __name__ == "__main__":
-    restore_geometric_outline_interface_updates()
+    apply_three_stage_stable_test_update()
