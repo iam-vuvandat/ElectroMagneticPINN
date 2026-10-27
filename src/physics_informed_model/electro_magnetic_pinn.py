@@ -1,5 +1,10 @@
 import torch
 import torch.nn as nn
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 from types import SimpleNamespace
 from architectures.xpinn_architecture import XPINNArchitecture
 from training_engine.training_manager import TrainingManager
@@ -20,18 +25,15 @@ class ElectroMagneticPINN:
         
         # 2. Cấu hình Tiến trình Huấn luyện (Training Process Configuration)
         self.training_config = SimpleNamespace(
-            # Gờ bật/tắt các giai đoạn huấn luyện (Stage Flags)
             enable_linear_warmup_stage=True,
             enable_nonlinear_adaptation_stage=True,
             enable_lbfgs_refinement_stage=True,
             linear_warmup_epochs_ratio=0.3,
 
-            # Tham số thuật toán tối ưu Adam
             adam_learning_rate=1e-3,
             number_of_adam_epochs=2500,
             target_loss_threshold=1e-5,
 
-            # Tham số thuật toán tối ưu L-BFGS
             lbfgs_learning_rate=0.8,
             number_of_lbfgs_iterations=800,
             lbfgs_maximum_evaluations=1000,
@@ -109,6 +111,126 @@ class ElectroMagneticPINN:
             self.visualizer_instance = TrainingVisualizer(electro_magnetic_pinn=self)
             
         self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
+
+    def evaluate_fields(self, points_tensor, return_numpy=False):
+        """
+        Giao diện suy luận cấp cao (High-level Inference API):
+        Tính toán trường Az, Bx, By trên toàn miền vật lý từ các mạng con XPINN.
+        """
+        pinn_arch = self.pinn_architecture_instance
+        sim_domain = self.simulation_domain_engine_instance
+        device = points_tensor.device
+
+        phys_props = sim_domain.evaluate_global_physical_properties(points_tensor)
+        mat_id = phys_props["material_classification"]
+
+        A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+        B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+        B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+
+        for domain in sim_domain.domains_list:
+            d_id = domain.domain_id
+            net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
+            mask_bool = (mat_id == float(d_id))
+            
+            if mask_bool.any():
+                Az_star = pinn_arch.forward_network(net_key, points_tensor)
+                grad_star = torch.autograd.grad(
+                    outputs=Az_star,
+                    inputs=points_tensor,
+                    grad_outputs=torch.ones_like(Az_star),
+                    create_graph=False
+                )[0]
+
+                Az_phys = Az_star * self.A0
+                Bx_phys = grad_star[:, 1:2] * self.A0
+                By_phys = -grad_star[:, 0:1] * self.A0
+
+                A_z_phys = torch.where(mask_bool, Az_phys, A_z_phys)
+                B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
+                B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
+
+        if return_numpy:
+            return (
+                A_z_phys.detach().cpu().numpy(),
+                B_x_phys.detach().cpu().numpy(),
+                B_y_phys.detach().cpu().numpy()
+            )
+
+        return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
+
+    def plot_fields(self, resolution=180, save_path=None, show=False, figsize=(12, 10)):
+        """
+        Đóng gói toàn bộ logic khởi tạo lưới 2D, suy luận trường và hiển thị/lưu đồ thị 4 ô (Az, |B|, mu_r, By).
+        """
+        sim_domain = self.simulation_domain_engine_instance
+        xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
+        x_coords = np.linspace(xb[0], xb[1], resolution)
+        y_coords = np.linspace(yb[0], yb[1], resolution)
+        X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+        
+        device = self.computation_device
+        eval_pts = torch.tensor(
+            np.column_stack((X_grid.ravel(), Y_grid.ravel())),
+            dtype=torch.float32,
+            device=device
+        ).requires_grad_(True)
+        
+        A_z_np, B_x_np, B_y_np = self.evaluate_fields(eval_pts, return_numpy=True)
+        
+        if not (np.all(np.isfinite(A_z_np)) and np.all(np.isfinite(B_x_np))):
+            raise ValueError("Lỗi: Trường từ trường dự đoán chứa giá trị NaN hoặc Inf!")
+
+        A_z_grid = A_z_np.reshape(resolution, resolution)
+        B_x_grid = B_x_np.reshape(resolution, resolution)
+        B_y_grid = B_y_np.reshape(resolution, resolution)
+        B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
+
+        props = sim_domain.evaluate_global_physical_properties(eval_pts)
+        mat_ids = props["material_classification"].squeeze()
+        
+        mu_r_tensor = torch.ones_like(mat_ids, device=device)
+        for domain in sim_domain.domains_list:
+            if getattr(domain, 'domain_name', '') != 'background':
+                mask = (mat_ids == float(domain.domain_id))
+                mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
+                mu_r_tensor[mask] = mu_val
+
+        mu_r_grid = mu_r_tensor.cpu().numpy().reshape(resolution, resolution)
+
+        fig, axs = plt.subplots(2, 2, figsize=figsize)
+        
+        c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
+        fig.colorbar(c0, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
+        axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
+        axs[0, 0].set_aspect('equal')
+
+        b_max = max(float(np.max(B_mag_grid)), 1e-3)
+        c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=np.linspace(0, b_max, 60), cmap="jet")
+        fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
+        axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
+        axs[0, 1].set_aspect('equal')
+
+        c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_grid, levels=60, cmap="cividis")
+        fig.colorbar(c2, ax=axs[1, 0], label=r"$\mu_r$")
+        axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
+        axs[1, 0].set_aspect('equal')
+
+        c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
+        fig.colorbar(c3, ax=axs[1, 1], label=r"$B_y$ (T)")
+        axs[1, 1].set_title(r"Field Component ($B_y$)")
+        axs[1, 1].set_aspect('equal')
+
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=150)
+            
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+
+        return fig, axs
 
     def execute_training_process(self):
         if self.pinn_architecture_instance is None:

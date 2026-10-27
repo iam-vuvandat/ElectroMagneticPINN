@@ -15,54 +15,7 @@ import torch.nn as nn
 if torch.cuda.is_available():
     torch.set_float32_matmul_precision("high")
 
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
 from electro_magnetic_pinn import ElectroMagneticPINN
-from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
-
-
-def evaluate_model_fields(pinn_model, points_tensor):
-    """
-    Hàm hỗ trợ đánh giá trường Az, Bx, By trên toàn miền dựa theo phân loại material_domain.
-    """
-    pinn_arch = pinn_model.pinn_architecture_instance
-    sim_domain = pinn_model.simulation_domain_engine_instance
-    device = points_tensor.device
-
-    phys_props = sim_domain.evaluate_global_physical_properties(points_tensor)
-    mat_id = phys_props["material_classification"]
-
-    A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
-    B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
-    B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
-
-    for domain in sim_domain.domains_list:
-        d_id = domain.domain_id
-        net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
-        mask_bool = (mat_id == float(d_id))
-        
-        if mask_bool.any():
-            Az_star = pinn_arch.forward_network(net_key, points_tensor)
-            grad_star = torch.autograd.grad(
-                outputs=Az_star,
-                inputs=points_tensor,
-                grad_outputs=torch.ones_like(Az_star),
-                create_graph=False
-            )[0]
-
-            Az_phys = Az_star * sim_domain.A0
-            Bx_phys = grad_star[:, 1:2] * sim_domain.A0
-            By_phys = -grad_star[:, 0:1] * sim_domain.A0
-
-            A_z_phys = torch.where(mask_bool, Az_phys, A_z_phys)
-            B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
-            B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
-
-    return A_z_phys, B_x_phys, B_y_phys
-
 
 def run_modern_simulation_test():
     output_dir = "figure_modern_test"
@@ -81,18 +34,18 @@ def run_modern_simulation_test():
     sim_domain.x_boundaries_tuple = (-0.1, 0.1)
     sim_domain.y_boundaries_tuple = (-0.1, 0.1)
 
-    # 2. Cấu hình Lấy mẫu động (Dùng tên biến đầy đủ)
+    # 2. Cấu hình Lấy mẫu động
     model.sampler_config.dynamic_resampling = True
     model.sampler_config.resample_interval = 100
     model.sampler_config.resample_points_before_lbfgs_stage = True
 
-    # 3. Cấu hình Bật/Tắt Giai đoạn & Thuật toán Tối ưu (Sử dụng API mới không viết tắt)
+    # 3. Cấu hình Bật/Tắt Giai đoạn & Thuật toán Tối ưu
     model.training_config.enable_linear_warmup_stage = True
-    model.training_config.enable_nonlinear_adaptation_stage = False  # Tắt thích ứng phi tuyến B-H
-    model.training_config.enable_lbfgs_refinement_stage = False       # Tắt tinh chỉnh L-BFGS (Stage 2)
+    model.training_config.enable_nonlinear_adaptation_stage = False
+    model.training_config.enable_lbfgs_refinement_stage = False
 
     model.training_config.number_of_adam_epochs = 1000
-    model.training_config.linear_warmup_epochs_ratio = 1.0           # 100% số epoch dành cho Linear Warm-up
+    model.training_config.linear_warmup_epochs_ratio = 1.0
     model.training_config.adam_learning_rate = 1e-3
     model.training_config.target_loss_threshold = 1e-7
     model.training_config.number_of_lbfgs_iterations = 0
@@ -197,67 +150,13 @@ def run_modern_simulation_test():
     print("[*] Chạy tiến trình huấn luyện kiểm thử...")
     model.execute_training_process()
 
-    print("[*] Đang đánh giá trường từ trường dự đoán...")
-    resolution = 180
-    xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
-    x_coords = np.linspace(xb[0], xb[1], resolution)
-    y_coords = np.linspace(yb[0], yb[1], resolution)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    
-    device = model.computation_device
-    eval_pts = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32, device=device).requires_grad_(True)
-    
-    A_z_pred, B_x_pred, B_y_pred = evaluate_model_fields(model, eval_pts)
-    
-    assert torch.all(torch.isfinite(A_z_pred)) and torch.all(torch.isfinite(B_x_pred)), "Lỗi: Trường dự đoán chứa NaN/Inf!"
+    print("[*] Đang đánh giá và xuất biểu đồ từ trường bằng High-Level API...")
+    model.plot_fields(
+        resolution=180, 
+        save_path=f"{output_dir}/modern_final_fields.png"
+    )
 
-    A_z_grid = A_z_pred.cpu().numpy().reshape(resolution, resolution)
-    B_x_grid = B_x_pred.cpu().numpy().reshape(resolution, resolution)
-    B_y_grid = B_y_pred.cpu().numpy().reshape(resolution, resolution)
-    B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
-
-    props = sim_domain.evaluate_global_physical_properties(eval_pts)
-    mat_ids = props["material_classification"].squeeze()
-    
-    mu_r_tensor = torch.ones_like(mat_ids, device=device)
-    
-    iron_mask = (mat_ids == float(iron_yoke.domain_id))
-    mag_left_mask = (mat_ids == float(magnet_left.domain_id))
-    mag_right_mask = (mat_ids == float(magnet_right.domain_id))
-    
-    mu_r_tensor[iron_mask] = float(getattr(iron_yoke.physics_config, 'relative_permeability', 1000.0))
-    mu_r_tensor[mag_left_mask] = float(getattr(magnet_left.physics_config, 'relative_permeability', 1.05))
-    mu_r_tensor[mag_right_mask] = float(getattr(magnet_right.physics_config, 'relative_permeability', 1.05))
-
-    mu_r_grid = mu_r_tensor.cpu().numpy().reshape(resolution, resolution)
-
-    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
-    c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
-    fig.colorbar(c0, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
-    axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
-    axs[0, 0].set_aspect('equal')
-
-    b_max = max(float(np.max(B_mag_grid)), 1e-3)
-    c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=np.linspace(0, b_max, 60), cmap="jet")
-    fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
-    axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
-    axs[0, 1].set_aspect('equal')
-
-    c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_grid, levels=60, cmap="cividis")
-    fig.colorbar(c2, ax=axs[1, 0], label=r"$\mu_r$")
-    axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
-    axs[1, 0].set_aspect('equal')
-
-    c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
-    fig.colorbar(c3, ax=axs[1, 1], label=r"$B_y$ (T)")
-    axs[1, 1].set_title(r"Field Component ($B_y$)")
-    axs[1, 1].set_aspect('equal')
-
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/modern_final_fields.png", dpi=150)
-    plt.close('all')
-
-    print(f"[✔] HOÀN THÀNH BÀI KIỂM THỬ MÔ HÌNH TUYẾN TÍNH TRƠN TRU! Kết quả lưu tại {output_dir}/")
+    print(f"[✔] HOÀN THÀNH BÀI KIỂM THỬ TRONG 1 DÒNG LỆNH VẼ BIỂU ĐỒ! Kết quả lưu tại {output_dir}/")
 
 def test_simulation4():
     run_modern_simulation_test()

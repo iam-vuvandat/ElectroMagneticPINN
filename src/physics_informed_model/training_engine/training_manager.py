@@ -8,7 +8,6 @@ class TrainingManager:
         
         t_cfg = self.electro_magnetic_pinn.training_config
         
-        # Hỗ trợ tương thích an toàn cả API mới và cũ
         self.base_learning_rate_adam = getattr(t_cfg, 'adam_learning_rate', getattr(t_cfg, 'learning_rate_adam', 1e-3))
         self.target_loss_threshold = getattr(t_cfg, 'target_loss_threshold', getattr(t_cfg, 'target_loss', 1e-5))
         self.lbfgs_learning_rate = getattr(t_cfg, 'lbfgs_learning_rate', 0.8)
