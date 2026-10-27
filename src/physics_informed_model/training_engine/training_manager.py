@@ -65,7 +65,17 @@ class TrainingManager:
         ht_if_sum = 0.0
         weighted_if_sum = 0.0
 
-        for key, data in domains_data.items():
+        if "domains" in domains_data:
+            domains_dict = domains_data["domains"]
+            shared_dict = domains_data.get("shared_interfaces", {})
+        else:
+            domains_dict = domains_data
+            shared_dict = {}
+
+        bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
+
+        # 1. PDE Loss & Outer Interface Loss
+        for key, data in domains_dict.items():
             domain = data["domain_object"]
             pts = data["interior_points"].to(device)
             
@@ -105,16 +115,17 @@ class TrainingManager:
                 raw_pde_nonlin_sum += loss_nonlin.item()
                 weighted_pde_sum += pde_domain_loss.item()
 
-            surf_pts = data["surface_points"].to(device)
-            if surf_pts.shape[0] > 0 and key != 'background':
-                if not surf_pts.requires_grad:
-                    surf_pts = surf_pts.detach().clone().requires_grad_(True)
+            outer_pts = data.get("outer_surface_points", data.get("surface_points", torch.empty((0, 2)))).to(device)
+            if outer_pts.shape[0] > 0 and key != 'background':
+                if not outer_pts.requires_grad:
+                    outer_pts = outer_pts.detach().clone().requires_grad_(True)
                     
-                w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator.compute_loss_components(
-                    network_key=key,
-                    domain=domain,
-                    surf_pts=surf_pts,
-                    background_key='background'
+                w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
+                    key_a=key,
+                    domain_a=domain,
+                    key_b='background',
+                    domain_b=bg_domain,
+                    pts=outer_pts
                 )
                 scaled_if_loss = float(domain.training_config.interface_weight) * w_if_loss
                 total_loss = total_loss + scaled_if_loss
@@ -123,6 +134,30 @@ class TrainingManager:
                 bn_if_sum += bn_l.item()
                 ht_if_sum += ht_l.item()
                 weighted_if_sum += scaled_if_loss.item()
+
+        # 2. Shared Interface Loss (Ghép trực tiếp Mạng A vs Mạng B)
+        for pair_key, pair_data in shared_dict.items():
+            pts = pair_data["interface_points"].to(device)
+            if pts.shape[0] > 0:
+                if not pts.requires_grad:
+                    pts = pts.detach().clone().requires_grad_(True)
+
+                w_shared_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
+                    key_a=pair_data["key_a"],
+                    domain_a=pair_data["domain_a"],
+                    key_b=pair_data["key_b"],
+                    domain_b=pair_data["domain_b"],
+                    pts=pts
+                )
+                w_weight = 0.5 * (float(pair_data["domain_a"].training_config.interface_weight) + 
+                                  float(pair_data["domain_b"].training_config.interface_weight))
+                scaled_shared_loss = w_weight * w_shared_loss
+                total_loss = total_loss + scaled_shared_loss
+
+                az_if_sum += val_l.item()
+                bn_if_sum += bn_l.item()
+                ht_if_sum += ht_l.item()
+                weighted_if_sum += scaled_shared_loss.item()
 
         self.last_loss_breakdown = {
             "raw_pde_lin": raw_pde_lin_sum,
@@ -204,8 +239,6 @@ class TrainingManager:
 
         lbfgs_counter = [0]
         last_loss = [0.0]
-        start_time = time.time()
-        base_step = self.completed_adam_epochs
         
         def closure():
             self.optimizer_lbfgs.zero_grad(set_to_none=True)

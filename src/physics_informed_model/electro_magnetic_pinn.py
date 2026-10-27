@@ -11,25 +11,36 @@ from utils.training_visualizer import TrainingVisualizer
 
 class ElectroMagneticPINN:
     def __init__(self):
+        # 1. Cấu hình Lấy mẫu điểm (Collocation Sampler Configuration)
         self.sampler_config = SimpleNamespace(
             dynamic_resampling=True,
             resample_interval=100,
-            resample_before_lbfgs=True
+            resample_points_before_lbfgs_stage=True
         )
         
+        # 2. Cấu hình Tiến trình Huấn luyện (Training Process Configuration)
         self.training_config = SimpleNamespace(
-            learning_rate_adam=1e-3,
-            target_loss=1e-5,
-            epochs_adam=2500,
-            epochs_lbfgs=800,
+            # Gờ bật/tắt các giai đoạn huấn luyện (Stage Flags)
+            enable_linear_warmup_stage=True,
+            enable_nonlinear_adaptation_stage=True,
+            enable_lbfgs_refinement_stage=True,
+            linear_warmup_epochs_ratio=0.3,
+
+            # Tham số thuật toán tối ưu Adam
+            adam_learning_rate=1e-3,
+            number_of_adam_epochs=2500,
+            target_loss_threshold=1e-5,
+
+            # Tham số thuật toán tối ưu L-BFGS
             lbfgs_learning_rate=0.8,
-            lbfgs_maximum_iterations=800,
+            number_of_lbfgs_iterations=800,
             lbfgs_maximum_evaluations=1000,
             lbfgs_tolerance_gradient=1e-8,
             lbfgs_tolerance_change=1e-10,
             lbfgs_history_size=50
         )
         
+        # 3. Cấu hình Trực quan hóa (Visualization Configuration)
         self.visualization_config = SimpleNamespace(
             active=False,
             update_interval=200,
@@ -108,85 +119,60 @@ class ElectroMagneticPINN:
 
         domains_data = resample_data_fn()
         sim_domain = self.simulation_domain_engine_instance
+        t_cfg = self.training_config
 
-        total_adam_epochs = self.training_config.epochs_adam
-        epochs_stage_1a = int(total_adam_epochs * 0.3)
-        epochs_stage_1b = total_adam_epochs - epochs_stage_1a
-
-        # STAGE 1A: ADAM - LINEAR WARM-UP
-        print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_stage_1a} Epochs) ---")
-        for domain in sim_domain.domains_list:
-            domain.physics_config.is_nonlinear = False
-
-        domains_data = self.training_manager_instance.train_adam(
-            epochs=epochs_stage_1a, 
-            domains_data=domains_data,
-            dynamic_resampling=self.sampler_config.dynamic_resampling,
-            resample_fn=resample_data_fn,
-            resample_interval=self.sampler_config.resample_interval
-        )
-
-        # STAGE 1B: ADAM - NON-LINEAR ADAPTATION
-        print(f"\n--- [STAGE 1B] Adam Non-linear Adaptation ({epochs_stage_1b} Epochs) ---")
-        for domain in sim_domain.domains_list:
-            if getattr(domain.physics_config, 'bh_curve_data', None) is not None:
-                domain.physics_config.is_nonlinear = True
-
-        domains_data = self.training_manager_instance.train_adam(
-            epochs=epochs_stage_1b, 
-            domains_data=domains_data,
-            dynamic_resampling=self.sampler_config.dynamic_resampling,
-            resample_fn=resample_data_fn,
-            resample_interval=self.sampler_config.resample_interval
-        )
-
-        # STAGE 2: L-BFGS REFINEMENT
-        if getattr(self.sampler_config, 'resample_before_lbfgs', True):
-            domains_data = resample_data_fn()
-
-        lbfgs_iters = int(self.training_config.epochs_lbfgs)
-        print(f"\n--- [STAGE 2] L-BFGS Refinement (Max {lbfgs_iters} Iterations) ---")
-        self.training_manager_instance.train_lbfgs(
-            max_iterations=lbfgs_iters, 
-            domains_data=domains_data
-        )
+        total_adam_epochs = t_cfg.number_of_adam_epochs
+        warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
         
+        epochs_warmup = int(total_adam_epochs * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
+        epochs_adaptation = (total_adam_epochs - epochs_warmup) if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) else 0
+
+        # GIAI ĐOẠN 1A: ADAM LINEAR WARM-UP
+        if getattr(t_cfg, 'enable_linear_warmup_stage', True) and epochs_warmup > 0:
+            print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
+            for domain in sim_domain.domains_list:
+                domain.physics_config.is_nonlinear = False
+
+            domains_data = self.training_manager_instance.train_adam(
+                epochs=epochs_warmup, 
+                domains_data=domains_data,
+                dynamic_resampling=self.sampler_config.dynamic_resampling,
+                resample_fn=resample_data_fn,
+                resample_interval=self.sampler_config.resample_interval
+            )
+        else:
+            print("\n--- [STAGE 1A] Adam Linear Warm-up: Bỏ qua ---")
+
+        # GIAI ĐOẠN 1B: ADAM NON-LINEAR ADAPTATION
+        if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
+            print(f"\n--- [STAGE 1B] Adam Non-linear Adaptation ({epochs_adaptation} Epochs) ---")
+            for domain in sim_domain.domains_list:
+                if getattr(domain.physics_config, 'bh_curve_data', None) is not None:
+                    domain.physics_config.is_nonlinear = True
+
+            domains_data = self.training_manager_instance.train_adam(
+                epochs=epochs_adaptation, 
+                domains_data=domains_data,
+                dynamic_resampling=self.sampler_config.dynamic_resampling,
+                resample_fn=resample_data_fn,
+                resample_interval=self.sampler_config.resample_interval
+            )
+        else:
+            print("\n--- [STAGE 1B] Adam Non-linear Adaptation: Bỏ qua ---")
+
+        # GIAI ĐOẠN 2: L-BFGS REFINEMENT
+        if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
+            if getattr(self.sampler_config, 'resample_points_before_lbfgs_stage', True):
+                domains_data = resample_data_fn()
+
+            lbfgs_iters = int(t_cfg.number_of_lbfgs_iterations)
+            print(f"\n--- [STAGE 2] L-BFGS Refinement (Tối đa {lbfgs_iters} Iterations) ---")
+            self.training_manager_instance.train_lbfgs(
+                max_iterations=lbfgs_iters, 
+                domains_data=domains_data
+            )
+        else:
+            print("\n--- [STAGE 2] L-BFGS Refinement: Bỏ qua ---")
+            
         if self.visualizer_instance:
             self.visualizer_instance.generate_animations()
-
-    def evaluate_fields(self, points_tensor):
-        self.pinn_architecture_instance.eval()
-        points_tensor = points_tensor.to(self.computation_device).detach().clone().requires_grad_(True)
-        
-        props = self.simulation_domain_engine_instance.evaluate_global_physical_properties(points_tensor)
-        mat_id = props["material_classification"]
-        
-        A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
-        B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
-        B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=self.computation_device)
-        
-        for domain in self.simulation_domain_engine_instance.domains_list:
-            d_id = domain.domain_id
-            if getattr(domain, 'domain_name', '') == 'background':
-                net_key = 'background'
-            else:
-                net_key = f'domain_{d_id}'
-                
-            mask_bool = (mat_id == float(d_id))
-            if mask_bool.any():
-                Az_sub_star = self.pinn_architecture_instance.forward_network(net_key, points_tensor)
-                grad_sub_star = torch.autograd.grad(
-                    outputs=Az_sub_star,
-                    inputs=points_tensor,
-                    grad_outputs=torch.ones_like(Az_sub_star),
-                    create_graph=False
-                )[0]
-                Az_sub_phys = Az_sub_star * self.A0
-                Bx_sub_phys = grad_sub_star[:, 1:2] * self.A0
-                By_sub_phys = -grad_sub_star[:, 0:1] * self.A0
-
-                A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
-                B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
-                B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), By_sub_phys)
-        
-        return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()

@@ -65,7 +65,7 @@ class InterfaceLoss:
     def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
         if pts.shape[0] == 0:
             zero = torch.tensor(0.0, device=pts.device)
-            return zero, zero, zero
+            return zero, zero, zero, zero
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
@@ -108,7 +108,7 @@ class InterfaceLoss:
         hx_a_star = hx_a / self.H0
         hy_a_star = hy_a / self.H0
 
-        if domain_b is not None:
+        if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
             B_mag_b_phys = torch.sqrt(Bx_b_star**2 + By_b_star**2 + 1e-12) * (self.H0 / self.nu0)
             nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys) / self.nu0
             hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
@@ -130,56 +130,16 @@ class InterfaceLoss:
         ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
         loss_Ht = torch.mean(corner_w * (ht_diff_normalized ** 2))
 
-        return loss_val, loss_Bn, loss_Ht
+        w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1000.0))
+        w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 500.0))
+        w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 500.0))
+
+        weighted_interface = w_az * loss_val + w_bn * loss_Bn + w_ht * loss_Ht
+        return weighted_interface, loss_val, loss_Bn, loss_Ht
 
     def compute_loss_components(self, network_key, domain, surf_pts, background_key='background', contact_tol=1e-4):
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        bg_domain = sim_domain.background_domain
-        other_domains = [
-            d for d in sim_domain.domains_list
-            if d is not domain and getattr(d, 'domain_name', '') != 'background'
-        ]
-
-        nx_a, ny_a, _, _, _ = self._compute_normals_and_tangents_from_outline(domain, surf_pts)
-
-        remaining_mask = torch.ones(surf_pts.shape[0], dtype=torch.bool, device=surf_pts.device)
-        total_val = torch.tensor(0.0, device=surf_pts.device)
-        total_bn = torch.tensor(0.0, device=surf_pts.device)
-        total_ht = torch.tensor(0.0, device=surf_pts.device)
-
-        for other_dom in other_domains:
-            if not remaining_mask.any():
-                break
-            other_sdf = other_dom.compute_signed_distance_field(surf_pts).view(-1)
-            nx_b, ny_b, _, _, _ = self._compute_normals_and_tangents_from_outline(other_dom, surf_pts)
-            normal_dot = (nx_a * nx_b + ny_a * ny_b).view(-1)
-            contact_mask = remaining_mask & (torch.abs(other_sdf) <= contact_tol) & (normal_dot < -0.85)
-            if contact_mask.any():
-                other_key = f"domain_{other_dom.domain_id}"
-                v_l, bn_l, ht_l = self._compute_pair_components(
-                    network_key, domain, other_key, other_dom, surf_pts[contact_mask]
-                )
-                ratio = float(contact_mask.sum().item()) / float(surf_pts.shape[0])
-                total_val = total_val + ratio * v_l
-                total_bn = total_bn + ratio * bn_l
-                total_ht = total_ht + ratio * ht_l
-                remaining_mask = remaining_mask & (~contact_mask)
-
-        if remaining_mask.any():
-            v_bg, bn_bg, ht_bg = self._compute_pair_components(
-                network_key, domain, background_key, bg_domain, surf_pts[remaining_mask]
-            )
-            ratio = float(remaining_mask.sum().item()) / float(surf_pts.shape[0])
-            total_val = total_val + ratio * v_bg
-            total_bn = total_bn + ratio * bn_bg
-            total_ht = total_ht + ratio * ht_bg
-
-        w_az = float(getattr(domain.training_config, 'interface_potential_weight', 1000.0))
-        w_bn = float(getattr(domain.training_config, 'interface_bn_weight', 500.0))
-        w_ht = float(getattr(domain.training_config, 'interface_ht_weight', 500.0))
-
-        weighted_interface = w_az * total_val + w_bn * total_bn + w_ht * total_ht
-        return weighted_interface, total_val, total_bn, total_ht
+        bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
+        return self._compute_pair_components(network_key, domain, background_key, bg_domain, surf_pts)
 
     def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
         weighted_interface, _, _, _ = self.compute_loss_components(network_key, domain, surf_pts, background_key)

@@ -95,24 +95,62 @@ class TrainingVisualizer:
         mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(self.resolution, self.resolution)
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
-        all_pts = []
-        for key, d in domains_data.items():
-            if d["interior_points"].shape[0] > 0:
-                all_pts.append(d["interior_points"].detach().cpu().numpy())
-            if d["surface_points"].shape[0] > 0:
-                all_pts.append(d["surface_points"].detach().cpu().numpy())
-        points_numpy = np.vstack(all_pts) if all_pts else np.empty((0, 2))
+        # Grid layout 2x4
+        fig, axs = plt.subplots(2, 4, figsize=(23, 10))
         
-        # Grid layout 2x4 với biểu đồ mu_r động
-        fig, axs = plt.subplots(2, 4, figsize=(22, 10))
+        # =========================================================================
+        # [0, 0] Categorized Collocation Points (Phân loại chi tiết từng tập điểm)
+        # =========================================================================
+        ax_pts = axs[0, 0]
+        ax_pts.set_title("Categorized Collocation Points")
         
-        # [0, 0] Collocation Points
-        if points_numpy.shape[0] > 0:
-            axs[0, 0].scatter(points_numpy[:, 0], points_numpy[:, 1], s=1, c='black', alpha=0.5)
-        axs[0, 0].set_title("Collocation Points")
-        axs[0, 0].set_xlim(self.x_bounds)
-        axs[0, 0].set_ylim(self.y_bounds)
-        axs[0, 0].set_aspect('equal')
+        domain_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b']
+        pair_colors = ['#d62728', '#e377c2', '#bcbd22', '#17becf', '#ff1493']
+
+        if "domains" in domains_data:
+            domains_dict = domains_data["domains"]
+            shared_dict = domains_data.get("shared_interfaces", {})
+        else:
+            domains_dict = domains_data
+            shared_dict = {}
+
+        # 1. Tô màu điểm nội miền và điểm biên ngoài của từng miền
+        for idx, (key, d) in enumerate(domains_dict.items()):
+            dom_obj = d["domain_object"]
+            d_name = getattr(dom_obj, "domain_name", key)
+            c_dom = domain_colors[idx % len(domain_colors)]
+            
+            # Điểm nội miền
+            int_pts = d.get("interior_points")
+            if int_pts is not None and int_pts.shape[0] > 0:
+                pts_np = int_pts.detach().cpu().numpy()
+                ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=2.5, color=c_dom, alpha=0.35, label=f"Int: {d_name}")
+
+            # Điểm biên ngoài (tiếp xúc với không khí)
+            outer_pts = d.get("outer_surface_points")
+            if outer_pts is not None and outer_pts.shape[0] > 0:
+                opts_np = outer_pts.detach().cpu().numpy()
+                ax_pts.scatter(opts_np[:, 0], opts_np[:, 1], s=8, color='gray', alpha=0.6, label=f"Air Boundary" if idx==0 else "")
+
+        # 2. Tô màu nổi bật riêng biệt cho từng Cặp ranh giới tiếp xúc giữa các vật liệu khác nhau
+        for p_idx, (pair_key, pair_data) in enumerate(shared_dict.items()):
+            if_pts = pair_data.get("interface_points")
+            if if_pts is not None and if_pts.shape[0] > 0:
+                pts_np = if_pts.detach().cpu().numpy()
+                c_pair = pair_colors[p_idx % len(pair_colors)]
+                name_a = getattr(pair_data["domain_a"], "domain_name", pair_data["key_a"])
+                name_b = getattr(pair_data["domain_b"], "domain_name", pair_data["key_b"])
+                
+                ax_pts.scatter(
+                    pts_np[:, 0], pts_np[:, 1], 
+                    s=20, color=c_pair, marker='x', linewidths=1.5, 
+                    label=f"Interface: {name_a} ↔ {name_b}"
+                )
+
+        ax_pts.legend(loc='upper right', fontsize=6.5, framealpha=0.85)
+        ax_pts.set_xlim(self.x_bounds)
+        ax_pts.set_ylim(self.y_bounds)
+        ax_pts.set_aspect('equal')
         
         # [0, 1] PDE Residual Error
         res_abs = np.clip(np.abs(residual_numpy), 1e-6, 1e2)
@@ -188,11 +226,7 @@ class TrainingVisualizer:
             return
             
         full_gif_path = os.path.join(self.output_directory, output_filename)
-        images = []
-        for filename in self.frame_paths:
-            if os.path.exists(filename):
-                images.append(imageio.imread(filename))
-                
+        images = [imageio.imread(f) for f in self.frame_paths if os.path.exists(f)]
         imageio.mimsave(full_gif_path, images, fps=fps, loop=0)
         print(f"[*] Đã xuất GIF Animation thành công tại: {full_gif_path}")
 
@@ -203,56 +237,23 @@ class TrainingVisualizer:
         codec = getattr(cfg, 'mp4_codec', 'libx264')
         quality = getattr(cfg, 'mp4_quality', 8)
 
-        if not self.frame_paths:
-            print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo MP4.")
-            return
-
         valid_frames = [f for f in self.frame_paths if os.path.exists(f)]
         if not valid_frames:
-            print("[!] CẢNH BÁO: Tất cả frame paths đều không tồn tại trên đĩa.")
             return
 
         full_mp4_path = os.path.join(self.output_directory, output_filename)
-        print(f"[*] Đang xuất Video MP4 ({len(valid_frames)} frames, {fps} fps)...")
-        
-        exported = False
         try:
-            writer = imageio.get_writer(
-                full_mp4_path,
-                fps=fps,
-                codec=codec,
-                pixelformat='yuv420p',
-                quality=quality
-            )
+            writer = imageio.get_writer(full_mp4_path, fps=fps, codec=codec, pixelformat='yuv420p', quality=quality)
             for f in valid_frames:
                 writer.append_data(imageio.imread(f))
             writer.close()
-            exported = True
-            print(f"[*] Đã xuất MP4 Video thành công (imageio) tại: {full_mp4_path}")
+            print(f"[*] Đã xuất MP4 Video thành công tại: {full_mp4_path}")
         except Exception as exc:
-            print(f"[!] Không thể xuất MP4 bằng imageio-ffmpeg ({exc}). Chuyển sang OpenCV fallback...")
-
-        if not exported:
-            try:
-                import cv2
-                sample = cv2.imread(valid_frames[0])
-                height, width, _ = sample.shape
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                video_writer = cv2.VideoWriter(full_mp4_path, fourcc, float(fps), (width, height))
-                for f in valid_frames:
-                    img = cv2.imread(f)
-                    video_writer.write(img)
-                video_writer.release()
-                print(f"[*] Đã xuất MP4 Video thành công (OpenCV) tại: {full_mp4_path}")
-            except Exception as cv_exc:
-                print(f"[!] Lỗi khi xuất video MP4 bằng OpenCV: {cv_exc}")
+            print(f"[!] Lỗi xuất MP4: {exc}")
 
     def generate_animations(self):
         cfg = self.electro_magnetic_pinn.visualization_config
-        gen_gif = getattr(cfg, 'generate_gif_animation', True)
-        gen_mp4 = getattr(cfg, 'generate_mp4_video', True)
-
-        if gen_gif:
+        if getattr(cfg, 'generate_gif_animation', True):
             self.generate_gif()
-        if gen_mp4:
+        if getattr(cfg, 'generate_mp4_video', True):
             self.generate_mp4()

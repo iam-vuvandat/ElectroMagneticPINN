@@ -104,23 +104,15 @@ class CollocationSampler:
 
         return np.array(sub_starts, dtype=np.float32), np.array(sub_ends, dtype=np.float32)
 
-    def sample_domain_surface_points(self, domain_object, number_of_points):
-        if number_of_points <= 0:
+    def sample_subsegments_points(self, sub_starts, sub_ends, number_of_points):
+        if number_of_points <= 0 or sub_starts.shape[0] == 0:
             return torch.empty((0, 2), dtype=torch.float32, device=self.device)
-
-        outline = domain_object.geometry_config.outline
-        if outline is None or len(outline) < 3:
-            raise ValueError(f"Lỗi lấy mẫu bề mặt: Domain '{domain_object.domain_name}' có outline không hợp lệ.")
-
-        sub_starts, sub_ends = self._build_split_subsegments(domain_object)
-        if sub_starts.shape[0] == 0:
-            raise ValueError(f"Lỗi lấy mẫu bề mặt: Chu vi của domain '{domain_object.domain_name}' bằng 0.")
 
         sub_vecs = sub_ends - sub_starts
         sub_lens = np.sqrt(np.sum(sub_vecs ** 2, axis=1))
         total_perimeter = float(np.sum(sub_lens))
         if total_perimeter <= 1e-12:
-            raise ValueError(f"Lỗi lấy mẫu bề mặt: Chu vi của domain '{domain_object.domain_name}' bằng 0.")
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
 
         num_subs = sub_starts.shape[0]
         raw_counts = (sub_lens / total_perimeter) * number_of_points
@@ -143,6 +135,49 @@ class CollocationSampler:
 
         pts_sampled = np.vstack(pts_list) if pts_list else np.empty((0, 2), dtype=np.float32)
         return torch.tensor(pts_sampled, dtype=torch.float32, device=self.device)
+
+    def sample_domain_outer_surface_points(self, domain_object, number_of_points):
+        sub_starts, sub_ends = self._build_split_subsegments(domain_object)
+        if sub_starts.shape[0] == 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+
+        mids = 0.5 * (sub_starts + sub_ends)
+        mids_tensor = torch.tensor(mids, dtype=torch.float32, device=self.device)
+        
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        other_domains = [
+            d for d in sim_domain.domains_list
+            if d is not domain_object and getattr(d, 'domain_name', '') != 'background'
+        ]
+
+        is_outer = np.ones(sub_starts.shape[0], dtype=bool)
+        if other_domains and mids_tensor.shape[0] > 0:
+            for other in other_domains:
+                sdf = other.compute_signed_distance_field(mids_tensor).view(-1).cpu().numpy()
+                is_outer = is_outer & (np.abs(sdf) > 1e-4)
+
+        outer_starts = sub_starts[is_outer]
+        outer_ends = sub_ends[is_outer]
+        return self.sample_subsegments_points(outer_starts, outer_ends, number_of_points)
+
+    def sample_shared_interface_points(self, domain_a, domain_b, number_of_points):
+        sub_starts, sub_ends = self._build_split_subsegments(domain_a)
+        if sub_starts.shape[0] == 0:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+
+        mids = 0.5 * (sub_starts + sub_ends)
+        mids_tensor = torch.tensor(mids, dtype=torch.float32, device=self.device)
+        sdf_b = domain_b.compute_signed_distance_field(mids_tensor).view(-1).cpu().numpy()
+
+        is_shared = np.abs(sdf_b) <= 1e-4
+        shared_starts = sub_starts[is_shared]
+        shared_ends = sub_ends[is_shared]
+        return self.sample_subsegments_points(shared_starts, shared_ends, number_of_points)
+
+    def sample_domain_surface_points(self, domain_object, number_of_points):
+        # Tương thích ngược
+        sub_starts, sub_ends = self._build_split_subsegments(domain_object)
+        return self.sample_subsegments_points(sub_starts, sub_ends, number_of_points)
 
     def _sample_air_box(self, simulation_domain_object, target_count, x_min, x_max, y_min, y_max):
         if target_count <= 0:
@@ -210,14 +245,15 @@ class CollocationSampler:
         if simulation_domain_object is None:
             simulation_domain_object = self.electro_magnetic_pinn.simulation_domain_engine_instance
 
-        domains_data = {}
+        domains_data = {
+            "domains": {},
+            "shared_interfaces": {}
+        }
         bb = (simulation_domain_object.x_boundaries_tuple, simulation_domain_object.y_boundaries_tuple)
+        mat_domains = [d for d in simulation_domain_object.domains_list if getattr(d, 'domain_name', '') != 'background']
 
         for domain in simulation_domain_object.domains_list:
             mult = float(getattr(domain.training_config, 'sampling_density_multiplier', 1.0))
-            if mult < 0.0:
-                raise ValueError(f"Lỗi: sampling_density_multiplier của domain '{domain.domain_name}' không được âm.")
-
             base_interior = int(domain.training_config.number_of_interior_points)
             base_surface = int(domain.training_config.number_of_surface_points)
 
@@ -226,19 +262,36 @@ class CollocationSampler:
 
             if getattr(domain, 'domain_name', '') == 'background':
                 interior_pts = self.sample_background_interior_points(simulation_domain_object, actual_interior)
-                surface_pts = torch.empty((0, 2), dtype=torch.float32, device=self.device)
+                outer_pts = torch.empty((0, 2), dtype=torch.float32, device=self.device)
             else:
                 interior_pts = self.sample_domain_interior_points(domain, bb, actual_interior)
-                surface_pts = self.sample_domain_surface_points(domain, actual_surface)
-
-            interior_pts = interior_pts.detach().clone().requires_grad_(True)
-            surface_pts = surface_pts.detach().clone().requires_grad_(True)
+                outer_pts = self.sample_domain_outer_surface_points(domain, actual_surface)
 
             key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{domain.domain_id}'
-            domains_data[key] = {
+            domains_data["domains"][key] = {
                 "domain_object": domain,
-                "interior_points": interior_pts,
-                "surface_points": surface_pts
+                "interior_points": interior_pts.detach().clone().requires_grad_(True),
+                "outer_surface_points": outer_pts.detach().clone().requires_grad_(True),
+                "surface_points": outer_pts.detach().clone().requires_grad_(True)
             }
+
+        # Tạo điểm giao diện chia trước cho các cặp vật liệu giáp kề nhau
+        for i in range(len(mat_domains)):
+            for j in range(i + 1, len(mat_domains)):
+                dom_a, dom_b = mat_domains[i], mat_domains[j]
+                avg_surf_pts = int(round(0.5 * (dom_a.training_config.number_of_surface_points + dom_b.training_config.number_of_surface_points)))
+                mult = 0.5 * (float(getattr(dom_a.training_config, 'sampling_density_multiplier', 1.0)) + float(getattr(dom_b.training_config, 'sampling_density_multiplier', 1.0)))
+                actual_pts = int(round(avg_surf_pts * mult))
+
+                shared_pts = self.sample_shared_interface_points(dom_a, dom_b, actual_pts)
+                if shared_pts.shape[0] > 0:
+                    pair_key = f"domain_{dom_a.domain_id}_vs_domain_{dom_b.domain_id}"
+                    domains_data["shared_interfaces"][pair_key] = {
+                        "domain_a": dom_a,
+                        "domain_b": dom_b,
+                        "key_a": f"domain_{dom_a.domain_id}",
+                        "key_b": f"domain_{dom_b.domain_id}",
+                        "interface_points": shared_pts.detach().clone().requires_grad_(True)
+                    }
 
         return domains_data
