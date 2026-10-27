@@ -25,32 +25,41 @@ class InterfaceLoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def _compute_normals_and_tangents_from_sdf(self, domain, surf_pts):
+    def _compute_normals_and_tangents_from_sdf(self, domain, surf_pts, eps=1e-4):
         """
-        Tính tự động vectơ pháp tuyến (nx, ny) và tiếp tuyến (tx, ty) 
-        từ Gradient Autograd của hàm SDF thay vì tra cứu đa giác thô.
+        Tính toán chính xác vectơ pháp tuyến (nx, ny), tiếp tuyến (tx, ty) và trọng số dập mượt góc (corner_w)
+        CHO MỌI BIÊN DẠNG PHỨC TẠP (Cong, CSG, CAD) dựa hoàn toàn vào SDF thuần túy và Vi phân Trung tâm.
         """
-        if not surf_pts.requires_grad:
-            surf_pts = surf_pts.detach().clone().requires_grad_(True)
-            
-        sdf_val = domain.compute_signed_distance_field(surf_pts).view(-1, 1)
-        
-        grad_sdf = torch.autograd.grad(
-            outputs=sdf_val,
-            inputs=surf_pts,
-            grad_outputs=torch.ones_like(sdf_val),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        
-        n_norm = torch.sqrt(grad_sdf[:, 0:1]**2 + grad_sdf[:, 1:2]**2 + 1e-12)
-        nx = grad_sdf[:, 0:1] / n_norm
-        ny = grad_sdf[:, 1:2] / n_norm
-        
-        tx = -ny
-        ty = nx
-        
-        corner_w = torch.ones_like(nx)
+        with torch.no_grad():
+            pts = surf_pts.detach()
+            dx = torch.tensor([eps, 0.0], device=pts.device, dtype=pts.dtype)
+            dy = torch.tensor([0.0, eps], device=pts.device, dtype=pts.dtype)
+
+            sdf_center = domain.compute_signed_distance_field(pts).view(-1, 1)
+            sdf_x_plus = domain.compute_signed_distance_field(pts + dx).view(-1, 1)
+            sdf_x_minus = domain.compute_signed_distance_field(pts - dx).view(-1, 1)
+            sdf_y_plus = domain.compute_signed_distance_field(pts + dy).view(-1, 1)
+            sdf_y_minus = domain.compute_signed_distance_field(pts - dy).view(-1, 1)
+
+            # Gradient bằng vi phân trung tâm 2D
+            grad_x = (sdf_x_plus - sdf_x_minus) / (2.0 * eps)
+            grad_y = (sdf_y_plus - sdf_y_minus) / (2.0 * eps)
+
+            norm = torch.sqrt(grad_x**2 + grad_y**2 + 1e-12)
+            nx = (grad_x / norm).detach()
+            ny = (grad_y / norm).detach()
+
+            tx = -ny
+            ty = nx
+
+            # Tính độ cong Laplacian dập mượt góc nhọn (Corner Damping via SDF Curvature)
+            lap_x = (sdf_x_plus - 2.0 * sdf_center + sdf_x_minus) / (eps**2)
+            lap_y = (sdf_y_plus - 2.0 * sdf_center + sdf_y_minus) / (eps**2)
+            curvature = torch.abs(lap_x + lap_y)
+
+            corner_w = torch.exp(-0.005 * curvature).detach()
+            corner_w = torch.clamp(corner_w, min=0.1, max=1.0)
+
         return nx, ny, tx, ty, corner_w
 
     def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
