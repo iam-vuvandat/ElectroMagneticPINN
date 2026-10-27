@@ -467,7 +467,7 @@ class InterfaceLoss:
 
     # =========================================================================
     # 3. CẬP NHẬT: training_engine/training_manager.py
-    # (Hỗ trợ cấu trúc domains_data chia trước cả Outer và Shared Interfaces)
+    # (Tương thích ngược an toàn với tên thuộc tính API mới & cũ)
     # =========================================================================
     files_to_update[os.path.join(training_dir, 'training_manager.py')] = '''import time
 import torch
@@ -478,14 +478,16 @@ class TrainingManager:
         self.electro_magnetic_pinn = electro_magnetic_pinn
         
         t_cfg = self.electro_magnetic_pinn.training_config
-        self.base_learning_rate_adam = t_cfg.learning_rate_adam
-        self.target_loss = t_cfg.target_loss
-        self.lbfgs_learning_rate = t_cfg.lbfgs_learning_rate
-        self.lbfgs_maximum_iterations = t_cfg.lbfgs_maximum_iterations
-        self.lbfgs_maximum_evaluations = t_cfg.lbfgs_maximum_evaluations
-        self.lbfgs_tolerance_gradient = t_cfg.lbfgs_tolerance_gradient
-        self.lbfgs_tolerance_change = t_cfg.lbfgs_tolerance_change
-        self.lbfgs_history_size = t_cfg.lbfgs_history_size
+        
+        # Hỗ trợ tương thích an toàn cả API mới và cũ
+        self.base_learning_rate_adam = getattr(t_cfg, 'adam_learning_rate', getattr(t_cfg, 'learning_rate_adam', 1e-3))
+        self.target_loss_threshold = getattr(t_cfg, 'target_loss_threshold', getattr(t_cfg, 'target_loss', 1e-5))
+        self.lbfgs_learning_rate = getattr(t_cfg, 'lbfgs_learning_rate', 0.8)
+        self.lbfgs_maximum_iterations = getattr(t_cfg, 'number_of_lbfgs_iterations', getattr(t_cfg, 'lbfgs_maximum_iterations', 800))
+        self.lbfgs_maximum_evaluations = getattr(t_cfg, 'lbfgs_maximum_evaluations', 1000)
+        self.lbfgs_tolerance_gradient = getattr(t_cfg, 'lbfgs_tolerance_gradient', 1e-8)
+        self.lbfgs_tolerance_change = getattr(t_cfg, 'lbfgs_tolerance_change', 1e-10)
+        self.lbfgs_history_size = getattr(t_cfg, 'lbfgs_history_size', 50)
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         self.optimizer_adam = optim.Adam(model.parameters(), lr=self.base_learning_rate_adam)
@@ -738,7 +740,7 @@ class TrainingManager:
             f.write(code_content)
         print(f"[*] Đã ghi và cập nhật thành công: {os.path.relpath(file_path, project_root)}")
 
-    print("\n[✔] TẤT CẢ FILE ĐÃ ĐƯỢC NÂNG CẤP SANG CHIẾN LƯỢC PRE-PARTITIONED SHARED INTERFACES!")
+    print("\n[✔] TẤT CẢ FILE ĐÃ ĐƯỢC NÂNG CẤP ĐỒNG BỘ NGHĨA VÀ API TƯƠNG THÍCH HOÀN HẢO!")
 
 if __name__ == "__main__":
     apply_shared_interface_prepartition_updates()
