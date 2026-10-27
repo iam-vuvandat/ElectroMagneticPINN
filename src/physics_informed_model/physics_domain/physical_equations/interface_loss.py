@@ -25,41 +25,32 @@ class InterfaceLoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def _compute_normals_and_tangents_from_outline(self, domain, surf_pts):
-        start_pts = domain.precomputed_edge_starts.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        edge_vecs = domain.precomputed_edge_vecs.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        edge_lens = domain.precomputed_edge_lens.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        unit_tangents = domain.precomputed_unit_tangents.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        unit_normals = domain.precomputed_unit_normals.to(device=surf_pts.device, dtype=surf_pts.dtype)
-
-        pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
-        denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
-        proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
-        closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
-        dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
-        edge_idx = torch.argmin(dist_sq, dim=1)
-
-        t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
-        corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
-
-        if self.electro_magnetic_pinn is not None:
-            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-            mat_verts = [
-                d.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
-                for d in sim_domain.domains_list
-                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
-            ]
-            if mat_verts:
-                all_verts = torch.cat(mat_verts, dim=0)
-                v_dists = torch.cdist(surf_pts.detach(), all_verts, p=2.0)
-                min_v_dist, _ = torch.min(v_dists, dim=1, keepdim=True)
-                vertex_w = (torch.tanh(25.0 * (min_v_dist / self.L0)) ** 2).detach()
-                corner_w = corner_w * vertex_w
-
-        nx = unit_normals[edge_idx, 0:1].detach()
-        ny = unit_normals[edge_idx, 1:2].detach()
-        tx = unit_tangents[edge_idx, 0:1].detach()
-        ty = unit_tangents[edge_idx, 1:2].detach()
+    def _compute_normals_and_tangents_from_sdf(self, domain, surf_pts):
+        """
+        Tính tự động vectơ pháp tuyến (nx, ny) và tiếp tuyến (tx, ty) 
+        từ Gradient Autograd của hàm SDF thay vì tra cứu đa giác thô.
+        """
+        if not surf_pts.requires_grad:
+            surf_pts = surf_pts.detach().clone().requires_grad_(True)
+            
+        sdf_val = domain.compute_signed_distance_field(surf_pts).view(-1, 1)
+        
+        grad_sdf = torch.autograd.grad(
+            outputs=sdf_val,
+            inputs=surf_pts,
+            grad_outputs=torch.ones_like(sdf_val),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        
+        n_norm = torch.sqrt(grad_sdf[:, 0:1]**2 + grad_sdf[:, 1:2]**2 + 1e-12)
+        nx = grad_sdf[:, 0:1] / n_norm
+        ny = grad_sdf[:, 1:2] / n_norm
+        
+        tx = -ny
+        ty = nx
+        
+        corner_w = torch.ones_like(nx)
         return nx, ny, tx, ty, corner_w
 
     def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
@@ -68,10 +59,10 @@ class InterfaceLoss:
             return zero, zero, zero, zero
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
-        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
+        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_sdf(domain_a, pts)
 
         if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
-            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_outline(domain_b, pts)
+            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_sdf(domain_b, pts)
             corner_w = torch.minimum(corner_w, corner_w_b)
 
         Az_a = model.forward_network(key_a, pts)

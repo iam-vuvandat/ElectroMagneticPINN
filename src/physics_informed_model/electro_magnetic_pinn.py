@@ -16,14 +16,12 @@ from utils.training_visualizer import TrainingVisualizer
 
 class ElectroMagneticPINN:
     def __init__(self):
-        # 1. Cấu hình Lấy mẫu điểm (Collocation Sampler Configuration)
         self.sampler_config = SimpleNamespace(
             dynamic_resampling=True,
             resample_interval=100,
             resample_points_before_lbfgs_stage=True
         )
         
-        # 2. Cấu hình Tiến trình Huấn luyện (Training Process Configuration)
         self.training_config = SimpleNamespace(
             enable_linear_warmup_stage=True,
             enable_nonlinear_adaptation_stage=True,
@@ -42,7 +40,6 @@ class ElectroMagneticPINN:
             lbfgs_history_size=50
         )
         
-        # 3. Cấu hình Trực quan hóa (Visualization Configuration)
         self.visualization_config = SimpleNamespace(
             active=False,
             update_interval=200,
@@ -113,10 +110,6 @@ class ElectroMagneticPINN:
         self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
 
     def evaluate_fields(self, points_tensor, return_numpy=False):
-        """
-        Giao diện suy luận cấp cao (High-level Inference API):
-        Tính toán trường Az, Bx, By trên toàn miền vật lý từ các mạng con XPINN.
-        """
         pinn_arch = self.pinn_architecture_instance
         sim_domain = self.simulation_domain_engine_instance
         device = points_tensor.device
@@ -160,9 +153,6 @@ class ElectroMagneticPINN:
         return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
 
     def plot_fields(self, resolution=180, save_path=None, show=False, figsize=(12, 10)):
-        """
-        Đóng gói toàn bộ logic khởi tạo lưới 2D, suy luận trường và hiển thị/lưu đồ thị 4 ô (Az, |B|, mu_r, By).
-        """
         sim_domain = self.simulation_domain_engine_instance
         xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
         x_coords = np.linspace(xb[0], xb[1], resolution)
@@ -177,9 +167,6 @@ class ElectroMagneticPINN:
         ).requires_grad_(True)
         
         A_z_np, B_x_np, B_y_np = self.evaluate_fields(eval_pts, return_numpy=True)
-        
-        if not (np.all(np.isfinite(A_z_np)) and np.all(np.isfinite(B_x_np))):
-            raise ValueError("Lỗi: Trường từ trường dự đoán chứa giá trị NaN hoặc Inf!")
 
         A_z_grid = A_z_np.reshape(resolution, resolution)
         B_x_grid = B_x_np.reshape(resolution, resolution)
@@ -249,7 +236,6 @@ class ElectroMagneticPINN:
         epochs_warmup = int(total_adam_epochs * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
         epochs_adaptation = (total_adam_epochs - epochs_warmup) if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) else 0
 
-        # GIAI ĐOẠN 1A: ADAM LINEAR WARM-UP
         if getattr(t_cfg, 'enable_linear_warmup_stage', True) and epochs_warmup > 0:
             print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
             for domain in sim_domain.domains_list:
@@ -265,7 +251,6 @@ class ElectroMagneticPINN:
         else:
             print("\n--- [STAGE 1A] Adam Linear Warm-up: Bỏ qua ---")
 
-        # GIAI ĐOẠN 1B: ADAM NON-LINEAR ADAPTATION
         if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
             print(f"\n--- [STAGE 1B] Adam Non-linear Adaptation ({epochs_adaptation} Epochs) ---")
             for domain in sim_domain.domains_list:
@@ -282,7 +267,6 @@ class ElectroMagneticPINN:
         else:
             print("\n--- [STAGE 1B] Adam Non-linear Adaptation: Bỏ qua ---")
 
-        # GIAI ĐOẠN 2: L-BFGS REFINEMENT
         if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
             if getattr(self.sampler_config, 'resample_points_before_lbfgs_stage', True):
                 domains_data = resample_data_fn()
