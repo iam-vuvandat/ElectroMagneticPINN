@@ -25,41 +25,45 @@ class InterfaceLoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def _compute_normals_and_tangents_from_sdf(self, domain, surf_pts, eps=1e-4):
+    def _compute_normals_and_tangents_from_outline(self, domain, surf_pts):
         """
-        Tính toán chính xác vectơ pháp tuyến (nx, ny), tiếp tuyến (tx, ty) và trọng số dập mượt góc (corner_w)
-        CHO MỌI BIÊN DẠNG PHỨC TẠP (Cong, CSG, CAD) dựa hoàn toàn vào SDF thuần túy và Vi phân Trung tâm.
+        Khôi phục lại thuật toán tính toán chính xác vectơ pháp tuyến (nx, ny), tiếp tuyến (tx, ty)
+        và trọng số dập mượt góc (corner_w) dựa trên cấu trúc các cạnh đa giác outline.
         """
-        with torch.no_grad():
-            pts = surf_pts.detach()
-            dx = torch.tensor([eps, 0.0], device=pts.device, dtype=pts.dtype)
-            dy = torch.tensor([0.0, eps], device=pts.device, dtype=pts.dtype)
+        start_pts = domain.precomputed_edge_starts.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        edge_vecs = domain.precomputed_edge_vecs.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        edge_lens = domain.precomputed_edge_lens.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        unit_tangents = domain.precomputed_unit_tangents.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        unit_normals = domain.precomputed_unit_normals.to(device=surf_pts.device, dtype=surf_pts.dtype)
 
-            sdf_center = domain.compute_signed_distance_field(pts).view(-1, 1)
-            sdf_x_plus = domain.compute_signed_distance_field(pts + dx).view(-1, 1)
-            sdf_x_minus = domain.compute_signed_distance_field(pts - dx).view(-1, 1)
-            sdf_y_plus = domain.compute_signed_distance_field(pts + dy).view(-1, 1)
-            sdf_y_minus = domain.compute_signed_distance_field(pts - dy).view(-1, 1)
+        pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
+        denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
+        proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
+        closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
+        dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
+        edge_idx = torch.argmin(dist_sq, dim=1)
 
-            # Gradient bằng vi phân trung tâm 2D
-            grad_x = (sdf_x_plus - sdf_x_minus) / (2.0 * eps)
-            grad_y = (sdf_y_plus - sdf_y_minus) / (2.0 * eps)
+        t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
+        corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
 
-            norm = torch.sqrt(grad_x**2 + grad_y**2 + 1e-12)
-            nx = (grad_x / norm).detach()
-            ny = (grad_y / norm).detach()
+        if self.electro_magnetic_pinn is not None:
+            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+            mat_verts = [
+                d.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
+                for d in sim_domain.domains_list
+                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+            ]
+            if mat_verts:
+                all_verts = torch.cat(mat_verts, dim=0)
+                v_dists = torch.cdist(surf_pts.detach(), all_verts, p=2.0)
+                min_v_dist, _ = torch.min(v_dists, dim=1, keepdim=True)
+                vertex_w = (torch.tanh(25.0 * (min_v_dist / self.L0)) ** 2).detach()
+                corner_w = corner_w * vertex_w
 
-            tx = -ny
-            ty = nx
-
-            # Tính độ cong Laplacian dập mượt góc nhọn (Corner Damping via SDF Curvature)
-            lap_x = (sdf_x_plus - 2.0 * sdf_center + sdf_x_minus) / (eps**2)
-            lap_y = (sdf_y_plus - 2.0 * sdf_center + sdf_y_minus) / (eps**2)
-            curvature = torch.abs(lap_x + lap_y)
-
-            corner_w = torch.exp(-0.005 * curvature).detach()
-            corner_w = torch.clamp(corner_w, min=0.1, max=1.0)
-
+        nx = unit_normals[edge_idx, 0:1].detach()
+        ny = unit_normals[edge_idx, 1:2].detach()
+        tx = unit_tangents[edge_idx, 0:1].detach()
+        ty = unit_tangents[edge_idx, 1:2].detach()
         return nx, ny, tx, ty, corner_w
 
     def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
@@ -68,10 +72,10 @@ class InterfaceLoss:
             return zero, zero, zero, zero
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
-        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_sdf(domain_a, pts)
+        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
 
         if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
-            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_sdf(domain_b, pts)
+            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_outline(domain_b, pts)
             corner_w = torch.minimum(corner_w, corner_w_b)
 
         Az_a = model.forward_network(key_a, pts)
