@@ -71,22 +71,21 @@ class TrainingVisualizer:
                 Bx_sub_phys = grad_sub_star[:, 1:2] * sim_domain.A0
                 By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
-                B_mag_sub_phys = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
-
-                nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub_phys).to(computation_device)
+                nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
                 hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
                 hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
                 jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
 
-                res_lin, res_nonlin = pde_evaluator.compute_residual_components(
-                    eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom, domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
+                # Tính PDE residual theo phương thức tuyến tính mới
+                res_pde = pde_evaluator.compute_linear_pde_residual(
+                    eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
                 )
 
                 A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
                 B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
                 B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
                 nu_phys_all = torch.where(mask_bool, nu_dom.detach(), nu_phys_all)
-                residual_total = torch.where(mask_bool, torch.abs((res_lin + res_nonlin).detach()), residual_total)
+                residual_total = torch.where(mask_bool, torch.abs(res_pde.detach()), residual_total)
         
         A_z_numpy = A_z_phys.cpu().numpy().reshape(self.resolution, self.resolution)
         B_x_numpy = B_x_phys.cpu().numpy().reshape(self.resolution, self.resolution)
@@ -95,15 +94,11 @@ class TrainingVisualizer:
         mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(self.resolution, self.resolution)
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
-        # Grid layout 2x4
         fig, axs = plt.subplots(2, 4, figsize=(23, 10))
         
-        # =========================================================================
-        # [0, 0] Categorized Collocation Points (Phân loại chi tiết từng tập điểm)
-        # =========================================================================
+        # [0, 0] Categorized Collocation Points
         ax_pts = axs[0, 0]
         ax_pts.set_title("Categorized Collocation Points")
-        
         domain_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b']
         pair_colors = ['#d62728', '#e377c2', '#bcbd22', '#17becf', '#ff1493']
 
@@ -114,25 +109,21 @@ class TrainingVisualizer:
             domains_dict = domains_data
             shared_dict = {}
 
-        # 1. Tô màu điểm nội miền và điểm biên ngoài của từng miền
         for idx, (key, d) in enumerate(domains_dict.items()):
             dom_obj = d["domain_object"]
             d_name = getattr(dom_obj, "domain_name", key)
             c_dom = domain_colors[idx % len(domain_colors)]
             
-            # Điểm nội miền
             int_pts = d.get("interior_points")
             if int_pts is not None and int_pts.shape[0] > 0:
                 pts_np = int_pts.detach().cpu().numpy()
                 ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=2.5, color=c_dom, alpha=0.35, label=f"Int: {d_name}")
 
-            # Điểm biên ngoài (tiếp xúc với không khí)
             outer_pts = d.get("outer_surface_points")
             if outer_pts is not None and outer_pts.shape[0] > 0:
                 opts_np = outer_pts.detach().cpu().numpy()
-                ax_pts.scatter(opts_np[:, 0], opts_np[:, 1], s=8, color='gray', alpha=0.6, label=f"Air Boundary" if idx==0 else "")
+                ax_pts.scatter(opts_np[:, 0], opts_np[:, 1], s=8, color='gray', alpha=0.6, label="Air Boundary" if idx==0 else "")
 
-        # 2. Tô màu nổi bật riêng biệt cho từng Cặp ranh giới tiếp xúc giữa các vật liệu khác nhau
         for p_idx, (pair_key, pair_data) in enumerate(shared_dict.items()):
             if_pts = pair_data.get("interface_points")
             if if_pts is not None and if_pts.shape[0] > 0:
@@ -140,12 +131,7 @@ class TrainingVisualizer:
                 c_pair = pair_colors[p_idx % len(pair_colors)]
                 name_a = getattr(pair_data["domain_a"], "domain_name", pair_data["key_a"])
                 name_b = getattr(pair_data["domain_b"], "domain_name", pair_data["key_b"])
-                
-                ax_pts.scatter(
-                    pts_np[:, 0], pts_np[:, 1], 
-                    s=20, color=c_pair, marker='x', linewidths=1.5, 
-                    label=f"Interface: {name_a} ↔ {name_b}"
-                )
+                ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=20, color=c_pair, marker='x', linewidths=1.5, label=f"Interface: {name_a} ↔ {name_b}")
 
         ax_pts.legend(loc='upper right', fontsize=6.5, framealpha=0.85)
         ax_pts.set_xlim(self.x_bounds)
@@ -159,7 +145,7 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # [0, 2] Dynamic Relative Permeability mu_r(B)
+        # [0, 2] Permeability Distribution mu_r
         contour_mur = axs[0, 2].contourf(self.X_grid, self.Y_grid, mu_r_numpy, levels=50, cmap="cividis")
         fig.colorbar(contour_mur, ax=axs[0, 2], label=r"Relative Permeability ($\mu_r$)")
         axs[0, 2].set_title(r"Permeability Distribution ($\mu_r$)")
