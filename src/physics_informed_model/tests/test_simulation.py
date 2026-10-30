@@ -17,13 +17,13 @@ if torch.cuda.is_available():
 
 from electro_magnetic_pinn import ElectroMagneticPINN
 
-def run_modern_simulation_test():
-    output_dir = "figure_modern_test"
+def run_linear_simulation_test():
+    output_dir = "figure_linear_test"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
     
-    print("[*] Bắt đầu kiểm thử XPINN với đầy đủ 3 Giai đoạn Huấn luyện (Warm-up, Adaptation, L-BFGS)...")
+    print("[*] Bắt đầu kiểm thử XPINN THUẦN TUYẾN TÍNH (Adam + L-BFGS)...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -39,14 +39,12 @@ def run_modern_simulation_test():
     model.sampler_config.resample_interval = 100
     model.sampler_config.resample_points_before_lbfgs_stage = True
 
-    # 3. KÍCH HOẠT ĐỦ 3 GIAI ĐOẠN HUẤN LUYỆN
+    # 3. CHẾ ĐỘ THUẦN TUYẾN TÍNH
     model.training_config.enable_linear_warmup_stage = True
-    model.training_config.enable_nonlinear_adaptation_stage = True
+    model.training_config.enable_nonlinear_adaptation_stage = False
     model.training_config.enable_lbfgs_refinement_stage = True
 
-    # Phân bổ Epochs: 1000 Adam Warm-up (40%) + 1500 Adam Non-linear Adaptation (60%) + 600 L-BFGS
-    model.training_config.number_of_adam_epochs = 2500
-    model.training_config.linear_warmup_epochs_ratio = 0.4
+    model.training_config.number_of_adam_epochs = 1500
     model.training_config.adam_learning_rate = 1e-3
     model.training_config.target_loss_threshold = 1e-7
 
@@ -54,20 +52,15 @@ def run_modern_simulation_test():
     model.training_config.lbfgs_learning_rate = 0.5
     model.training_config.lbfgs_maximum_evaluations = 800
 
-    # 4. Cấu hình Trực quan hóa
+    # 4. Trực quan hóa
     model.visualization_config.active = True
     model.visualization_config.update_interval = 200
     model.visualization_config.output_directory = output_dir
     model.visualization_config.resolution = 80
-    model.visualization_config.generate_gif_animation = True
-    model.visualization_config.gif_filename = "three_stage_training.gif"
-    model.visualization_config.generate_mp4_video = True
-    model.visualization_config.mp4_filename = "three_stage_training.mp4"
 
-    # Đặt trọng số pde_nonlin_w ở mức rất nhỏ (mặc định = 0.01) để tăng độ ổn định gradient
-    def apply_standard_config(domain, int_pts=2000, surf_pts=1200, pde_nonlin_w=0.01):
+    def apply_standard_config(domain, int_pts=2000, surf_pts=1200):
+        domain.physics_config.is_nonlinear = False
         domain.training_config.pde_weight = 1.0
-        domain.training_config.pde_nonlinear_weight = pde_nonlin_w  # Trọng số phi tuyến nhỏ dập bùng nổ gradient
         domain.training_config.interface_weight = 1.5
         domain.training_config.interface_potential_weight = 1000.0
         domain.training_config.interface_bn_weight = 400.0
@@ -84,7 +77,7 @@ def run_modern_simulation_test():
         domain.network_config.fourier_mapping_size = 128
         return domain.build_domain()
 
-    # 1. Khung Ách sắt (Iron Yoke - steel_1008 phi tuyến)
+    # 1. Ách sắt (Iron Yoke - mu_r = 1000)
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke",
         material_name="steel_1008",
@@ -95,9 +88,9 @@ def run_modern_simulation_test():
             [-0.06, 0.0]
         ]
     )
-    apply_standard_config(iron_yoke, int_pts=3000, surf_pts=1600, pde_nonlin_w=0.01)
+    apply_standard_config(iron_yoke, int_pts=3000, surf_pts=1600)
 
-    # 2. Nam châm trái (N30UH)
+    # 2. Nam châm trái (N30UH - mu_r = 1.05)
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left",
         material_name="N30UH",
@@ -109,9 +102,9 @@ def run_modern_simulation_test():
         ],
         coercive_direction=(0, 1)
     )
-    apply_standard_config(magnet_left, int_pts=2000, surf_pts=1200, pde_nonlin_w=0.01)
+    apply_standard_config(magnet_left, int_pts=2000, surf_pts=1200)
 
-    # 3. Nam châm phải (N30UH)
+    # 3. Nam châm phải (N30UH - mu_r = 1.05)
     magnet_right = sim_domain.create_material_domain(
         domain_name="magnet_right",
         material_name="N30UH",
@@ -123,12 +116,11 @@ def run_modern_simulation_test():
         ],
         coercive_direction=(0, -1)
     )
-    apply_standard_config(magnet_right, int_pts=2000, surf_pts=1200, pde_nonlin_w=0.01)
+    apply_standard_config(magnet_right, int_pts=2000, surf_pts=1200)
 
     # 4. Background Air
     bg_training_cfg = SimpleNamespace(
         pde_weight=1.0,
-        pde_nonlinear_weight=0.01,
         interface_weight=1.5,
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
@@ -152,19 +144,19 @@ def run_modern_simulation_test():
     model.update_electromagnetic_pinn()
     sim_domain.plot_problem_definition(resolution=100)
     
-    print("[*] Chạy tiến trình huấn luyện 3 giai đoạn...")
+    print("[*] Chạy tiến trình huấn luyện tuyến tính...")
     model.execute_training_process()
 
-    print("[*] Đang xuất biểu đồ kết quả trường từ sau khi hoàn thành L-BFGS...")
+    print("[*] Đang xuất biểu đồ kết quả trường từ...")
     model.plot_fields(
         resolution=180, 
-        save_path=f"{output_dir}/three_stage_final_fields.png"
+        save_path=f"{output_dir}/linear_final_fields.png"
     )
 
-    print(f"[✔] HOÀN THÀNH KIỂM THỬ 3 GIAI ĐOẠN! Kết quả lưu tại {output_dir}/")
+    print(f"[✔] HOÀN THÀNH KIỂM THỬ TUYẾN TÍNH! Kết quả lưu tại {output_dir}/")
 
 def test_simulation4():
-    run_modern_simulation_test()
+    run_linear_simulation_test()
 
 if __name__ == "__main__":
-    run_modern_simulation_test()
+    run_linear_simulation_test()

@@ -24,7 +24,7 @@ class ElectroMagneticPINN:
         
         self.training_config = SimpleNamespace(
             enable_linear_warmup_stage=True,
-            enable_nonlinear_adaptation_stage=True,
+            enable_nonlinear_adaptation_stage=False,
             enable_lbfgs_refinement_stage=True,
             linear_warmup_epochs_ratio=0.3,
 

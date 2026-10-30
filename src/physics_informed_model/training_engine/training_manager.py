@@ -58,9 +58,7 @@ class TrainingManager:
         dummy_param = next(self.model.parameters())
         total_loss = (dummy_param * 0.0).sum()
 
-        raw_pde_lin_sum = 0.0
-        raw_pde_nonlin_sum = 0.0
-        weighted_pde_sum = 0.0
+        pde_loss_sum = 0.0
         az_if_sum = 0.0
         bn_if_sum = 0.0
         ht_if_sum = 0.0
@@ -75,7 +73,7 @@ class TrainingManager:
 
         bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
 
-        # 1. PDE Loss & Outer Interface Loss
+        # 1. PDE Loss
         for key, data in domains_dict.items():
             domain = data["domain_object"]
             pts = data["interior_points"].to(device)
@@ -85,36 +83,22 @@ class TrainingManager:
                     pts = pts.detach().clone().requires_grad_(True)
                     
                 A_z_star = self.model.forward_network(key, pts)
-
-                grad_A_star = torch.autograd.grad(outputs=A_z_star, inputs=pts, grad_outputs=torch.ones_like(A_z_star), create_graph=True)[0]
-                Bx_star = grad_A_star[:, 1:2] * self.pde_evaluator.L0
-                By_star = -grad_A_star[:, 0:1] * self.pde_evaluator.L0
-                B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * (self.pde_evaluator.H0 / self.pde_evaluator.nu0)
-
-                nu_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys).to(device)
-                nu_lin_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
-
+                nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
                 hx, hy = domain.evaluate_magnetization_vector(pts)
                 hx, hy = hx.to(device), hy.to(device)
                 jz = domain.evaluate_current_density(pts).to(device)
                 
-                res_lin, res_nonlin = self.pde_evaluator.compute_residual_components(
-                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_linear_phys=nu_lin_phys
+                res_pde = self.pde_evaluator.compute_linear_pde_residual(
+                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy
                 )
                 fading_w = self.pde_evaluator.compute_fading_weight(domain, pts)
                 
-                loss_lin = torch.mean((res_lin ** 2) * fading_w)
-                loss_nonlin = torch.mean((res_nonlin ** 2) * fading_w)
-
+                loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
                 w_pde = float(domain.training_config.pde_weight)
-                w_pde_nonlin = float(getattr(domain.training_config, 'pde_nonlinear_weight', 1.0))
 
-                pde_domain_loss = w_pde * loss_lin + w_pde_nonlin * loss_nonlin
-                total_loss = total_loss + pde_domain_loss
-
-                raw_pde_lin_sum += loss_lin.item()
-                raw_pde_nonlin_sum += loss_nonlin.item()
-                weighted_pde_sum += pde_domain_loss.item()
+                scaled_pde_loss = w_pde * loss_pde_domain
+                total_loss = total_loss + scaled_pde_loss
+                pde_loss_sum += scaled_pde_loss.item()
 
             outer_pts = data.get("outer_surface_points", data.get("surface_points", torch.empty((0, 2)))).to(device)
             if outer_pts.shape[0] > 0 and key != 'background':
@@ -136,7 +120,7 @@ class TrainingManager:
                 ht_if_sum += ht_l.item()
                 weighted_if_sum += scaled_if_loss.item()
 
-        # 2. Shared Interface Loss (Ghép trực tiếp Mạng A vs Mạng B)
+        # 2. Shared Interface Loss
         for pair_key, pair_data in shared_dict.items():
             pts = pair_data["interface_points"].to(device)
             if pts.shape[0] > 0:
@@ -161,9 +145,7 @@ class TrainingManager:
                 weighted_if_sum += scaled_shared_loss.item()
 
         self.last_loss_breakdown = {
-            "raw_pde_lin": raw_pde_lin_sum,
-            "raw_pde_nonlin": raw_pde_nonlin_sum,
-            "weighted_pde": weighted_pde_sum,
+            "pde_loss": pde_loss_sum,
             "interface_Az": az_if_sum,
             "interface_Bn": bn_if_sum,
             "interface_Ht": ht_if_sum,
@@ -212,7 +194,7 @@ class TrainingManager:
                 bd = self.last_loss_breakdown
                 print(
                     f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
-                    f"PDE(Lin/NonLin) = {bd.get('raw_pde_lin', 0.0):.3e}/{bd.get('raw_pde_nonlin', 0.0):.3e} | "
+                    f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
                     f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
                 )
                 
@@ -239,7 +221,6 @@ class TrainingManager:
         )
 
         lbfgs_counter = [0]
-        last_loss = [0.0]
         
         def closure():
             self.optimizer_lbfgs.zero_grad(set_to_none=True)
@@ -249,12 +230,11 @@ class TrainingManager:
             loss.backward()
             
             lbfgs_counter[0] += 1
-            last_loss[0] = loss.item()
             if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 25 == 0:
                 bd = self.last_loss_breakdown
                 print(
                     f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
-                    f"PDE(Lin/NonLin) = {bd.get('raw_pde_lin', 0.0):.3e}/{bd.get('raw_pde_nonlin', 0.0):.3e}"
+                    f"PDE = {bd.get('pde_loss', 0.0):.3e}"
                 )
             return loss
             
