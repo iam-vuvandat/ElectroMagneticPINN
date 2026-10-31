@@ -62,21 +62,23 @@ class TrainingVisualizer:
             if mask_bool.any():
                 Az_sub_star = model.forward_network(net_key, eval_points)
                 grad_sub_star = torch.autograd.grad(
-                    outputs=Az_sub_star,
-                    inputs=eval_points,
-                    grad_outputs=torch.ones_like(Az_sub_star),
-                    create_graph=True
+                    outputs=Az_sub_star, inputs=eval_points,
+                    grad_outputs=torch.ones_like(Az_sub_star), create_graph=True
                 )[0]
                 Az_sub_phys = Az_sub_star * sim_domain.A0
                 Bx_sub_phys = grad_sub_star[:, 1:2] * sim_domain.A0
                 By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
-                nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
+                if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
+                    nu_star_p = model.forward_nu_network(net_key, eval_points)
+                    nu_dom = nu_star_p * sim_domain.nu0
+                else:
+                    nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
+
                 hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
                 hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
                 jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
 
-                # Tính PDE residual theo phương thức tuyến tính mới
                 res_pde = pde_evaluator.compute_linear_pde_residual(
                     eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
                 )
@@ -102,12 +104,8 @@ class TrainingVisualizer:
         domain_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b']
         pair_colors = ['#d62728', '#e377c2', '#bcbd22', '#17becf', '#ff1493']
 
-        if "domains" in domains_data:
-            domains_dict = domains_data["domains"]
-            shared_dict = domains_data.get("shared_interfaces", {})
-        else:
-            domains_dict = domains_data
-            shared_dict = {}
+        domains_dict = domains_data.get("domains", domains_data)
+        shared_dict = domains_data.get("shared_interfaces", {})
 
         for idx, (key, d) in enumerate(domains_dict.items()):
             dom_obj = d["domain_object"]
@@ -118,11 +116,6 @@ class TrainingVisualizer:
             if int_pts is not None and int_pts.shape[0] > 0:
                 pts_np = int_pts.detach().cpu().numpy()
                 ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=2.5, color=c_dom, alpha=0.35, label=f"Int: {d_name}")
-
-            outer_pts = d.get("outer_surface_points")
-            if outer_pts is not None and outer_pts.shape[0] > 0:
-                opts_np = outer_pts.detach().cpu().numpy()
-                ax_pts.scatter(opts_np[:, 0], opts_np[:, 1], s=8, color='gray', alpha=0.6, label="Air Boundary" if idx==0 else "")
 
         for p_idx, (pair_key, pair_data) in enumerate(shared_dict.items()):
             if_pts = pair_data.get("interface_points")
@@ -208,13 +201,11 @@ class TrainingVisualizer:
         output_filename = getattr(cfg, 'gif_filename', 'training_process.gif')
         fps = getattr(cfg, 'animation_fps', getattr(cfg, 'gif_fps', 5))
         if not self.frame_paths:
-            print("[!] CẢNH BÁO: Không có khung hình tĩnh nào để tạo GIF.")
             return
             
         full_gif_path = os.path.join(self.output_directory, output_filename)
         images = [imageio.imread(f) for f in self.frame_paths if os.path.exists(f)]
         imageio.mimsave(full_gif_path, images, fps=fps, loop=0)
-        print(f"[*] Đã xuất GIF Animation thành công tại: {full_gif_path}")
 
     def generate_mp4(self):
         cfg = self.electro_magnetic_pinn.visualization_config
@@ -233,9 +224,8 @@ class TrainingVisualizer:
             for f in valid_frames:
                 writer.append_data(imageio.imread(f))
             writer.close()
-            print(f"[*] Đã xuất MP4 Video thành công tại: {full_mp4_path}")
         except Exception as exc:
-            print(f"[!] Lỗi xuất MP4: {exc}")
+            pass
 
     def generate_animations(self):
         cfg = self.electro_magnetic_pinn.visualization_config

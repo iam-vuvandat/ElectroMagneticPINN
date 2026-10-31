@@ -25,12 +25,17 @@ class MaxwellPDELoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
-    def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy):
+    def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
         """
-        Tính dư số PDE Maxwell-Poisson ở chế độ THUẦN TUYẾN TÍNH:
-        curl(H) - Jz = 0  với H = nu * B - Hc
+        Tính dư số PDE Maxwell-Poisson ở bước lặp FPI (Picard):
+        H* = nu* * B* - Hc*
+        Nếu truyền nu_star_net (từ Net_nu), hệ số nu* được lấy từ Mạng phụ Net_nu đóng băng.
         """
-        nu_star = nu_phys / self.nu0
+        if nu_star_net is not None:
+            nu_star = nu_star_net
+        else:
+            nu_star = nu_phys / self.nu0
+
         H_cx_star = H_cx / self.H0
         H_cy_star = H_cy / self.H0
         J_z_star = J_z / (self.H0 / self.L0)

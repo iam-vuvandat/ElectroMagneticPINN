@@ -24,13 +24,18 @@ class ElectroMagneticPINN:
         
         self.training_config = SimpleNamespace(
             enable_linear_warmup_stage=True,
-            enable_nonlinear_adaptation_stage=False,
+            enable_nonlinear_adaptation_stage=True,
             enable_lbfgs_refinement_stage=True,
             linear_warmup_epochs_ratio=0.3,
 
             adam_learning_rate=1e-3,
             number_of_adam_epochs=2500,
             target_loss_threshold=1e-5,
+
+            # Cấu hình FPI Outer Loop
+            fpi_outer_iterations=5,
+            fpi_alpha_damping=0.8,
+            fpi_tolerance=1e-4,
 
             lbfgs_learning_rate=0.8,
             number_of_lbfgs_iterations=800,
@@ -129,10 +134,8 @@ class ElectroMagneticPINN:
             if mask_bool.any():
                 Az_star = pinn_arch.forward_network(net_key, points_tensor)
                 grad_star = torch.autograd.grad(
-                    outputs=Az_star,
-                    inputs=points_tensor,
-                    grad_outputs=torch.ones_like(Az_star),
-                    create_graph=False
+                    outputs=Az_star, inputs=points_tensor,
+                    grad_outputs=torch.ones_like(Az_star), create_graph=False
                 )[0]
 
                 Az_phys = Az_star * self.A0
@@ -162,8 +165,7 @@ class ElectroMagneticPINN:
         device = self.computation_device
         eval_pts = torch.tensor(
             np.column_stack((X_grid.ravel(), Y_grid.ravel())),
-            dtype=torch.float32,
-            device=device
+            dtype=torch.float32, device=device
         ).requires_grad_(True)
         
         A_z_np, B_x_np, B_y_np = self.evaluate_fields(eval_pts, return_numpy=True)
@@ -180,10 +182,16 @@ class ElectroMagneticPINN:
         for domain in sim_domain.domains_list:
             if getattr(domain, 'domain_name', '') != 'background':
                 mask = (mat_ids == float(domain.domain_id))
-                mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
-                mu_r_tensor[mask] = mu_val
+                net_k = f'domain_{domain.domain_id}'
+                if hasattr(self.pinn_architecture_instance, 'nu_networks') and net_k in self.pinn_architecture_instance.nu_networks:
+                    nu_star_p = self.pinn_architecture_instance.forward_nu_network(net_k, eval_pts)
+                    mu_val = (1.0 / torch.clamp(nu_star_p.squeeze(), min=1e-6))
+                    mu_r_tensor[mask] = mu_val[mask]
+                else:
+                    mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
+                    mu_r_tensor[mask] = mu_val
 
-        mu_r_grid = mu_r_tensor.cpu().numpy().reshape(resolution, resolution)
+        mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
 
         fig, axs = plt.subplots(2, 2, figsize=figsize)
         
@@ -230,55 +238,53 @@ class ElectroMagneticPINN:
         sim_domain = self.simulation_domain_engine_instance
         t_cfg = self.training_config
 
+        # 1. Pre-training Net_nu
+        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=300)
+
+        # 2. Adam Stage
         total_adam_epochs = t_cfg.number_of_adam_epochs
         warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
-        
         epochs_warmup = int(total_adam_epochs * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
         epochs_adaptation = (total_adam_epochs - epochs_warmup) if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) else 0
 
         if getattr(t_cfg, 'enable_linear_warmup_stage', True) and epochs_warmup > 0:
             print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
-            for domain in sim_domain.domains_list:
-                domain.physics_config.is_nonlinear = False
-
             domains_data = self.training_manager_instance.train_adam(
-                epochs=epochs_warmup, 
-                domains_data=domains_data,
+                epochs=epochs_warmup, domains_data=domains_data,
                 dynamic_resampling=self.sampler_config.dynamic_resampling,
-                resample_fn=resample_data_fn,
-                resample_interval=self.sampler_config.resample_interval
+                resample_fn=resample_data_fn, resample_interval=self.sampler_config.resample_interval
             )
-        else:
-            print("\n--- [STAGE 1A] Adam Linear Warm-up: Bỏ qua ---")
 
         if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
-            print(f"\n--- [STAGE 1B] Adam Non-linear Adaptation ({epochs_adaptation} Epochs) ---")
-            for domain in sim_domain.domains_list:
-                if getattr(domain.physics_config, 'bh_curve_data', None) is not None:
-                    domain.physics_config.is_nonlinear = True
+            fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 5))
+            alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 0.8))
+            fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-4))
+            epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
 
-            domains_data = self.training_manager_instance.train_adam(
-                epochs=epochs_adaptation, 
-                domains_data=domains_data,
-                dynamic_resampling=self.sampler_config.dynamic_resampling,
-                resample_fn=resample_data_fn,
-                resample_interval=self.sampler_config.resample_interval
-            )
-        else:
-            print("\n--- [STAGE 1B] Adam Non-linear Adaptation: Bỏ qua ---")
+            print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
+            for f_iter in range(fpi_iters):
+                print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters}] <<<")
+                domains_data = self.training_manager_instance.train_adam(
+                    epochs=epochs_per_fpi, domains_data=domains_data,
+                    dynamic_resampling=self.sampler_config.dynamic_resampling,
+                    resample_fn=resample_data_fn, resample_interval=self.sampler_config.resample_interval
+                )
+                max_diff = self.training_manager_instance.fit_nu_network_step(
+                    domains_data, alpha_damping=alpha_damp, epochs=150
+                )
+                print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+                if max_diff < fpi_tol:
+                    print(f"[✔] FPI Hội tụ sớm tại vòng {f_iter + 1}!")
+                    break
 
+        # 3. L-BFGS Stage
         if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
             if getattr(self.sampler_config, 'resample_points_before_lbfgs_stage', True):
                 domains_data = resample_data_fn()
 
             lbfgs_iters = int(t_cfg.number_of_lbfgs_iterations)
-            print(f"\n--- [STAGE 2] L-BFGS Refinement (Tối đa {lbfgs_iters} Iterations) ---")
-            self.training_manager_instance.train_lbfgs(
-                max_iterations=lbfgs_iters, 
-                domains_data=domains_data
-            )
-        else:
-            print("\n--- [STAGE 2] L-BFGS Refinement: Bỏ qua ---")
-            
+            print(f"\n--- [STAGE 2] L-BFGS Refinement ({lbfgs_iters} Iterations) ---")
+            self.training_manager_instance.train_lbfgs(max_iterations=lbfgs_iters, domains_data=domains_data)
+
         if self.visualizer_instance:
             self.visualizer_instance.generate_animations()

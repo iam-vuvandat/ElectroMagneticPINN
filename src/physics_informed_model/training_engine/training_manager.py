@@ -53,6 +53,102 @@ class TrainingManager:
     def visualizer_update_interval(self):
         return self.electro_magnetic_pinn.visualization_config.update_interval
 
+    def pretrain_nu_networks(self, domains_data, epochs=300):
+        """
+        Huấn luyện ấm trước Mạng phụ Net_nu để khớp hoàn toàn với độ từ kháng ban đầu nu_init*.
+        """
+        if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
+            return
+
+        print(f"\n[*] Bắt đầu Pre-training Mạng phụ $Net_{{\\nu}}$ ({epochs} epochs)...")
+        device = next(self.model.parameters()).device
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        
+        nu_params = []
+        for net in self.model.nu_networks.values():
+            nu_params.extend(net.parameters())
+            
+        opt_nu = optim.Adam(nu_params, lr=1e-2)
+        domains_dict = domains_data.get("domains", domains_data)
+        
+        for ep in range(epochs):
+            opt_nu.zero_grad()
+            loss_pre = 0.0
+            
+            for key, data in domains_dict.items():
+                if key in self.model.nu_networks:
+                    domain = data["domain_object"]
+                    pts = data["interior_points"].to(device)
+                    
+                    if pts.shape[0] > 0:
+                        nu_pred_star = self.model.forward_nu_network(key, pts)
+                        nu_target_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                        nu_target_star = nu_target_phys / sim_domain.nu0
+                        
+                        loss_domain = torch.mean((nu_pred_star - nu_target_star) ** 2)
+                        loss_pre = loss_pre + loss_domain
+                        
+            if loss_pre > 0:
+                loss_pre.backward()
+                opt_nu.step()
+                
+            if (ep + 1) == 1 or (ep + 1) % 100 == 0:
+                print(f"Pre-train Net_nu Epoch {ep + 1:03d} | Loss_nu = {loss_pre.item():.4e}")
+                
+        print("[✔] Hoàn thành Pre-train Mạng phụ $Net_{\\nu}$!")
+
+    def fit_nu_network_step(self, domains_data, alpha_damping=0.8, epochs=150):
+        """
+        Cập nhật / Fit lại Mạng phụ Net_nu theo giá trị mục tiêu nu_target sinh từ B-H lookup (có Thư giãn / Damping alpha).
+        """
+        if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
+            return 0.0
+
+        device = next(self.model.parameters()).device
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        domains_dict = domains_data.get("domains", domains_data)
+        
+        nu_params = []
+        for net in self.model.nu_networks.values():
+            nu_params.extend(net.parameters())
+        opt_nu = optim.Adam(nu_params, lr=5e-3)
+
+        max_nu_diff = 0.0
+        
+        for key, data in domains_dict.items():
+            if key in self.model.nu_networks:
+                domain = data["domain_object"]
+                pts = data["interior_points"].to(device)
+                
+                if pts.shape[0] > 0:
+                    with torch.no_grad():
+                        Az_star = self.model.forward_network(key, pts)
+                        grad_Az = torch.autograd.grad(
+                            outputs=Az_star, inputs=pts,
+                            grad_outputs=torch.ones_like(Az_star), create_graph=False
+                        )[0]
+                        Bx_star = grad_Az[:, 1:2] * sim_domain.L0
+                        By_star = -grad_Az[:, 0:1] * sim_domain.L0
+                        B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
+                        
+                        nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
+                        nu_BH_star = nu_BH_phys / sim_domain.nu0
+                        
+                        nu_old_star = self.model.forward_nu_network(key, pts)
+                        nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
+                        
+                        diff_val = torch.max(torch.abs(nu_target_star - nu_old_star)).item()
+                        max_nu_diff = max(max_nu_diff, diff_val)
+
+                    for _ in range(epochs):
+                        opt_nu.zero_grad()
+                        nu_pred_star = self.model.forward_nu_network(key, pts)
+                        loss_fit = torch.mean((nu_pred_star - nu_target_star) ** 2)
+                        loss_fit.backward()
+                        opt_nu.step()
+
+        return max_nu_diff
+
     def compute_loss(self, domains_data):
         device = next(self.model.parameters()).device
         dummy_param = next(self.model.parameters())
@@ -64,13 +160,8 @@ class TrainingManager:
         ht_if_sum = 0.0
         weighted_if_sum = 0.0
 
-        if "domains" in domains_data:
-            domains_dict = domains_data["domains"]
-            shared_dict = domains_data.get("shared_interfaces", {})
-        else:
-            domains_dict = domains_data
-            shared_dict = {}
-
+        domains_dict = domains_data.get("domains", domains_data)
+        shared_dict = domains_data.get("shared_interfaces", {})
         bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
 
         # 1. PDE Loss
@@ -83,13 +174,19 @@ class TrainingManager:
                     pts = pts.detach().clone().requires_grad_(True)
                     
                 A_z_star = self.model.forward_network(key, pts)
+                
+                if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
+                    nu_star_net = self.model.forward_nu_network(key, pts)
+                else:
+                    nu_star_net = None
+
                 nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
                 hx, hy = domain.evaluate_magnetization_vector(pts)
                 hx, hy = hx.to(device), hy.to(device)
                 jz = domain.evaluate_current_density(pts).to(device)
                 
                 res_pde = self.pde_evaluator.compute_linear_pde_residual(
-                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy
+                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_star_net=nu_star_net
                 )
                 fading_w = self.pde_evaluator.compute_fading_weight(domain, pts)
                 
@@ -106,11 +203,7 @@ class TrainingManager:
                     outer_pts = outer_pts.detach().clone().requires_grad_(True)
                     
                 w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
-                    key_a=key,
-                    domain_a=domain,
-                    key_b='background',
-                    domain_b=bg_domain,
-                    pts=outer_pts
+                    key_a=key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
                 )
                 scaled_if_loss = float(domain.training_config.interface_weight) * w_if_loss
                 total_loss = total_loss + scaled_if_loss
@@ -128,11 +221,8 @@ class TrainingManager:
                     pts = pts.detach().clone().requires_grad_(True)
 
                 w_shared_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
-                    key_a=pair_data["key_a"],
-                    domain_a=pair_data["domain_a"],
-                    key_b=pair_data["key_b"],
-                    domain_b=pair_data["domain_b"],
-                    pts=pts
+                    key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
+                    key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts
                 )
                 w_weight = 0.5 * (float(pair_data["domain_a"].training_config.interface_weight) + 
                                   float(pair_data["domain_b"].training_config.interface_weight))
