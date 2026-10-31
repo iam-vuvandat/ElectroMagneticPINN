@@ -1,22 +1,23 @@
-modify_project_code = '''import os
+import os
 
-def update_project_with_pretrain_and_modular_configs():
+def update_entire_xpinn_fpi_project():
     current_directory = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_directory, '..'))
 
-    mat_domain_file = os.path.join(
-        project_root, 'simulation_domain_engine', 'material_domain', 'material_domain.py'
-    )
+    mat_domain_file = os.path.join(project_root, 'simulation_domain_engine', 'material_domain', 'material_domain.py')
+    eval_reluc_file = os.path.join(project_root, 'simulation_domain_engine', 'material_domain', 'evaluate_reluctivity.py')
     arch_dir = os.path.join(project_root, 'architectures')
     training_dir = os.path.join(project_root, 'training_engine')
+    physics_eq_dir = os.path.join(project_root, 'physics_domain', 'physical_equations')
+    main_pinn_file = os.path.join(project_root, 'electro_magnetic_pinn.py')
     test_sim_file = os.path.join(project_root, 'tests', 'test_simulation.py')
 
     files_to_update = {}
 
     # =========================================================================
-    # 1. CẬP NHẬT: material_domain.py (Thêm nu_network_config & update_material_domain)
+    # 1. CẬP NHẬT: material_domain.py (Thêm nu_network_config & fpi_config)
     # =========================================================================
-    files_to_update[mat_domain_file] = \'\'\'from typing import Tuple, Union, List, Optional, Any
+    files_to_update[mat_domain_file] = '''from typing import Tuple, Union, List, Optional, Any
 from types import SimpleNamespace
 import torch
 import torch.nn as nn
@@ -83,6 +84,14 @@ class MaterialDomain:
             fourier_sigma=1.0,
             fourier_mapping_size=32
         )
+
+        # Cấu hình lặp Fixed-Point Iteration (FPI)
+        self.fpi_config = SimpleNamespace(
+            relaxation_alpha=0.5,
+            max_fpi_iterations=10,
+            fpi_tolerance=1e-4,
+            use_net_nu=True
+        )
         
         self.outline_tensor: Optional[torch.Tensor] = None
         self.section_area: float = 0.0
@@ -105,9 +114,6 @@ class MaterialDomain:
         return _build_domain_module.build_domain(self)
 
     def update_material_domain(self) -> "MaterialDomain":
-        """
-        Đồng bộ toàn bộ thuộc tính cấu hình và dựng lại ranh giới hình học cho miền vật liệu.
-        """
         return self.build_domain()
 
     def _compute_constant_bh_curve(self) -> Any:
@@ -139,12 +145,62 @@ class MaterialDomain:
 
     def evaluate_current_density(self, points_tensor: torch.Tensor) -> torch.Tensor:
         return _evaluate_current_density_module.evaluate_current_density(self, points_tensor)
-\'\'\'
+'''
 
     # =========================================================================
-    # 2. CẬP NHẬT: forward_network.py (Softplus + 1e-6 & Tra cứu qua Net_nu)
+    # 2. CẬP NHẬT: evaluate_reluctivity.py (Xử lý B -> 0 tiệm cận chuẩn)
     # =========================================================================
-    files_to_update[os.path.join(arch_dir, 'forward_network.py')] = \'\'\'import torch
+    files_to_update[eval_reluc_file] = '''import torch
+from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+
+def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None, is_nonlinear=None):
+    if is_nonlinear is None:
+        is_nonlinear = getattr(self.physics_config, 'is_nonlinear', False)
+
+    if not is_nonlinear:
+        mu_r = float(getattr(self.physics_config, 'relative_permeability', 1.0))
+        const_nu = VACUUM_RELUCTIVITY / max(mu_r, 1e-6)
+        return torch.full(
+            (points_tensor.shape[0], 1),
+            const_nu,
+            dtype=points_tensor.dtype,
+            device=points_tensor.device
+        )
+
+    bh_data = getattr(self.physics_config, 'bh_curve_data', None)
+    if isinstance(bh_data, (list, tuple)) and len(bh_data) == 2:
+        b_pts = torch.tensor(bh_data[0], dtype=points_tensor.dtype, device=points_tensor.device)
+        h_pts = torch.tensor(bh_data[1], dtype=points_tensor.dtype, device=points_tensor.device)
+
+        if B_magnitude_tensor is None:
+            B_magnitude_tensor = torch.zeros(
+                (points_tensor.shape[0], 1),
+                dtype=points_tensor.dtype,
+                device=points_tensor.device
+            )
+
+        b_flat = B_magnitude_tensor.view(-1)
+        indices = torch.bucketize(b_flat, b_pts) - 1
+        indices = torch.clamp(indices, 0, len(b_pts) - 2)
+
+        b0, b1 = b_pts[indices], b_pts[indices + 1]
+        h0, h1 = h_pts[indices], h_pts[indices + 1]
+
+        t = (b_flat - b0) / (b1 - b0 + 1e-12)
+        h_interp = h0 + t * (h1 - h0)
+
+        # Xử lý giới hạn B -> 0 dùng độ dốc ban đầu (H1/B1)
+        initial_slope = h_pts[1] / max(float(b_pts[1].item()), 1e-8)
+        nu_tensor = torch.where(b_flat > 1e-6, h_interp / b_flat, initial_slope)
+        return nu_tensor.view(-1, 1)
+
+    raise ValueError(f"Domain '{self.domain_name}' đang ở chế độ phi tuyến nhưng thiếu dữ liệu bh_curve_data [B, H] hợp lệ.")
+'''
+
+    # =========================================================================
+    # 3. CẬP NHẬT: forward_network.py (Softplus + 1e-6 cho Net_nu)
+    # =========================================================================
+    files_to_update[os.path.join(arch_dir, 'forward_network.py')] = '''import torch
 import torch.nn as nn
 import numpy as np
 
@@ -196,7 +252,6 @@ def forward_network(self, network_key, xy):
 def forward_nu_network(self, network_key, xy):
     """
     Tra cứu độ từ kháng nu* = nu / nu0 từ Mạng phụ Net_nu.
-    Được cấu hình thông qua nu_network_config của từng MaterialDomain.
     """
     if network_key not in self.nu_networks:
         return None
@@ -222,15 +277,14 @@ def forward_nu_network(self, network_key, xy):
         x_input = xy_normalized
 
     raw_nu = self.nu_networks[network_key](x_input)
-    # Softplus + 1e-6 đảm bảo nu* luôn dương và hỗ trợ giá trị nhỏ như nu* = 1/1000 = 0.001
     nu_star = torch.nn.functional.softplus(raw_nu) + 1e-6
     return nu_star
-\'\'\'
+'''
 
     # =========================================================================
-    # 3. CẬP NHẬT: xpinn_architecture.py (Khởi tạo Net_nu dựa trên nu_network_config)
+    # 4. CẬP NHẬT: xpinn_architecture.py (Khởi tạo Mạng kép Az + Nu)
     # =========================================================================
-    files_to_update[os.path.join(arch_dir, 'xpinn_architecture.py')] = \'\'\'import torch
+    files_to_update[os.path.join(arch_dir, 'xpinn_architecture.py')] = '''import torch
 import torch.nn as nn
 import numpy as np
 from types import SimpleNamespace
@@ -271,7 +325,7 @@ class XPINNArchitecture(nn.Module):
             else:
                 net_key = f'domain_{domain.domain_id}'
                 
-            # 1. Dựng Mạng chính (Net_Az) từ network_config
+            # 1. Dựng Mạng chính (Net_Az)
             config = domain.network_config
             if config.fourier_features:
                 actual_input_dim = config.fourier_mapping_size * 2
@@ -283,7 +337,7 @@ class XPINNArchitecture(nn.Module):
             sub_net = self._build_single_network(actual_input_dim, config)
             self.networks[net_key] = sub_net
 
-            # 2. Dựng Mạng phụ (Net_nu) từ nu_network_config cho miền phi tuyến
+            # 2. Dựng Mạng phụ (Net_nu) cho miền phi tuyến
             is_nonlinear_domain = getattr(domain.physics_config, 'is_nonlinear', False) or \\
                                   (getattr(domain.physics_config, 'bh_curve_data', None) is not None)
             
@@ -306,12 +360,106 @@ class XPINNArchitecture(nn.Module):
                 )
             
         self._initialize_weights()
-\'\'\'
+'''
 
     # =========================================================================
-    # 4. CẬP NHẬT: training_manager.py (Pre-train Net_nu & Tra cứu trong compute_loss)
+    # 5. CẬP NHẬT: maxwell_pde_loss.py (PDE Residual dùng nu* từ Net_nu / FPI)
     # =========================================================================
-    files_to_update[os.path.join(training_dir, 'training_manager.py')] = \'\'\'import time
+    files_to_update[os.path.join(physics_eq_dir, 'maxwell_pde_loss.py')] = '''import torch
+
+class MaxwellPDELoss:
+    def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
+        self.electro_magnetic_pinn = electro_magnetic_pinn
+        self._L0 = L0
+        self._H0 = H0
+        self._nu0 = nu0
+
+    @property
+    def L0(self):
+        if self.electro_magnetic_pinn is not None:
+            return self.electro_magnetic_pinn.simulation_domain_engine_instance.L0
+        return self._L0
+
+    @property
+    def H0(self):
+        if self.electro_magnetic_pinn is not None:
+            return self.electro_magnetic_pinn.simulation_domain_engine_instance.H0
+        return self._H0
+
+    @property
+    def nu0(self):
+        if self.electro_magnetic_pinn is not None:
+            return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
+        return self._nu0
+
+    def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
+        """
+        Tính dư số PDE Maxwell-Poisson ở chế độ FPI / Tuyến tính hóa:
+        curl(H) - Jz = 0  với H = nu * B - Hc
+        """
+        if nu_star_net is not None:
+            nu_star = nu_star_net
+        else:
+            nu_star = nu_phys / self.nu0
+
+        H_cx_star = H_cx / self.H0
+        H_cy_star = H_cy / self.H0
+        J_z_star = J_z / (self.H0 / self.L0)
+
+        # 1. Gradient của Az* -> B*
+        grad_A_star = torch.autograd.grad(
+            outputs=A_z_star,
+            inputs=xy,
+            grad_outputs=torch.ones_like(A_z_star),
+            create_graph=True
+        )[0]
+
+        dAz_dx_star = grad_A_star[:, 0:1] * self.L0
+        dAz_dy_star = grad_A_star[:, 1:2] * self.L0
+
+        # 2. H* = nu* * B* - Hc*
+        Hx_star = nu_star * dAz_dy_star - H_cx_star
+        Hy_star = -nu_star * dAz_dx_star - H_cy_star
+
+        # 3. curl(H*) = dHy*/dx* - dHx*/dy*
+        grad_Hx = torch.autograd.grad(outputs=Hx_star, inputs=xy, grad_outputs=torch.ones_like(Hx_star), create_graph=True)[0]
+        grad_Hy = torch.autograd.grad(outputs=Hy_star, inputs=xy, grad_outputs=torch.ones_like(Hy_star), create_graph=True)[0]
+
+        dHy_dx_star = grad_Hy[:, 0:1] * self.L0
+        dHx_dy_star = grad_Hx[:, 1:2] * self.L0
+
+        res_pde = dHy_dx_star - dHx_dy_star - J_z_star
+        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
+        return res_pde / nu_scale
+
+    def compute_fading_weight(self, domain, xy):
+        beta = float(getattr(domain.training_config, 'pde_fading_beta', 80.0))
+        if beta <= 0.0:
+            return torch.ones((xy.shape[0], 1), dtype=xy.dtype, device=xy.device)
+
+        if self.electro_magnetic_pinn is not None:
+            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+            mat_verts = [
+                d.outline_tensor.to(device=xy.device, dtype=xy.dtype)
+                for d in sim_domain.domains_list
+                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+            ]
+            if mat_verts:
+                all_verts = torch.cat(mat_verts, dim=0)
+                dists = torch.cdist(xy.detach(), all_verts, p=2.0)
+                min_corner_dist, _ = torch.min(dists, dim=1, keepdim=True)
+                corner_dist_star = min_corner_dist / self.L0
+                return 1.0 - torch.exp(-beta * corner_dist_star)
+
+        sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
+        abs_sdf_star = torch.abs(sdf.detach()) / self.L0
+        return 1.0 - torch.exp(-beta * abs_sdf_star)
+'''
+
+    # =========================================================================
+    # 6. CẬP NHẬT: training_manager.py (Trình điều khiển FPI & Pre-train Net_nu)
+    # =========================================================================
+    files_to_update[os.path.join(training_dir, 'training_manager.py')] = '''import time
 import torch
 import torch.optim as optim
 
@@ -368,7 +516,7 @@ class TrainingManager:
 
     def pretrain_nu_networks(self, domains_data, epochs=300):
         """
-        Huấn luyện ấm trước Mạng phụ Net_nu để khớp hoàn toàn với độ từ kháng ban đầu nu_init*.
+        Huấn luyện ấm Mạng phụ Net_nu để khớp với độ từ kháng ban đầu nu_init*.
         """
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return
@@ -382,7 +530,6 @@ class TrainingManager:
             nu_params.extend(net.parameters())
             
         opt_nu = optim.Adam(nu_params, lr=1e-2)
-        
         domains_dict = domains_data.get("domains", domains_data)
         
         for ep in range(epochs):
@@ -411,13 +558,76 @@ class TrainingManager:
                 
         print("[✔] Hoàn thành Pre-train Mạng phụ $Net_{\\\\nu}$!")
 
+    def train_fpi(self, max_fpi_iterations, inner_adam_epochs, domains_data, relaxation_alpha=0.5):
+        """
+        Vòng lặp ngoài Fixed-Point Iteration (FPI/Picard) kết hợp làm mềm relaxation.
+        """
+        print(f"\\n[*] BẮT ĐẦU VÒNG LẶP FIXED-POINT ITERATION (FPI) [Tối đa {max_fpi_iterations} vòng ngoài]...")
+        device = next(self.model.parameters()).device
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+
+        for fpi_iter in range(max_fpi_iterations):
+            print(f"\\n=================== [FPI OUTER LOOP {fpi_iter + 1}/{max_fpi_iterations}] ===================")
+            
+            # 1. Huấn luyện vòng trong XPINN cho Net_Az với nu đóng băng
+            domains_data = self.train_adam(
+                epochs=inner_adam_epochs, 
+                domains_data=domains_data
+            )
+
+            # 2. Đánh giá trường B từ nghiệm Az hiện tại và cập nhật nu_target từ B-H lookup
+            domains_dict = domains_data.get("domains", domains_data)
+            max_nu_diff = 0.0
+
+            for key, data in domains_dict.items():
+                if key in self.model.nu_networks:
+                    domain = data["domain_object"]
+                    pts = data["interior_points"].to(device)
+                    
+                    if pts.shape[0] > 0:
+                        # Tính B_mag từ Az hiện tại
+                        Az_star = self.model.forward_network(key, pts)
+                        grad_A = torch.autograd.grad(outputs=Az_star, inputs=pts, grad_outputs=torch.ones_like(Az_star), create_graph=False)[0]
+                        Bx_star = grad_A[:, 1:2] * sim_domain.L0
+                        By_star = -grad_A[:, 0:1] * sim_domain.L0
+                        B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
+
+                        # Tra cứu nu_target từ B-H curve
+                        nu_target_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True).to(device)
+                        nu_target_star = nu_target_phys / sim_domain.nu0
+
+                        # Lấy nu_current từ Net_nu
+                        nu_current_star = self.model.forward_nu_network(key, pts).detach()
+
+                        # Áp dụng Thư giãn (Relaxation / Damping)
+                        nu_relaxed_star = (1.0 - relaxation_alpha) * nu_current_star + relaxation_alpha * nu_target_star
+
+                        # Refit Mạng phụ Net_nu theo nu_relaxed_star
+                        nu_net = self.model.nu_networks[key]
+                        opt_sub_nu = optim.Adam(nu_net.parameters(), lr=1e-3)
+                        for _ in range(80):
+                            opt_sub_nu.zero_grad()
+                            nu_pred = self.model.forward_nu_network(key, pts)
+                            loss_fit = torch.mean((nu_pred - nu_relaxed_star) ** 2)
+                            loss_fit.backward()
+                            opt_sub_nu.step()
+
+                        diff = torch.max(torch.abs(nu_relaxed_star - nu_current_star)).item()
+                        max_nu_diff = max(max_nu_diff, diff)
+
+            print(f"[*] FPI Loop {fpi_iter + 1} Hoàn thành | Độ thay đổi nu* lớn nhất: {max_nu_diff:.4e}")
+            if max_nu_diff < 1e-4:
+                print(f"[✔] FPI Hội tụ sớm tại vòng {fpi_iter + 1}!")
+                break
+
+        return domains_data
+
     def compute_loss(self, domains_data):
         device = next(self.model.parameters()).device
         dummy_param = next(self.model.parameters())
         total_loss = (dummy_param * 0.0).sum()
 
         pde_loss_sum = 0.0
-        mat_loss_sum = 0.0
         az_if_sum = 0.0
         bn_if_sum = 0.0
         ht_if_sum = 0.0
@@ -523,19 +733,13 @@ class TrainingManager:
         return total_loss
 
     def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
-        # Chạy Pre-train Mạng phụ Net_nu trước khi chạy Adam chính
-        self.pretrain_nu_networks(domains_data, epochs=300)
-
         self.model.train()
-        
         for param_group in self.optimizer_adam.param_groups:
             param_group['initial_lr'] = self.base_learning_rate_adam
             param_group['lr'] = self.base_learning_rate_adam
             
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=1e-6)
-        stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
-        non_finite_streak = 0
-        self.completed_adam_epochs = 0
+        stop_reason = f"Hoàn thành {epochs} epochs."
         
         for epoch in range(epochs):
             if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
@@ -545,12 +749,7 @@ class TrainingManager:
             loss = self.compute_loss(domains_data)
             
             if not torch.isfinite(loss):
-                non_finite_streak += 1
-                if non_finite_streak >= 5:
-                    stop_reason = "Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp 5 lần."
-                    break
-                continue
-            non_finite_streak = 0
+                break
                 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -558,20 +757,13 @@ class TrainingManager:
             scheduler_adam.step()
             
             self.completed_adam_epochs = epoch + 1
-            current_loss_value = loss.item()
-            
             if (epoch + 1) == 1 or (epoch + 1) % 100 == 0:
                 bd = self.last_loss_breakdown
                 print(
-                    f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
-                    f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
-                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
+                    f"Adam Epoch {epoch + 1:05d} | Total = {loss.item():.4e} | "
+                    f"PDE = {bd.get('pde_loss', 0.0):.3e}"
                 )
                 
-            if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
-                
-        print(f"[*] KẾT THÚC ADAM. Lý do: {stop_reason}")
         return domains_data
 
     def train_lbfgs(self, max_iterations, domains_data):
@@ -610,234 +802,13 @@ class TrainingManager:
             
         self.optimizer_lbfgs.step(closure)
         return domains_data
-\'\'\'
-
-    # =========================================================================
-    # 5. CẬP NHẬT: test_simulation.py (Gọi build_domain() chuẩn hóa)
-    # =========================================================================
-    files_to_update[test_sim_file] = \'\'\'import os
-import sys
-import shutil
-from types import SimpleNamespace
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
-if parent_directory not in sys.path:
-    sys.path.insert(0, parent_directory)
-
-import torch
-import torch.nn as nn
-if torch.cuda.is_available():
-    torch.set_float32_matmul_precision("high")
-
-from electro_magnetic_pinn import ElectroMagneticPINN
-
-def run_linear_simulation_test():
-    output_dir = "figure_linear_test"
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
-    
-    print("[*] Bắt đầu kiểm thử XPINN - PRE-TRAIN NET_NU & TRA CỨU ĐỘ TỪ THẨM MẠNG PHỤ...")
-
-    model = ElectroMagneticPINN()
-    sim_domain = model.simulation_domain_engine_instance
-
-    # 1. Cấu hình chuẩn hóa trường vật lý
-    sim_domain.physics_config.scale_H0 = 800000.0 * 1.2
-    sim_domain.physics_config.scale_L0 = 0.12
-    sim_domain.x_boundaries_tuple = (-0.1, 0.1)
-    sim_domain.y_boundaries_tuple = (-0.1, 0.1)
-
-    # 2. Cấu hình Lấy mẫu động
-    model.sampler_config.dynamic_resampling = True
-    model.sampler_config.resample_interval = 100
-    model.sampler_config.resample_points_before_lbfgs_stage = True
-
-    # 3. CẤU HÌNH THUẦN TUYẾN TÍNH & HỘI TỤ SÂU
-    model.training_config.enable_linear_warmup_stage = True
-    model.training_config.enable_nonlinear_adaptation_stage = False
-    model.training_config.enable_lbfgs_refinement_stage = True
-
-    model.training_config.number_of_adam_epochs = 3500
-    model.training_config.adam_learning_rate = 1e-3
-    model.training_config.target_loss_threshold = 1e-9
-
-    model.training_config.number_of_lbfgs_iterations = 1200
-    model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_evaluations = 2000
-    model.training_config.lbfgs_tolerance_gradient = 1e-12
-    model.training_config.lbfgs_tolerance_change = 1e-12
-    model.training_config.lbfgs_history_size = 100
-
-    # 4. Trực quan hóa
-    model.visualization_config.active = True
-    model.visualization_config.update_interval = 250
-    model.visualization_config.output_directory = output_dir
-    model.visualization_config.resolution = 80
-
-    # -------------------------------------------------------------------------
-    # 1. Ách sắt (Iron Yoke - Phi tuyến)
-    # -------------------------------------------------------------------------
-    iron_yoke = sim_domain.create_material_domain(
-        domain_name="iron_yoke",
-        material_name="steel_1008",
-        outline=[
-            [-0.06, -0.03], 
-            [0.06, -0.03], 
-            [0.06, 0.0], 
-            [-0.06, 0.0]
-        ]
-    )
-    iron_yoke.physics_config.is_nonlinear = False
-    iron_yoke.training_config.pde_weight = 1.0
-    iron_yoke.training_config.interface_weight = 1.5
-    iron_yoke.training_config.interface_potential_weight = 1000.0
-    iron_yoke.training_config.interface_bn_weight = 500.0
-    iron_yoke.training_config.interface_ht_weight = 500.0
-    iron_yoke.training_config.pde_fading_beta = 100.0
-    iron_yoke.training_config.number_of_interior_points = 4000
-    iron_yoke.training_config.number_of_surface_points = 2000
-
-    # Cấu hình Mạng chính Net_Az
-    iron_yoke.network_config.hidden_layers = 4
-    iron_yoke.network_config.hidden_neurons = 64
-    iron_yoke.network_config.activation_function = nn.SiLU()
-    iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.2
-    iron_yoke.network_config.fourier_mapping_size = 128
-
-    # Cấu hình Mạng phụ Net_nu
-    iron_yoke.nu_network_config.hidden_layers = 2
-    iron_yoke.nu_network_config.hidden_neurons = 32
-    iron_yoke.nu_network_config.activation_function = nn.SiLU()
-    iron_yoke.nu_network_config.fourier_features = False
-
-    iron_yoke.build_domain()
-
-    # -------------------------------------------------------------------------
-    # 2. Nam châm trái (N30UH - Tuyến tính)
-    # -------------------------------------------------------------------------
-    magnet_left = sim_domain.create_material_domain(
-        domain_name="magnet_left",
-        material_name="N30UH",
-        outline=[
-            [-0.05, 0.0], 
-            [-0.005, 0.0], 
-            [-0.005, 0.018], 
-            [-0.05, 0.018]
-        ],
-        coercive_direction=(0, 1)
-    )
-    magnet_left.physics_config.is_nonlinear = False
-    magnet_left.training_config.pde_weight = 1.0
-    magnet_left.training_config.interface_weight = 1.5
-    magnet_left.training_config.interface_potential_weight = 1000.0
-    magnet_left.training_config.interface_bn_weight = 500.0
-    magnet_left.training_config.interface_ht_weight = 500.0
-    magnet_left.training_config.pde_fading_beta = 100.0
-    magnet_left.training_config.number_of_interior_points = 2500
-    magnet_left.training_config.number_of_surface_points = 1500
-
-    magnet_left.network_config.hidden_layers = 4
-    magnet_left.network_config.hidden_neurons = 64
-    magnet_left.network_config.activation_function = nn.SiLU()
-    magnet_left.network_config.fourier_features = True
-    magnet_left.network_config.fourier_sigma = 1.2
-    magnet_left.network_config.fourier_mapping_size = 128
-    magnet_left.build_domain()
-
-    # -------------------------------------------------------------------------
-    # 3. Nam châm phải (N30UH - Tuyến tính)
-    # -------------------------------------------------------------------------
-    magnet_right = sim_domain.create_material_domain(
-        domain_name="magnet_right",
-        material_name="N30UH",
-        outline=[
-            [0.005, 0.0], 
-            [0.05, 0.0], 
-            [0.05, 0.018], 
-            [0.005, 0.018]
-        ],
-        coercive_direction=(0, -1)
-    )
-    magnet_right.physics_config.is_nonlinear = False
-    magnet_right.training_config.pde_weight = 1.0
-    magnet_right.training_config.interface_weight = 1.5
-    magnet_right.training_config.interface_potential_weight = 1000.0
-    magnet_right.training_config.interface_bn_weight = 500.0
-    magnet_right.training_config.interface_ht_weight = 500.0
-    magnet_right.training_config.pde_fading_beta = 100.0
-    magnet_right.training_config.number_of_interior_points = 2500
-    magnet_right.training_config.number_of_surface_points = 1500
-
-    magnet_right.network_config.hidden_layers = 4
-    magnet_right.network_config.hidden_neurons = 64
-    magnet_right.network_config.activation_function = nn.SiLU()
-    magnet_right.network_config.fourier_features = True
-    magnet_right.network_config.fourier_sigma = 1.2
-    magnet_right.network_config.fourier_mapping_size = 128
-    magnet_right.build_domain()
-
-    # -------------------------------------------------------------------------
-    # 4. Background Air Domain
-    # -------------------------------------------------------------------------
-    bg_training_cfg = SimpleNamespace(
-        pde_weight=1.0,
-        interface_weight=1.5,
-        pde_fading_beta=100.0,
-        sampling_density_multiplier=1.0,
-        number_of_interior_points=10000,
-        number_of_surface_points=0
-    )
-    bg_network_cfg = SimpleNamespace(
-        hidden_layers=4,
-        hidden_neurons=64,
-        activation_function=nn.SiLU(),
-        fourier_features=True,
-        fourier_sigma=1.2,
-        fourier_mapping_size=128
-    )
-    sim_domain.build_background_domain(
-        domain_name="background",
-        training_config=bg_training_cfg,
-        network_config=bg_network_cfg
-    )
-
-    model.update_electromagnetic_pinn()
-    sim_domain.plot_problem_definition(resolution=100)
-    
-    print("[*] Chạy tiến trình huấn luyện tuyến tính...")
-    model.execute_training_process()
-
-    print("[*] Đang xuất biểu đồ kết quả trường từ...")
-    model.plot_fields(
-        resolution=180, 
-        save_path=f"{output_dir}/linear_final_fields.png"
-    )
-
-    print(f"[✔] HOÀN THÀNH KIỂM THỬ! Kết quả lưu tại {output_dir}/")
-
-def test_simulation4():
-    run_linear_simulation_test()
-
-if __name__ == "__main__":
-    run_linear_simulation_test()
-\'\'\'
-
-    # Ghi đè file
-    for path, code in files_to_update.items():
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(code.strip() + '\\n')
-        print(f"[✔] Đã áp dụng cập nhật cho tệp: {os.path.relpath(path, project_root)}")
-
-if __name__ == "__main__":
-    update_project_with_pretrain_and_modular_configs()
 '''
 
-with open('modify_project.py', 'w', encoding='utf-8') as f:
-    f.write(modify_project_code)
+    # Ghi đè toàn bộ tệp trong dự án
+    for path, code in files_to_update.items():
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(code.strip() + '\n')
+        print(f"[✔] modify_project: Đã cập nhật tệp -> {os.path.relpath(path, project_root)}")
 
-print("Saved modify_project.py successfully")
+if __name__ == "__main__":
+    update_entire_xpinn_fpi_project()

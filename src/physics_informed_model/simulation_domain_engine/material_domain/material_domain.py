@@ -46,6 +46,7 @@ class MaterialDomain:
             number_of_surface_points=1200
         )
         
+        # Cấu hình Mạng chính (Net_Az)
         self.network_config = SimpleNamespace(
             hidden_layers=4,
             hidden_neurons=64,
@@ -53,6 +54,24 @@ class MaterialDomain:
             fourier_features=True,
             fourier_sigma=1.2,
             fourier_mapping_size=128
+        )
+
+        # Cấu hình Mạng phụ (Net_nu) cho miền phi tuyến
+        self.nu_network_config = SimpleNamespace(
+            hidden_layers=2,
+            hidden_neurons=32,
+            activation_function=nn.SiLU(),
+            fourier_features=False,
+            fourier_sigma=1.0,
+            fourier_mapping_size=32
+        )
+
+        # Cấu hình lặp Fixed-Point Iteration (FPI)
+        self.fpi_config = SimpleNamespace(
+            relaxation_alpha=0.5,
+            max_fpi_iterations=10,
+            fpi_tolerance=1e-4,
+            use_net_nu=True
         )
         
         self.outline_tensor: Optional[torch.Tensor] = None
@@ -76,10 +95,6 @@ class MaterialDomain:
         return _build_domain_module.build_domain(self)
 
     def update_material_domain(self) -> "MaterialDomain":
-        """
-        Đồng bộ toàn bộ thuộc tính cấu hình trong physics_config, training_config, network_config
-        và tái khởi tạo cấu trúc hình học miền vật liệu.
-        """
         return self.build_domain()
 
     def _compute_constant_bh_curve(self) -> Any:

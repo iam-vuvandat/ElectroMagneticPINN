@@ -37,7 +37,9 @@ def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None, is_nonlin
         t = (b_flat - b0) / (b1 - b0 + 1e-12)
         h_interp = h0 + t * (h1 - h0)
 
-        nu_tensor = torch.where(b_flat > 1e-6, h_interp / b_flat, h_pts[1] / b_pts[1])
+        # Xử lý giới hạn B -> 0 dùng độ dốc ban đầu (H1/B1)
+        initial_slope = h_pts[1] / max(float(b_pts[1].item()), 1e-8)
+        nu_tensor = torch.where(b_flat > 1e-6, h_interp / b_flat, initial_slope)
         return nu_tensor.view(-1, 1)
 
     raise ValueError(f"Domain '{self.domain_name}' đang ở chế độ phi tuyến nhưng thiếu dữ liệu bh_curve_data [B, H] hợp lệ.")

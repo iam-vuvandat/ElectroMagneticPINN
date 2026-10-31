@@ -53,6 +53,114 @@ class TrainingManager:
     def visualizer_update_interval(self):
         return self.electro_magnetic_pinn.visualization_config.update_interval
 
+    def pretrain_nu_networks(self, domains_data, epochs=300):
+        """
+        Huấn luyện ấm Mạng phụ Net_nu để khớp với độ từ kháng ban đầu nu_init*.
+        """
+        if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
+            return
+
+        print(f"\n[*] Bắt đầu Pre-training Mạng phụ $Net_{{\\nu}}$ ({epochs} epochs)...")
+        device = next(self.model.parameters()).device
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        
+        nu_params = []
+        for net in self.model.nu_networks.values():
+            nu_params.extend(net.parameters())
+            
+        opt_nu = optim.Adam(nu_params, lr=1e-2)
+        domains_dict = domains_data.get("domains", domains_data)
+        
+        for ep in range(epochs):
+            opt_nu.zero_grad()
+            loss_pre = 0.0
+            
+            for key, data in domains_dict.items():
+                if key in self.model.nu_networks:
+                    domain = data["domain_object"]
+                    pts = data["interior_points"].to(device)
+                    
+                    if pts.shape[0] > 0:
+                        nu_pred_star = self.model.forward_nu_network(key, pts)
+                        nu_target_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                        nu_target_star = nu_target_phys / sim_domain.nu0
+                        
+                        loss_domain = torch.mean((nu_pred_star - nu_target_star) ** 2)
+                        loss_pre = loss_pre + loss_domain
+                        
+            if loss_pre > 0:
+                loss_pre.backward()
+                opt_nu.step()
+                
+            if (ep + 1) == 1 or (ep + 1) % 100 == 0:
+                print(f"Pre-train Net_nu Epoch {ep + 1:03d} | Loss_nu = {loss_pre.item():.4e}")
+                
+        print("[✔] Hoàn thành Pre-train Mạng phụ $Net_{\\nu}$!")
+
+    def train_fpi(self, max_fpi_iterations, inner_adam_epochs, domains_data, relaxation_alpha=0.5):
+        """
+        Vòng lặp ngoài Fixed-Point Iteration (FPI/Picard) kết hợp làm mềm relaxation.
+        """
+        print(f"\n[*] BẮT ĐẦU VÒNG LẶP FIXED-POINT ITERATION (FPI) [Tối đa {max_fpi_iterations} vòng ngoài]...")
+        device = next(self.model.parameters()).device
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+
+        for fpi_iter in range(max_fpi_iterations):
+            print(f"\n=================== [FPI OUTER LOOP {fpi_iter + 1}/{max_fpi_iterations}] ===================")
+            
+            # 1. Huấn luyện vòng trong XPINN cho Net_Az với nu đóng băng
+            domains_data = self.train_adam(
+                epochs=inner_adam_epochs, 
+                domains_data=domains_data
+            )
+
+            # 2. Đánh giá trường B từ nghiệm Az hiện tại và cập nhật nu_target từ B-H lookup
+            domains_dict = domains_data.get("domains", domains_data)
+            max_nu_diff = 0.0
+
+            for key, data in domains_dict.items():
+                if key in self.model.nu_networks:
+                    domain = data["domain_object"]
+                    pts = data["interior_points"].to(device)
+                    
+                    if pts.shape[0] > 0:
+                        # Tính B_mag từ Az hiện tại
+                        Az_star = self.model.forward_network(key, pts)
+                        grad_A = torch.autograd.grad(outputs=Az_star, inputs=pts, grad_outputs=torch.ones_like(Az_star), create_graph=False)[0]
+                        Bx_star = grad_A[:, 1:2] * sim_domain.L0
+                        By_star = -grad_A[:, 0:1] * sim_domain.L0
+                        B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
+
+                        # Tra cứu nu_target từ B-H curve
+                        nu_target_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True).to(device)
+                        nu_target_star = nu_target_phys / sim_domain.nu0
+
+                        # Lấy nu_current từ Net_nu
+                        nu_current_star = self.model.forward_nu_network(key, pts).detach()
+
+                        # Áp dụng Thư giãn (Relaxation / Damping)
+                        nu_relaxed_star = (1.0 - relaxation_alpha) * nu_current_star + relaxation_alpha * nu_target_star
+
+                        # Refit Mạng phụ Net_nu theo nu_relaxed_star
+                        nu_net = self.model.nu_networks[key]
+                        opt_sub_nu = optim.Adam(nu_net.parameters(), lr=1e-3)
+                        for _ in range(80):
+                            opt_sub_nu.zero_grad()
+                            nu_pred = self.model.forward_nu_network(key, pts)
+                            loss_fit = torch.mean((nu_pred - nu_relaxed_star) ** 2)
+                            loss_fit.backward()
+                            opt_sub_nu.step()
+
+                        diff = torch.max(torch.abs(nu_relaxed_star - nu_current_star)).item()
+                        max_nu_diff = max(max_nu_diff, diff)
+
+            print(f"[*] FPI Loop {fpi_iter + 1} Hoàn thành | Độ thay đổi nu* lớn nhất: {max_nu_diff:.4e}")
+            if max_nu_diff < 1e-4:
+                print(f"[✔] FPI Hội tụ sớm tại vòng {fpi_iter + 1}!")
+                break
+
+        return domains_data
+
     def compute_loss(self, domains_data):
         device = next(self.model.parameters()).device
         dummy_param = next(self.model.parameters())
@@ -71,7 +179,8 @@ class TrainingManager:
             domains_dict = domains_data
             shared_dict = {}
 
-        bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        bg_domain = sim_domain.background_domain
 
         # 1. PDE Loss
         for key, data in domains_dict.items():
@@ -83,13 +192,20 @@ class TrainingManager:
                     pts = pts.detach().clone().requires_grad_(True)
                     
                 A_z_star = self.model.forward_network(key, pts)
+                
+                # Tra cứu nu* trực tiếp từ Net_nu nếu domain có Net_nu
+                if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
+                    nu_star_net = self.model.forward_nu_network(key, pts)
+                else:
+                    nu_star_net = None
+
                 nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
                 hx, hy = domain.evaluate_magnetization_vector(pts)
                 hx, hy = hx.to(device), hy.to(device)
                 jz = domain.evaluate_current_density(pts).to(device)
                 
                 res_pde = self.pde_evaluator.compute_linear_pde_residual(
-                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy
+                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_star_net=nu_star_net
                 )
                 fading_w = self.pde_evaluator.compute_fading_weight(domain, pts)
                 
@@ -157,15 +273,12 @@ class TrainingManager:
 
     def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
         self.model.train()
-        
         for param_group in self.optimizer_adam.param_groups:
             param_group['initial_lr'] = self.base_learning_rate_adam
             param_group['lr'] = self.base_learning_rate_adam
             
         scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=1e-6)
-        stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
-        non_finite_streak = 0
-        self.completed_adam_epochs = 0
+        stop_reason = f"Hoàn thành {epochs} epochs."
         
         for epoch in range(epochs):
             if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
@@ -175,12 +288,7 @@ class TrainingManager:
             loss = self.compute_loss(domains_data)
             
             if not torch.isfinite(loss):
-                non_finite_streak += 1
-                if non_finite_streak >= 5:
-                    stop_reason = "Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp 5 lần."
-                    break
-                continue
-            non_finite_streak = 0
+                break
                 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -188,20 +296,13 @@ class TrainingManager:
             scheduler_adam.step()
             
             self.completed_adam_epochs = epoch + 1
-            current_loss_value = loss.item()
-            
             if (epoch + 1) == 1 or (epoch + 1) % 100 == 0:
                 bd = self.last_loss_breakdown
                 print(
-                    f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
-                    f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
-                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
+                    f"Adam Epoch {epoch + 1:05d} | Total = {loss.item():.4e} | "
+                    f"PDE = {bd.get('pde_loss', 0.0):.3e}"
                 )
                 
-            if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
-                
-        print(f"[*] KẾT THÚC ADAM. Lý do: {stop_reason}")
         return domains_data
 
     def train_lbfgs(self, max_iterations, domains_data):
