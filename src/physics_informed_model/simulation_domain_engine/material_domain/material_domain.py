@@ -40,10 +40,10 @@ class MaterialDomain:
             interface_potential_weight=1000.0,
             interface_bn_weight=500.0,
             interface_ht_weight=500.0,
-            pde_fading_beta=150.0,
+            pde_fading_beta=100.0,
             sampling_density_multiplier=1.0,
-            number_of_interior_points=1000,
-            number_of_surface_points=800
+            number_of_interior_points=2000,
+            number_of_surface_points=1200
         )
         
         self.network_config = SimpleNamespace(
@@ -74,6 +74,13 @@ class MaterialDomain:
 
     def build_domain(self) -> "MaterialDomain":
         return _build_domain_module.build_domain(self)
+
+    def update_material_domain(self) -> "MaterialDomain":
+        """
+        Đồng bộ toàn bộ thuộc tính cấu hình trong physics_config, training_config, network_config
+        và tái khởi tạo cấu trúc hình học miền vật liệu.
+        """
+        return self.build_domain()
 
     def _compute_constant_bh_curve(self) -> Any:
         return _compute_constant_bh_curve_module.compute_constant_bh_curve(self)
