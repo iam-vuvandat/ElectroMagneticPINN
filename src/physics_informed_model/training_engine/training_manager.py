@@ -54,9 +54,6 @@ class TrainingManager:
         return self.electro_magnetic_pinn.visualization_config.update_interval
 
     def pretrain_nu_networks(self, domains_data, epochs=300):
-        """
-        Huấn luyện ấm trước Mạng phụ Net_nu để khớp hoàn toàn với độ từ kháng ban đầu nu_init*.
-        """
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return
 
@@ -73,7 +70,7 @@ class TrainingManager:
         
         for ep in range(epochs):
             opt_nu.zero_grad()
-            loss_pre = 0.0
+            loss_pre = torch.tensor(0.0, device=device)
             
             for key, data in domains_dict.items():
                 if key in self.model.nu_networks:
@@ -88,7 +85,7 @@ class TrainingManager:
                         loss_domain = torch.mean((nu_pred_star - nu_target_star) ** 2)
                         loss_pre = loss_pre + loss_domain
                         
-            if loss_pre > 0:
+            if loss_pre.requires_grad:
                 loss_pre.backward()
                 opt_nu.step()
                 
@@ -98,9 +95,6 @@ class TrainingManager:
         print("[✔] Hoàn thành Pre-train Mạng phụ $Net_{\\nu}$!")
 
     def fit_nu_network_step(self, domains_data, alpha_damping=0.8, epochs=150):
-        """
-        Cập nhật / Fit lại Mạng phụ Net_nu theo giá trị mục tiêu nu_target sinh từ B-H lookup (có Thư giãn / Damping alpha).
-        """
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return 0.0
 
@@ -121,21 +115,23 @@ class TrainingManager:
                 pts = data["interior_points"].to(device)
                 
                 if pts.shape[0] > 0:
-                    with torch.no_grad():
-                        Az_star = self.model.forward_network(key, pts)
+                    pts_grad = pts.detach().clone().requires_grad_(True)
+                    with torch.enable_grad():
+                        Az_star = self.model.forward_network(key, pts_grad)
                         grad_Az = torch.autograd.grad(
-                            outputs=Az_star, inputs=pts,
+                            outputs=Az_star, inputs=pts_grad,
                             grad_outputs=torch.ones_like(Az_star), create_graph=False
                         )[0]
                         Bx_star = grad_Az[:, 1:2] * sim_domain.L0
                         By_star = -grad_Az[:, 0:1] * sim_domain.L0
                         B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
                         
-                        nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
+                    with torch.no_grad():
+                        nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys.detach(), is_nonlinear=True)
                         nu_BH_star = nu_BH_phys / sim_domain.nu0
                         
                         nu_old_star = self.model.forward_nu_network(key, pts)
-                        nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
+                        nu_target_star = ((1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star).detach()
                         
                         diff_val = torch.max(torch.abs(nu_target_star - nu_old_star)).item()
                         max_nu_diff = max(max_nu_diff, diff_val)
