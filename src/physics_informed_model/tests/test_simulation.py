@@ -41,7 +41,7 @@ def run_linear_simulation_test():
     # 2. CẤU HÌNH BỘ LẤY MẪU ĐỘNG (COLLOCATION SAMPLER CONFIG)
     # =========================================================================
     model.sampler_config.dynamic_resampling = True
-    model.sampler_config.resample_interval = 100
+    model.sampler_config.resample_interval = 10
     model.sampler_config.resample_points_before_lbfgs_stage = True
 
     # =========================================================================
@@ -52,44 +52,44 @@ def run_linear_simulation_test():
     model.training_config.enable_nonlinear_adaptation_stage = False# TẮT hoàn toàn lặp FPI phi tuyến
     model.training_config.enable_lbfgs_refinement_stage = True     # BẬT L-BFGS để tinh chỉnh nghiệm sâu
 
-    # --- Cấu hình bộ giải Adam (Dành 100% epochs cho tuyến tính) ---
+    # --- Cấu hình bộ giải Adam ---
     model.training_config.number_of_adam_epochs = 3500            # Số epoch cho Adam
     model.training_config.adam_learning_rate = 1e-3
     model.training_config.target_loss_threshold = 1e-8
 
-    # --- Cấu hình tinh chỉnh L-BFGS (Siêu hội tụ) ---
-    model.training_config.number_of_lbfgs_iterations = 1200       # Tăng số bước L-BFGS
+    # --- Cấu hình tinh chỉnh L-BFGS ---
+    model.training_config.number_of_lbfgs_iterations = 1200
     model.training_config.lbfgs_learning_rate = 0.8
     model.training_config.lbfgs_maximum_evaluations = 2000
-    model.training_config.lbfgs_tolerance_gradient = 1e-12       # Siết chặt dung sai gradient
-    model.training_config.lbfgs_tolerance_change = 1e-12         # Siết chặt dung sai bước nhảy nghiệm
+    model.training_config.lbfgs_tolerance_gradient = 1e-12
+    model.training_config.lbfgs_tolerance_change = 1e-12
     model.training_config.lbfgs_history_size = 100
 
     # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA (VISUALIZATION CONFIG)
+    # 4. CẤU HÌNH TRỰC QUAN HÓA & XUẤT VIDEO (GẤP 10 LẦN KHUNG HÌNH/THỜI LƯỢNG)
     # =========================================================================
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 200
+    model.visualization_config.update_interval = 10               # GIẢM TỪ 100 XUỐNG 10 -> Lưu 1 frame mỗi 10 epochs (Tăng 10x số frame)
     model.visualization_config.output_directory = output_dir
     model.visualization_config.resolution = 100
     model.visualization_config.generate_gif_animation = False
     model.visualization_config.generate_mp4_video = True
-    model.visualization_config.mp4_filename = "linear_training_process.mp4"
-    model.visualization_config.animation_fps = 10
+    model.visualization_config.mp4_filename = "linear_training_process_10x.mp4"
+    model.visualization_config.animation_fps = 10                 # Giữ nguyên 10 FPS để video dài hơn gấp 10 lần
 
     # =========================================================================
     # 5. CẤU HÌNH VẬT LIỆU Ở CHẾ ĐỘ TUYẾN TÍNH
     # =========================================================================
     
     # -------------------------------------------------------------------------
-    # Miền 1: Ách sắt (Chuyển is_nonlinear = False)
+    # Miền 1: Ách sắt
     # -------------------------------------------------------------------------
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke",
         material_name="steel_1008",
         outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
     )
-    iron_yoke.physics_config.is_nonlinear = False               # TẮT tính phi tuyến của sắt
+    iron_yoke.physics_config.is_nonlinear = False
     iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.5
     iron_yoke.training_config.interface_potential_weight = 1000.0
@@ -107,7 +107,7 @@ def run_linear_simulation_test():
     iron_yoke.build_domain()
 
     # -------------------------------------------------------------------------
-    # Miền 2 & 3: Nam châm trái/phải (Tuyến tính)
+    # Miền 2 & 3: Nam châm trái/phải
     # -------------------------------------------------------------------------
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left", material_name="N30UH",
@@ -163,12 +163,12 @@ def run_linear_simulation_test():
     # =========================================================================
     # 6. THỰC THI THUẬT TOÁN
     # =========================================================================
-    print("[*] Chạy tiến trình huấn luyện bài toán tuyến tính...")
+    print("[*] Chạy tiến trình huấn luyện bài toán tuyến tính (Trích xuất 10x frames)...")
     model.execute_training_process()
 
     print("[*] Đang xuất biểu đồ trường từ tuyến tính...")
     model.plot_fields(resolution=180, save_path=f"{output_dir}/linear_final_fields.png")
-    print(f"[✔] HOÀN THÀNH KIỂM THỬ TUYẾN TÍNH! Kết quả lưu tại: {output_dir}/")
+    print(f"[✔] HOÀN THÀNH KIỂM THỬ TUYẾN TÍNH! Video MP4 được lưu tại: {output_dir}/")
 
 if __name__ == "__main__":
     run_linear_simulation_test()
