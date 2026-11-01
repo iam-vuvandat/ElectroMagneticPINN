@@ -23,7 +23,7 @@ def run_nonlinear_simulation_test():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
     
-    print("[*] KHỞI TẠO XPINN PHI TUYẾN - FPI DAMPING 0.25 & 10 OUTER ITERATIONS...")
+    print("[*] KHỞI TẠO XPINN PHI TUYẾN - CẤU HÌNH SIÊU THAM SỐ LINH HOẠT...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -40,20 +40,34 @@ def run_nonlinear_simulation_test():
     model.sampler_config.resample_interval = 50
     model.sampler_config.resample_points_before_lbfgs_stage = False
 
-    # 3. SIÊU THAM SỐ HUẤN LUYỆN (BẬT FPI PHI TUYẾN)
+    # 3. TOÀN BỘ CẤU HÌNH THAM SỐ HUẤN LUYỆN
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
     model.training_config.enable_lbfgs_refinement_stage = True
 
+    # Tổng Epochs & Tốc độ học Adam
     model.training_config.number_of_adam_epochs = 5000
-    model.training_config.linear_warmup_epochs_ratio = 0.30       # ~1500 Epochs cho Adam Warm-up sơ bộ
+    model.training_config.linear_warmup_epochs_ratio = 0.30       # ~1500 Epochs Warm-up
     model.training_config.adam_learning_rate = 1e-3
     model.training_config.target_loss_threshold = 1e-8
 
-    # Cấu hình FPI Picard Outer Loop
-    model.training_config.fpi_outer_iterations = 10               # 10 vòng lặp ngoại FPI
+    # Cấu hình FPI Outer Loop
+    model.training_config.fpi_outer_iterations = 10               # 10 vòng lặp FPI ngoại
     model.training_config.fpi_alpha_damping = 0.25               # Damping factor 0.25
-    model.training_config.fpi_tolerance = 1e-5                    # Dung sai hội tụ chặt hơn
+    model.training_config.fpi_tolerance = 1e-5                    # Dung sai FPI
+
+    # Cấu hình Khớp Mạng phụ Net_nu
+    model.training_config.pretrain_nu_epochs = 300               # Epochs Pre-train Net_nu ban đầu
+    model.training_config.pretrain_nu_lr = 1e-2                  # LR Pre-train Net_nu
+    model.training_config.fit_nu_epochs = 250                    # Epochs khớp Net_nu mỗi bước FPI
+    model.training_config.fit_nu_lr = 3e-3                       # LR khớp Net_nu mỗi bước FPI
+
+    # Kiểm soát Gradient & Nhật ký
+    model.training_config.grad_clip_max_norm = 1.0              # Clip gradient max norm
+    model.training_config.adam_eta_min = 1e-6                    # LR tối thiểu của Cosine Annealing
+    model.training_config.max_non_finite_streak = 5              # Giới hạn NaN/Inf streak
+    model.training_config.adam_log_interval = 100               # Tần suất in log Adam (epochs)
+    model.training_config.lbfgs_log_interval = 25               # Tần suất in log L-BFGS (closures)
 
     # Cấu hình L-BFGS Refinement
     model.training_config.number_of_lbfgs_iterations = 1500
@@ -73,13 +87,11 @@ def run_nonlinear_simulation_test():
     model.visualization_config.mp4_filename = "nonlinear_optimized_training.mp4"
 
     # 5. CẤU HÌNH CÁC MIỀN VẬT LIỆU
-    
-    # Miền 1: Ách sắt (Chuyển is_nonlinear = True)
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke", material_name="steel_1008",
         outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
     )
-    iron_yoke.physics_config.is_nonlinear = True                  # BẬT PHI TUYẾN
+    iron_yoke.physics_config.is_nonlinear = True
     iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.interface_potential_weight = 100.0
     iron_yoke.training_config.interface_bn_weight = 50.0
@@ -95,7 +107,6 @@ def run_nonlinear_simulation_test():
     iron_yoke.network_config.fourier_sigma = 1.2
     iron_yoke.network_config.fourier_mapping_size = 128
 
-    # Cấu hình Mạng phụ Net_nu cho ách sắt
     iron_yoke.nu_network_config.hidden_layers = 3
     iron_yoke.nu_network_config.hidden_neurons = 48
     iron_yoke.nu_network_config.activation_function = nn.SiLU()
@@ -103,7 +114,6 @@ def run_nonlinear_simulation_test():
 
     iron_yoke.build_domain()
 
-    # Miền 2 & 3: Nam châm trái / phải
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left", material_name="N30UH",
         outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
@@ -146,7 +156,6 @@ def run_nonlinear_simulation_test():
     magnet_right.network_config.fourier_mapping_size = 128
     magnet_right.build_domain()
 
-    # Miền 4: Background Air Domain
     bg_training_cfg = SimpleNamespace(
         pde_weight=1.0, 
         pde_fading_beta=60.0,

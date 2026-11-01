@@ -32,16 +32,30 @@ class ElectroMagneticPINN:
             number_of_adam_epochs=2500,
             target_loss_threshold=1e-5,
 
-            # Cấu hình FPI Outer Loop
-            fpi_outer_iterations=5,
-            fpi_alpha_damping=0.8,
-            fpi_tolerance=1e-4,
+            # Cấu hình FPI Picard Outer Loop
+            fpi_outer_iterations=10,
+            fpi_alpha_damping=0.25,
+            fpi_tolerance=1e-5,
 
-            lbfgs_learning_rate=0.8,
-            number_of_lbfgs_iterations=800,
-            lbfgs_maximum_evaluations=1000,
-            lbfgs_tolerance_gradient=1e-8,
-            lbfgs_tolerance_change=1e-10,
+            # Cấu hình Pre-train và Fit Net_nu (Đã linh hoạt hóa)
+            pretrain_nu_epochs=300,
+            pretrain_nu_lr=1e-2,
+            fit_nu_epochs=250,
+            fit_nu_lr=3e-3,
+
+            # Cấu hình kiểm soát Gradient và Scheduler
+            grad_clip_max_norm=1.0,
+            adam_eta_min=1e-6,
+            max_non_finite_streak=5,
+            adam_log_interval=100,
+            lbfgs_log_interval=25,
+
+            # Cấu hình L-BFGS Refinement
+            lbfgs_learning_rate=0.5,
+            number_of_lbfgs_iterations=1500,
+            lbfgs_maximum_evaluations=2500,
+            lbfgs_tolerance_gradient=1e-12,
+            lbfgs_tolerance_change=1e-12,
             lbfgs_history_size=50
         )
         
@@ -114,9 +128,11 @@ class ElectroMagneticPINN:
             
         self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
 
-        # Pre-train ép Net_nu hội tụ tuyệt đối vào hằng số mu_r ban đầu
+        # Pre-train Net_nu theo cấu hình linh hoạt
         domains_data = self.collocation_sampler_instance.generate_all_domain_points()
-        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=300)
+        pre_ep = getattr(self.training_config, 'pretrain_nu_epochs', 300)
+        pre_lr = getattr(self.training_config, 'pretrain_nu_lr', 1e-2)
+        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
 
     def evaluate_fields(self, points_tensor, return_numpy=False):
         pinn_arch = self.pinn_architecture_instance
@@ -239,11 +255,12 @@ class ElectroMagneticPINN:
             return self.collocation_sampler_instance.generate_all_domain_points()
 
         domains_data = resample_data_fn()
-        sim_domain = self.simulation_domain_engine_instance
         t_cfg = self.training_config
 
         # 1. Pre-training Net_nu
-        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=300)
+        pre_ep = getattr(t_cfg, 'pretrain_nu_epochs', 300)
+        pre_lr = getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
+        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
 
         # 2. Adam Stage
         total_adam_epochs = t_cfg.number_of_adam_epochs
@@ -260,10 +277,13 @@ class ElectroMagneticPINN:
             )
 
         if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
-            fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 5))
-            alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 0.8))
-            fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-4))
+            fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 10))
+            alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 0.25))
+            fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
             epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
+
+            fit_ep = getattr(t_cfg, 'fit_nu_epochs', 250)
+            fit_lr = getattr(t_cfg, 'fit_nu_lr', 3e-3)
 
             print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
             for f_iter in range(fpi_iters):
@@ -274,7 +294,7 @@ class ElectroMagneticPINN:
                     resample_fn=resample_data_fn, resample_interval=self.sampler_config.resample_interval
                 )
                 max_diff = self.training_manager_instance.fit_nu_network_step(
-                    domains_data, alpha_damping=alpha_damp, epochs=150
+                    domains_data, alpha_damping=alpha_damp, epochs=fit_ep, lr=fit_lr
                 )
                 print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
                 if max_diff < fpi_tol:

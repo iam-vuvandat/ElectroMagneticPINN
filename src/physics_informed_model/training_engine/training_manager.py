@@ -10,11 +10,11 @@ class TrainingManager:
         
         self.base_learning_rate_adam = getattr(t_cfg, 'adam_learning_rate', getattr(t_cfg, 'learning_rate_adam', 1e-3))
         self.target_loss_threshold = getattr(t_cfg, 'target_loss_threshold', getattr(t_cfg, 'target_loss', 1e-5))
-        self.lbfgs_learning_rate = getattr(t_cfg, 'lbfgs_learning_rate', 0.8)
-        self.lbfgs_maximum_iterations = getattr(t_cfg, 'number_of_lbfgs_iterations', getattr(t_cfg, 'lbfgs_maximum_iterations', 800))
-        self.lbfgs_maximum_evaluations = getattr(t_cfg, 'lbfgs_maximum_evaluations', 1000)
-        self.lbfgs_tolerance_gradient = getattr(t_cfg, 'lbfgs_tolerance_gradient', 1e-8)
-        self.lbfgs_tolerance_change = getattr(t_cfg, 'lbfgs_tolerance_change', 1e-10)
+        self.lbfgs_learning_rate = getattr(t_cfg, 'lbfgs_learning_rate', 0.5)
+        self.lbfgs_maximum_iterations = getattr(t_cfg, 'number_of_lbfgs_iterations', getattr(t_cfg, 'lbfgs_maximum_iterations', 1500))
+        self.lbfgs_maximum_evaluations = getattr(t_cfg, 'lbfgs_maximum_evaluations', 2500)
+        self.lbfgs_tolerance_gradient = getattr(t_cfg, 'lbfgs_tolerance_gradient', 1e-12)
+        self.lbfgs_tolerance_change = getattr(t_cfg, 'lbfgs_tolerance_change', 1e-12)
         self.lbfgs_history_size = getattr(t_cfg, 'lbfgs_history_size', 50)
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
@@ -54,11 +54,15 @@ class TrainingManager:
     def visualizer_update_interval(self):
         return self.electro_magnetic_pinn.visualization_config.update_interval
 
-    def pretrain_nu_networks(self, domains_data, epochs=300):
+    def pretrain_nu_networks(self, domains_data, epochs=None, lr=None):
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return
 
-        print(f"\n[*] Pre-training Mạng phụ $Net={{\\nu}}$ về hằng số ban đầu ({epochs} epochs)...")
+        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
+        epochs = epochs if epochs is not None else getattr(t_cfg, 'pretrain_nu_epochs', 300)
+        lr = lr if lr is not None else getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
+
+        print(f"\n[*] Pre-training Mạng phụ $Net={{\\nu}}$ về hằng số ban đầu ({epochs} epochs, lr={lr})...")
         device = next(self.model.parameters()).device
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         
@@ -66,7 +70,7 @@ class TrainingManager:
         for net in self.model.nu_networks.values():
             nu_params.extend(net.parameters())
             
-        opt_nu = optim.Adam(nu_params, lr=1e-2)
+        opt_nu = optim.Adam(nu_params, lr=lr)
         domains_dict = domains_data.get("domains", domains_data)
         
         for ep in range(epochs):
@@ -90,9 +94,14 @@ class TrainingManager:
                 loss_pre.backward()
                 opt_nu.step()
 
-    def fit_nu_network_step(self, domains_data, alpha_damping=0.25, epochs=250):
+    def fit_nu_network_step(self, domains_data, alpha_damping=None, epochs=None, lr=None):
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return 0.0
+
+        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
+        alpha_damping = alpha_damping if alpha_damping is not None else getattr(t_cfg, 'fpi_alpha_damping', 0.25)
+        epochs = epochs if epochs is not None else getattr(t_cfg, 'fit_nu_epochs', 250)
+        lr = lr if lr is not None else getattr(t_cfg, 'fit_nu_lr', 3e-3)
 
         device = next(self.model.parameters()).device
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
@@ -101,7 +110,7 @@ class TrainingManager:
         nu_params = []
         for net in self.model.nu_networks.values():
             nu_params.extend(net.parameters())
-        opt_nu = optim.Adam(nu_params, lr=3e-3)
+        opt_nu = optim.Adam(nu_params, lr=lr)
 
         max_nu_diff = 0.0
         
@@ -237,12 +246,18 @@ class TrainingManager:
 
     def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
         self.model.train()
-        
+        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
+
+        eta_min = getattr(t_cfg, 'adam_eta_min', 1e-6)
+        max_clip_norm = getattr(t_cfg, 'grad_clip_max_norm', 1.0)
+        max_non_finite_streak = getattr(t_cfg, 'max_non_finite_streak', 5)
+        log_interval = getattr(t_cfg, 'adam_log_interval', 100)
+
         for param_group in self.optimizer_adam.param_groups:
             param_group['initial_lr'] = self.base_learning_rate_adam
             param_group['lr'] = self.base_learning_rate_adam
             
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=1e-6)
+        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=eta_min)
         stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
         non_finite_streak = 0
         self.completed_adam_epochs = 0
@@ -256,21 +271,22 @@ class TrainingManager:
             
             if not torch.isfinite(loss):
                 non_finite_streak += 1
-                if non_finite_streak >= 5:
-                    stop_reason = "Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp 5 lần."
+                if non_finite_streak >= max_non_finite_streak:
+                    stop_reason = f"Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp {max_non_finite_streak} lần."
                     break
                 continue
             non_finite_streak = 0
                 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.networks.parameters(), max_norm=1.0)
+            if max_clip_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(self.model.networks.parameters(), max_norm=max_clip_norm)
             self.optimizer_adam.step()
             scheduler_adam.step()
             
             self.completed_adam_epochs = epoch + 1
             current_loss_value = loss.item()
             
-            if (epoch + 1) == 1 or (epoch + 1) % 100 == 0:
+            if (epoch + 1) == 1 or (epoch + 1) % log_interval == 0:
                 bd = self.last_loss_breakdown
                 print(
                     f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
@@ -289,6 +305,9 @@ class TrainingManager:
             return domains_data
 
         self.model.train()
+        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
+        log_interval = getattr(t_cfg, 'lbfgs_log_interval', 25)
+
         self.optimizer_lbfgs = optim.LBFGS(
             self.model.networks.parameters(),
             lr=self.lbfgs_learning_rate,
@@ -310,7 +329,7 @@ class TrainingManager:
             loss.backward()
             
             lbfgs_counter[0] += 1
-            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % 25 == 0:
+            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % log_interval == 0:
                 bd = self.last_loss_breakdown
                 print(
                     f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
