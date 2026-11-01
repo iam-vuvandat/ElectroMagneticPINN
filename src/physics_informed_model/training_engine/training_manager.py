@@ -107,18 +107,17 @@ class TrainingManager:
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         domains_dict = domains_data.get("domains", domains_data)
         
-        nu_params = []
-        for net in self.model.nu_networks.values():
-            nu_params.extend(net.parameters())
-        opt_nu = optim.Adam(nu_params, lr=lr)
-
+        targets_dict = {}
         max_nu_diff = 0.0
-        
+
+        # 1. Tính toán nhãn mục tiêu FPI cho các miền phi tuyến
         for key, data in domains_dict.items():
             if key in self.model.nu_networks:
                 domain = data["domain_object"]
+                if not getattr(domain.physics_config, 'is_nonlinear', False):
+                    continue
+
                 pts = data["interior_points"].to(device)
-                
                 if pts.shape[0] > 0:
                     pts_grad = pts.detach().clone().requires_grad_(True)
                     with torch.enable_grad():
@@ -140,13 +139,25 @@ class TrainingManager:
                         
                         diff_val = torch.max(torch.abs(nu_target_star - nu_old_star)).item()
                         max_nu_diff = max(max_nu_diff, diff_val)
+                        targets_dict[key] = (pts, nu_target_star)
 
-                    for _ in range(epochs):
-                        opt_nu.zero_grad()
-                        nu_pred_star = self.model.forward_nu_network(key, pts)
-                        loss_fit = torch.mean((nu_pred_star - nu_target_star) ** 2)
-                        loss_fit.backward()
-                        opt_nu.step()
+        if not targets_dict:
+            return 0.0
+
+        # 2. Khớp đồng thời Mạng Net_nu trên tất cả các miền phi tuyến
+        nu_params = []
+        for key in targets_dict.keys():
+            nu_params.extend(self.model.nu_networks[key].parameters())
+        opt_nu = optim.Adam(nu_params, lr=lr)
+
+        for _ in range(epochs):
+            opt_nu.zero_grad()
+            total_fit_loss = torch.tensor(0.0, device=device)
+            for key, (pts, nu_target_star) in targets_dict.items():
+                nu_pred_star = self.model.forward_nu_network(key, pts)
+                total_fit_loss = total_fit_loss + torch.mean((nu_pred_star - nu_target_star) ** 2)
+            total_fit_loss.backward()
+            opt_nu.step()
 
         return max_nu_diff
 
@@ -176,8 +187,9 @@ class TrainingManager:
                     
                 A_z_star = self.model.forward_network(key, pts)
                 
+                # Giữ nguyên Autograd Graph để tính grad(nu*) theo tọa độ không gian xy
                 if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
-                    nu_star_net = self.model.forward_nu_network(key, pts).detach()
+                    nu_star_net = self.model.forward_nu_network(key, pts)
                 else:
                     nu_star_net = None
 

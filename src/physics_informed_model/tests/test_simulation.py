@@ -53,7 +53,7 @@ def run_nonlinear_simulation_test():
 
     # Cấu hình FPI Outer Loop
     model.training_config.fpi_outer_iterations = 10               # 10 vòng lặp FPI ngoại
-    model.training_config.fpi_alpha_damping = 0.8               # Damping factor 0.25
+    model.training_config.fpi_alpha_damping = 0.25               # Damping factor 0.25 (Đã chuẩn hóa)
     model.training_config.fpi_tolerance = 1e-5                    # Dung sai FPI
 
     # Cấu hình Khớp Mạng phụ Net_nu
