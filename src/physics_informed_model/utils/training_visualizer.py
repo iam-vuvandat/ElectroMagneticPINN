@@ -69,9 +69,9 @@ class TrainingVisualizer:
                 Bx_sub_phys = grad_sub_star[:, 1:2] * sim_domain.A0
                 By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
-                if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
-                    nu_star_p = model.forward_nu_network(net_key, eval_points)
-                    nu_dom = nu_star_p * sim_domain.nu0
+                if getattr(domain.physics_config, 'is_nonlinear', False):
+                    B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
+                    nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
                 else:
                     nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
 
@@ -137,7 +137,6 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # Permeability Distribution mu_r trên Thang Loga
         v_max_mur = max(float(np.max(mu_r_clamped)), 10.0)
         levels_mur_log = np.logspace(0, np.log10(v_max_mur), 50)
         contour_mur = axs[0, 2].contourf(

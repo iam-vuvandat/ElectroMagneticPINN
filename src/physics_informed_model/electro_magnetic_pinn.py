@@ -14,6 +14,7 @@ from physics_domain.physical_equations.interface_loss import InterfaceLoss
 from simulation_domain_engine.simulation_domain import SimulationDomain
 from physics_domain.collocation_sampler import CollocationSampler
 from utils.training_visualizer import TrainingVisualizer
+from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
 class ElectroMagneticPINN:
     def __init__(self):
@@ -195,17 +196,18 @@ class ElectroMagneticPINN:
         mat_ids = props["material_classification"].squeeze()
         
         mu_r_tensor = torch.ones_like(mat_ids, device=device)
+        B_mag_pts = torch.tensor(B_mag_grid.ravel(), dtype=torch.float32, device=device).unsqueeze(1)
+
         for domain in sim_domain.domains_list:
             if getattr(domain, 'domain_name', '') != 'background':
                 mask = (mat_ids == float(domain.domain_id))
-                net_k = f'domain_{domain.domain_id}'
-                if hasattr(self.pinn_architecture_instance, 'nu_networks') and net_k in self.pinn_architecture_instance.nu_networks:
-                    nu_star_p = self.pinn_architecture_instance.forward_nu_network(net_k, eval_pts)
-                    mu_val = (1.0 / torch.clamp(nu_star_p.squeeze(), min=1e-6))
-                    mu_r_tensor[mask] = mu_val[mask]
-                else:
-                    mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
-                    mu_r_tensor[mask] = mu_val
+                if mask.any():
+                    if getattr(domain.physics_config, 'is_nonlinear', False):
+                        nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
+                        mu_r_tensor[mask] = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys.squeeze(), min=1e-6))
+                    else:
+                        mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
+                        mu_r_tensor[mask] = mu_val
 
         mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
         mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
@@ -223,7 +225,6 @@ class ElectroMagneticPINN:
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        # Thang Loga cho độ từ thẩm mu_r
         v_max_mur = max(float(np.max(mu_r_clamped)), 10.0)
         levels_mur_log = np.logspace(0, np.log10(v_max_mur), 60)
         c2 = axs[1, 0].contourf(

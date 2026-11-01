@@ -62,7 +62,7 @@ class TrainingManager:
         epochs = epochs if epochs is not None else getattr(t_cfg, 'pretrain_nu_epochs', 300)
         lr = lr if lr is not None else getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
 
-        print(f"\n[*] Pre-training Mạng phụ $Net={{\\nu}}$ về hằng số ban đầu ({epochs} epochs, lr={lr})...")
+        print(f"\n[*] Pre-training Mạng phụ Net_nu về hằng số ban đầu ({epochs} epochs, lr={lr})...")
         device = next(self.model.parameters()).device
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         
@@ -110,7 +110,6 @@ class TrainingManager:
         targets_dict = {}
         max_nu_diff = 0.0
 
-        # 1. Tính toán nhãn mục tiêu FPI cho các miền phi tuyến
         for key, data in domains_dict.items():
             if key in self.model.nu_networks:
                 domain = data["domain_object"]
@@ -131,11 +130,12 @@ class TrainingManager:
                         B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
                         
                     with torch.no_grad():
+                        # Tính nhãn chuẩn độ từ kháng từ bản đồ trường B hiện tại
                         nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys.detach(), is_nonlinear=True)
-                        nu_BH_star = nu_BH_phys / sim_domain.nu0
+                        nu_BH_star = (nu_BH_phys / sim_domain.nu0).detach()
                         
-                        nu_old_star = self.model.forward_nu_network(key, pts)
-                        nu_target_star = ((1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star).detach()
+                        nu_old_star = self.model.forward_nu_network(key, pts).detach()
+                        nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
                         
                         diff_val = torch.max(torch.abs(nu_target_star - nu_old_star)).item()
                         max_nu_diff = max(max_nu_diff, diff_val)
@@ -144,7 +144,6 @@ class TrainingManager:
         if not targets_dict:
             return 0.0
 
-        # 2. Khớp đồng thời Mạng Net_nu trên tất cả các miền phi tuyến
         nu_params = []
         for key in targets_dict.keys():
             nu_params.extend(self.model.nu_networks[key].parameters())
@@ -176,7 +175,6 @@ class TrainingManager:
         shared_dict = domains_data.get("shared_interfaces", {})
         bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
 
-        # 1. PDE Loss
         for key, data in domains_dict.items():
             domain = data["domain_object"]
             pts = data["interior_points"].to(device)
@@ -187,7 +185,6 @@ class TrainingManager:
                     
                 A_z_star = self.model.forward_network(key, pts)
                 
-                # Giữ nguyên Autograd Graph để tính grad(nu*) theo tọa độ không gian xy
                 if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
                     nu_star_net = self.model.forward_nu_network(key, pts)
                 else:
@@ -226,7 +223,6 @@ class TrainingManager:
                 ht_if_sum += ht_l.item()
                 weighted_if_sum += scaled_if_loss.item()
 
-        # 2. Shared Interface Loss
         for pair_key, pair_data in shared_dict.items():
             pts = pair_data["interface_points"].to(device)
             if pts.shape[0] > 0:

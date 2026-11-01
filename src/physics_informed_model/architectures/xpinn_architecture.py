@@ -67,19 +67,17 @@ class XPINNArchitecture(nn.Module):
                 nu_net = self._build_single_network(actual_nu_input_dim, nu_config)
                 self.nu_networks[net_key] = nu_net
                 
-                # Cấu hình khởi tạo cho Net_nu bám sát mu_r tuyến tính ban đầu
                 self._initialize_nu_network_constant(domain, net_key)
 
         self._initialize_weights()
 
     def _initialize_nu_network_constant(self, domain, net_key):
-        """Khởi tạo trọng số Net_nu xuất ra giá trị hằng số nu_star ban đầu nhưng không triệt tiêu gradient"""
+        """Khởi tạo Net_nu vừa bám giá trị ban đầu vừa giữ gradient cho không gian (x, y)"""
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         dummy_pts = torch.zeros((1, 2))
         nu_target_phys = domain.evaluate_reluctivity(dummy_pts, is_nonlinear=False).item()
         nu_target_star = max(nu_target_phys / sim_domain.nu0, 1e-6)
         
-        # Inverse softplus: raw_val = ln(exp(nu_target_star) - 1)
         if nu_target_star < 20.0:
             target_raw = np.log(np.exp(nu_target_star) - 1.0 + 1e-12)
         else:
@@ -88,10 +86,8 @@ class XPINNArchitecture(nn.Module):
         net = self.nu_networks[net_key]
         for module in net:
             if isinstance(module, nn.Linear):
-                # Sử dụng Xavier Normal với gain nhỏ thay vì gán trọng số bằng 0 để giữ gradient cho không gian (x, y)
                 nn.init.xavier_normal_(module.weight, gain=0.01)
                 nn.init.zeros_(module.bias)
                 
-        # Gán bias layer cuối để đảm bảo giá trị khởi tạo hằng số trung bình ban đầu
         last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
         nn.init.constant_(last_linear.bias, target_raw)
