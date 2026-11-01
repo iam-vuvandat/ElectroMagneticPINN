@@ -35,7 +35,7 @@ def run_optimized_simulation_test():
     sim_domain.x_boundaries_tuple = (-0.12, 0.12)
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
-    # 2. CẤU HÌNH BỘ LẤY MẪU: Tắt đổi điểm trước L-BFGS
+    # 2. CẤU HÌNH BỘ LẤY MẪU
     model.sampler_config.dynamic_resampling = True
     model.sampler_config.resample_interval = 50
     model.sampler_config.resample_points_before_lbfgs_stage = False
@@ -66,8 +66,6 @@ def run_optimized_simulation_test():
     model.visualization_config.mp4_filename = "deep_optimized_training.mp4"
 
     # 5. CẤU HÌNH CÁC MIỀN VẬT LIỆU
-    
-    # Miền 1: Ách sắt (Iron Yoke)
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke", material_name="steel_1008",
         outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
@@ -89,7 +87,6 @@ def run_optimized_simulation_test():
     iron_yoke.network_config.fourier_mapping_size = 128
     iron_yoke.build_domain()
 
-    # Miền 2 & 3: Nam châm trái / phải
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left", material_name="N30UH",
         outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
@@ -132,7 +129,6 @@ def run_optimized_simulation_test():
     magnet_right.network_config.fourier_mapping_size = 128
     magnet_right.build_domain()
 
-    # Miền 4: Background Air Domain
     bg_training_cfg = SimpleNamespace(
         pde_weight=1.0, 
         pde_fading_beta=60.0,

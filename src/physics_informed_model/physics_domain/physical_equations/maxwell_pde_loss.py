@@ -26,11 +26,6 @@ class MaxwellPDELoss:
         return self._nu0
 
     def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
-        """
-        Tính dư số PDE Maxwell-Poisson ở bước lặp FPI (Picard):
-        H* = nu* * B* - Hc*
-        Nếu truyền nu_star_net (từ Net_nu), hệ số nu* được lấy từ Mạng phụ Net_nu đóng băng.
-        """
         if nu_star_net is not None:
             nu_star = nu_star_net
         else:
@@ -51,8 +46,8 @@ class MaxwellPDELoss:
         dAz_dx_star = grad_A_star[:, 0:1] * self.L0
         dAz_dy_star = grad_A_star[:, 1:2] * self.L0
 
-        # 2. H* = nu* * B* - Hc*
-        Hx_star = nu_star * xdAz_dy_star - H_cx_star
+        # 2. H* = nu* * B* - Hc* (Đã sửa lỗi typo tại đây)
+        Hx_star = nu_star * dAz_dy_star - H_cx_star
         Hy_star = -nu_star * dAz_dx_star - H_cy_star
 
         # 3. curl(H*) = dHy*/dx* - dHx*/dy*

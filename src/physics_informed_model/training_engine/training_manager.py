@@ -19,7 +19,6 @@ class TrainingManager:
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         
-        # CHỈ ĐĂNG KÝ THAM SỐ MẠNG CHÍNH NET_AZ CHO ADAM VÀ L-BFGS
         self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
@@ -198,7 +197,6 @@ class TrainingManager:
                 w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
                     key_a=key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
                 )
-                # ĐÃ SỬA LỖI: Tránh nhân kép interface_weight tại đây
                 scaled_if_loss = w_if_loss
                 total_loss = total_loss + scaled_if_loss
 
@@ -218,7 +216,6 @@ class TrainingManager:
                     key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
                     key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts
                 )
-                # ĐÃ SỬA LỖI: Giữ nguyên w_shared_loss từ _compute_pair_components
                 scaled_shared_loss = w_shared_loss
                 total_loss = total_loss + scaled_shared_loss
 

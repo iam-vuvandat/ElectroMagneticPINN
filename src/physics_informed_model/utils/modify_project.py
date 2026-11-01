@@ -1,17 +1,107 @@
 import os
 
-def apply_loss_and_architecture_fixes():
+def apply_all_fixes():
     current_directory = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_directory, '..'))
 
+    maxwell_pde_file = os.path.join(project_root, 'physics_domain', 'physical_equations', 'maxwell_pde_loss.py')
     training_manager_file = os.path.join(project_root, 'training_engine', 'training_manager.py')
     test_sim_file = os.path.join(project_root, 'tests', 'test_simulation.py')
 
     files_to_update = {}
 
     # =========================================================================
-    # 1. CẬP NHẬT: training_manager.py
-    # KHIẾN HÀM COMPUTE_LOSS KHÔNG BỊ NHÂN KÉP TRỌNG SỐ INTERFACE_WEIGHT
+    # 1. CẬP NHẬT: maxwell_pde_loss.py (SỬA LỖI TYPO xdAz_dy_star -> dAz_dy_star)
+    # =========================================================================
+    files_to_update[maxwell_pde_file] = '''import torch
+
+class MaxwellPDELoss:
+    def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
+        self.electro_magnetic_pinn = electro_magnetic_pinn
+        self._L0 = L0
+        self._H0 = H0
+        self._nu0 = nu0
+
+    @property
+    def L0(self):
+        if self.electro_magnetic_pinn is not None:
+            return self.electro_magnetic_pinn.simulation_domain_engine_instance.L0
+        return self._L0
+
+    @property
+    def H0(self):
+        if self.electro_magnetic_pinn is not None:
+            return self.electro_magnetic_pinn.simulation_domain_engine_instance.H0
+        return self._H0
+
+    @property
+    def nu0(self):
+        if self.electro_magnetic_pinn is not None:
+            return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
+        return self._nu0
+
+    def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
+        if nu_star_net is not None:
+            nu_star = nu_star_net
+        else:
+            nu_star = nu_phys / self.nu0
+
+        H_cx_star = H_cx / self.H0
+        H_cy_star = H_cy / self.H0
+        J_z_star = J_z / (self.H0 / self.L0)
+
+        # 1. Gradient của Az* -> B*
+        grad_A_star = torch.autograd.grad(
+            outputs=A_z_star,
+            inputs=xy,
+            grad_outputs=torch.ones_like(A_z_star),
+            create_graph=True
+        )[0]
+
+        dAz_dx_star = grad_A_star[:, 0:1] * self.L0
+        dAz_dy_star = grad_A_star[:, 1:2] * self.L0
+
+        # 2. H* = nu* * B* - Hc* (Đã sửa lỗi typo tại đây)
+        Hx_star = nu_star * dAz_dy_star - H_cx_star
+        Hy_star = -nu_star * dAz_dx_star - H_cy_star
+
+        # 3. curl(H*) = dHy*/dx* - dHx*/dy*
+        grad_Hx = torch.autograd.grad(outputs=Hx_star, inputs=xy, grad_outputs=torch.ones_like(Hx_star), create_graph=True)[0]
+        grad_Hy = torch.autograd.grad(outputs=Hy_star, inputs=xy, grad_outputs=torch.ones_like(Hy_star), create_graph=True)[0]
+
+        dHy_dx_star = grad_Hy[:, 0:1] * self.L0
+        dHx_dy_star = grad_Hx[:, 1:2] * self.L0
+
+        res_pde = dHy_dx_star - dHx_dy_star - J_z_star
+        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
+        return res_pde / nu_scale
+
+    def compute_fading_weight(self, domain, xy):
+        beta = float(getattr(domain.training_config, 'pde_fading_beta', 80.0))
+        if beta <= 0.0:
+            return torch.ones((xy.shape[0], 1), dtype=xy.dtype, device=xy.device)
+
+        if self.electro_magnetic_pinn is not None:
+            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+            mat_verts = [
+                d.outline_tensor.to(device=xy.device, dtype=xy.dtype)
+                for d in sim_domain.domains_list
+                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+            ]
+            if mat_verts:
+                all_verts = torch.cat(mat_verts, dim=0)
+                dists = torch.cdist(xy.detach(), all_verts, p=2.0)
+                min_corner_dist, _ = torch.min(dists, dim=1, keepdim=True)
+                corner_dist_star = min_corner_dist / self.L0
+                return 1.0 - torch.exp(-beta * corner_dist_star)
+
+        sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
+        abs_sdf_star = torch.abs(sdf.detach()) / self.L0
+        return 1.0 - torch.exp(-beta * abs_sdf_star)
+'''
+
+    # =========================================================================
+    # 2. CẬP NHẬT: training_manager.py
     # =========================================================================
     files_to_update[training_manager_file] = '''import time
 import torch
@@ -34,7 +124,6 @@ class TrainingManager:
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         
-        # CHỈ ĐĂNG KÝ THAM SỐ MẠNG CHÍNH NET_AZ CHO ADAM VÀ L-BFGS
         self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
@@ -213,7 +302,6 @@ class TrainingManager:
                 w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
                     key_a=key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
                 )
-                # ĐÃ SỬA LỖI: Tránh nhân kép interface_weight tại đây
                 scaled_if_loss = w_if_loss
                 total_loss = total_loss + scaled_if_loss
 
@@ -233,7 +321,6 @@ class TrainingManager:
                     key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
                     key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts
                 )
-                # ĐÃ SỬA LỖI: Giữ nguyên w_shared_loss từ _compute_pair_components
                 scaled_shared_loss = w_shared_loss
                 total_loss = total_loss + scaled_shared_loss
 
@@ -341,8 +428,7 @@ class TrainingManager:
 '''
 
     # =========================================================================
-    # 2. CẬP NHẬT: test_simulation.py
-    # KHÓA TẬP ĐIỂM CHO L-BFGS VÀ CÂN BẰNG LẠI TRỌNG SỐ INTERFACE/DUNG LƯỢNG MẠNG
+    # 3. CẬP NHẬT: test_simulation.py
     # =========================================================================
     files_to_update[test_sim_file] = '''import os
 import sys
@@ -381,7 +467,7 @@ def run_optimized_simulation_test():
     sim_domain.x_boundaries_tuple = (-0.12, 0.12)
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
-    # 2. CẤU HÌNH BỘ LẤY MẪU: Tắt đổi điểm trước L-BFGS
+    # 2. CẤU HÌNH BỘ LẤY MẪU
     model.sampler_config.dynamic_resampling = True
     model.sampler_config.resample_interval = 50
     model.sampler_config.resample_points_before_lbfgs_stage = False
@@ -412,8 +498,6 @@ def run_optimized_simulation_test():
     model.visualization_config.mp4_filename = "deep_optimized_training.mp4"
 
     # 5. CẤU HÌNH CÁC MIỀN VẬT LIỆU
-    
-    # Miền 1: Ách sắt (Iron Yoke)
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke", material_name="steel_1008",
         outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
@@ -435,7 +519,6 @@ def run_optimized_simulation_test():
     iron_yoke.network_config.fourier_mapping_size = 128
     iron_yoke.build_domain()
 
-    # Miền 2 & 3: Nam châm trái / phải
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left", material_name="N30UH",
         outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
@@ -478,7 +561,6 @@ def run_optimized_simulation_test():
     magnet_right.network_config.fourier_mapping_size = 128
     magnet_right.build_domain()
 
-    # Miền 4: Background Air Domain
     bg_training_cfg = SimpleNamespace(
         pde_weight=1.0, 
         pde_fading_beta=60.0,
@@ -513,11 +595,11 @@ if __name__ == "__main__":
     run_optimized_simulation_test()
 '''
 
-    # Thực thi ghi đè file
+    # Ghi đè vào các file tương ứng
     for file_path, content in files_to_update.items():
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
         print(f"[✔] Đã cập nhật thành công: {os.path.relpath(file_path, project_root)}")
 
 if __name__ == "__main__":
-    apply_loss_and_architecture_fixes()
+    apply_all_fixes()
