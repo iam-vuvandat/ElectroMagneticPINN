@@ -90,7 +90,7 @@ class TrainingManager:
                 loss_pre.backward()
                 opt_nu.step()
 
-    def fit_nu_network_step(self, domains_data, alpha_damping=0.8, epochs=150):
+    def fit_nu_network_step(self, domains_data, alpha_damping=0.25, epochs=250):
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return 0.0
 
@@ -101,7 +101,7 @@ class TrainingManager:
         nu_params = []
         for net in self.model.nu_networks.values():
             nu_params.extend(net.parameters())
-        opt_nu = optim.Adam(nu_params, lr=5e-3)
+        opt_nu = optim.Adam(nu_params, lr=3e-3)
 
         max_nu_diff = 0.0
         
