@@ -42,8 +42,8 @@ def run_fpi_simulation_test():
     model.training_config.enable_lbfgs_refinement_stage = True
 
     model.training_config.number_of_adam_epochs = 2500
-    model.training_config.fpi_outer_iterations = 5
-    model.training_config.fpi_alpha_damping = 0.8
+    model.training_config.fpi_outer_iterations = 10
+    model.training_config.fpi_alpha_damping = 0.1
     model.training_config.fpi_tolerance = 1e-4
 
     model.training_config.number_of_lbfgs_iterations = 800
