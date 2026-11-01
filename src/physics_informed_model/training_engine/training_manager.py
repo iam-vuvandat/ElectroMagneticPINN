@@ -92,7 +92,6 @@ class TrainingManager:
                 opt_nu.step()
 
     def fit_nu_network_step(self, domains_data, alpha_damping=0.8, epochs=150):
-        """Hàm này CHỈ ĐƯỢC GỌI trong giai đoạn lặp FPI phi tuyến (Stage 1B)"""
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return 0.0
 
@@ -169,7 +168,6 @@ class TrainingManager:
                     
                 A_z_star = self.model.forward_network(key, pts)
                 
-                # Lấy nu_star từ Net_nu và DETACH để không truyền gradient vào Net_nu khi tối ưu Az
                 if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
                     nu_star_net = self.model.forward_nu_network(key, pts).detach()
                 else:
@@ -200,7 +198,8 @@ class TrainingManager:
                 w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
                     key_a=key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
                 )
-                scaled_if_loss = float(domain.training_config.interface_weight) * w_if_loss
+                # ĐÃ SỬA LỖI: Tránh nhân kép interface_weight tại đây
+                scaled_if_loss = w_if_loss
                 total_loss = total_loss + scaled_if_loss
 
                 az_if_sum += val_l.item()
@@ -219,9 +218,8 @@ class TrainingManager:
                     key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
                     key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts
                 )
-                w_weight = 0.5 * (float(pair_data["domain_a"].training_config.interface_weight) + 
-                                  float(pair_data["domain_b"].training_config.interface_weight))
-                scaled_shared_loss = w_weight * w_shared_loss
+                # ĐÃ SỬA LỖI: Giữ nguyên w_shared_loss từ _compute_pair_components
+                scaled_shared_loss = w_shared_loss
                 total_loss = total_loss + scaled_shared_loss
 
                 az_if_sum += val_l.item()

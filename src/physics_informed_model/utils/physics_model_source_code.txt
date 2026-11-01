@@ -183,6 +183,10 @@ class ElectroMagneticPINN:
             
         self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
 
+        # Pre-train ép Net_nu hội tụ tuyệt đối vào hằng số mu_r ban đầu
+        domains_data = self.collocation_sampler_instance.generate_all_domain_points()
+        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=300)
+
     def evaluate_fields(self, points_tensor, return_numpy=False):
         pinn_arch = self.pinn_architecture_instance
         sim_domain = self.simulation_domain_engine_instance
@@ -544,7 +548,7 @@ class XPINNArchitecture(nn.Module):
             else:
                 net_key = f'domain_{domain.domain_id}'
                 
-            # 1. Dựng Mạng chính (Net_Az) từ network_config
+            # 1. Dựng Mạng chính (Net_Az)
             config = domain.network_config
             if config.fourier_features:
                 actual_input_dim = config.fourier_mapping_size * 2
@@ -556,10 +560,8 @@ class XPINNArchitecture(nn.Module):
             sub_net = self._build_single_network(actual_input_dim, config)
             self.networks[net_key] = sub_net
 
-            # 2. Dựng Mạng phụ (Net_nu) từ nu_network_config cho miền phi tuyến
-            is_nonlinear_domain = getattr(domain.physics_config, 'is_nonlinear', False) or                                   (getattr(domain.physics_config, 'bh_curve_data', None) is not None)
-            
-            if is_nonlinear_domain and net_key != 'background':
+            # 2. Luôn dựng Mạng phụ (Net_nu) cho các miền vật liệu (kể cả tuyến tính hay phi tuyến)
+            if net_key != 'background':
                 nu_config = getattr(domain, 'nu_network_config', SimpleNamespace(
                     hidden_layers=2, hidden_neurons=32, activation_function=nn.SiLU(), fourier_features=False
                 ))
@@ -571,13 +573,35 @@ class XPINNArchitecture(nn.Module):
                 else:
                     actual_nu_input_dim = self.input_dim
 
-                self.nu_networks[net_key] = self._build_single_network(actual_nu_input_dim, nu_config)
-                print(
-                    f"[*] XPINNArchitecture: Đã khởi tạo Mạng phụ $Net_{{\\nu}}$ cho miền '{domain.domain_name}' ({net_key}) "
-                    f"[{nu_config.hidden_layers} layers x {nu_config.hidden_neurons} neurons]."
-                )
-            
+                nu_net = self._build_single_network(actual_nu_input_dim, nu_config)
+                self.nu_networks[net_key] = nu_net
+                
+                # Cấu hình khởi tạo đồng nhất cho Net_nu bám sát mu_r tuyến tính ban đầu
+                self._initialize_nu_network_constant(domain, net_key)
+
         self._initialize_weights()
+
+    def _initialize_nu_network_constant(self, domain, net_key):
+        """Khởi tạo trọng số Net_nu sao cho xuất ra giá trị hằng số nu_star chuẩn ban đầu"""
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        dummy_pts = torch.zeros((1, 2))
+        nu_target_phys = domain.evaluate_reluctivity(dummy_pts, is_nonlinear=False).item()
+        nu_target_star = max(nu_target_phys / sim_domain.nu0, 1e-6)
+        
+        # Inverse softplus: raw_val = ln(exp(nu_target_star) - 1)
+        if nu_target_star < 20.0:
+            target_raw = np.log(np.exp(nu_target_star) - 1.0 + 1e-12)
+        else:
+            target_raw = nu_target_star
+
+        net = self.nu_networks[net_key]
+        for module in net:
+            if isinstance(module, nn.Linear):
+                nn.init.zeros_(module.weight)
+                nn.init.zeros_(module.bias)
+        # Gán bias của layer cuối để xuất ra đúng target_raw
+        last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
+        nn.init.constant_(last_linear.bias, target_raw)
 
 ========================================
 
@@ -2403,13 +2427,13 @@ if torch.cuda.is_available():
 
 from electro_magnetic_pinn import ElectroMagneticPINN
 
-def run_linear_simulation_test():
-    output_dir = "figure_linear_test"
+def run_optimized_simulation_test():
+    output_dir = "figure_linear_optimized_test"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
     
-    print("[*] Khởi tạo hệ thống mô phỏng XPINN - CHẾ ĐỘ THUẦN TUYẾN TÍNH...")
+    print("[*] Khởi tạo XPINN - TỐI ƯU HÓA KIẾN TRÚC THEO ĐẶC TÍNH VẬT LÝ MIỀN...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -2427,48 +2451,47 @@ def run_linear_simulation_test():
     # 2. CẤU HÌNH BỘ LẤY MẪU ĐỘNG (COLLOCATION SAMPLER CONFIG)
     # =========================================================================
     model.sampler_config.dynamic_resampling = True
-    model.sampler_config.resample_interval = 10
+    model.sampler_config.resample_interval = 20          # Tái lấy mẫu mịn hơn sau mỗi 20 epochs
     model.sampler_config.resample_points_before_lbfgs_stage = True
 
     # =========================================================================
-    # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN THUẦN TUYẾN TÍNH (TRAINING CONFIG)
+    # 3. CẤU HÌNH SIÊU THAM SỐ HUẤN LUYỆN ĐỂ HẠ THẤP NGƯỠNG LOSS
     # =========================================================================
-    # --- Điều khiển các giai đoạn ---
-    model.training_config.enable_linear_warmup_stage = True        # BẬT giai đoạn học tuyến tính
-    model.training_config.enable_nonlinear_adaptation_stage = False# TẮT hoàn toàn lặp FPI phi tuyến
-    model.training_config.enable_lbfgs_refinement_stage = True     # BẬT L-BFGS để tinh chỉnh nghiệm sâu
+    model.training_config.enable_linear_warmup_stage = True
+    model.training_config.enable_nonlinear_adaptation_stage = False
+    model.training_config.enable_lbfgs_refinement_stage = True
 
-    # --- Cấu hình bộ giải Adam ---
-    model.training_config.number_of_adam_epochs = 3500            # Số epoch cho Adam
-    model.training_config.adam_learning_rate = 1e-3
-    model.training_config.target_loss_threshold = 1e-8
+    # --- Bộ giải Adam (Mở rộng quy mô hội tụ) ---
+    model.training_config.number_of_adam_epochs = 5000            # Tăng lên 5000 epochs
+    model.training_config.adam_learning_rate = 8e-4
+    model.training_config.target_loss_threshold = 1e-9
 
-    # --- Cấu hình tinh chỉnh L-BFGS ---
-    model.training_config.number_of_lbfgs_iterations = 1200
+    # --- Bộ giải L-BFGS (Ép sâu nghiệm) ---
+    model.training_config.number_of_lbfgs_iterations = 2000       # Tăng lên 2000 iterations
     model.training_config.lbfgs_learning_rate = 0.8
-    model.training_config.lbfgs_maximum_evaluations = 2000
-    model.training_config.lbfgs_tolerance_gradient = 1e-12
-    model.training_config.lbfgs_tolerance_change = 1e-12
-    model.training_config.lbfgs_history_size = 100
+    model.training_config.lbfgs_maximum_evaluations = 3000
+    model.training_config.lbfgs_tolerance_gradient = 1e-14       # Siết chặt dung sai dừng lặp
+    model.training_config.lbfgs_tolerance_change = 1e-14
+    model.training_config.lbfgs_history_size = 100               # Mở rộng bộ nhớ Hessian
 
     # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA & XUẤT VIDEO (GẤP 10 LẦN KHUNG HÌNH/THỜI LƯỢNG)
+    # 4. CẤU HÌNH TRỰC QUAN HÓA & XUẤT VIDEO
     # =========================================================================
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 10               # GIẢM TỪ 100 XUỐNG 10 -> Lưu 1 frame mỗi 10 epochs (Tăng 10x số frame)
+    model.visualization_config.update_interval = 20               # Lưu 1 frame mỗi 20 epochs
     model.visualization_config.output_directory = output_dir
-    model.visualization_config.resolution = 100
+    model.visualization_config.resolution = 120                   # Độ phân giải lưới trực quan
     model.visualization_config.generate_gif_animation = False
     model.visualization_config.generate_mp4_video = True
-    model.visualization_config.mp4_filename = "linear_training_process_10x.mp4"
-    model.visualization_config.animation_fps = 10                 # Giữ nguyên 10 FPS để video dài hơn gấp 10 lần
+    model.visualization_config.mp4_filename = "deep_optimized_training.mp4"
+    model.visualization_config.animation_fps = 12
 
     # =========================================================================
-    # 5. CẤU HÌNH VẬT LIỆU Ở CHẾ ĐỘ TUYẾN TÍNH
+    # 5. CẤU HÌNH DUNG LƯỢNG MẠNG VÀ CÁC MIỀN VẬT LIỆU
     # =========================================================================
     
     # -------------------------------------------------------------------------
-    # Miền 1: Ách sắt
+    # Miền 1: Ách sắt (Mạng mở rộng: 5 layers x 128 neurons, Fourier Size 256)
     # -------------------------------------------------------------------------
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke",
@@ -2476,24 +2499,25 @@ def run_linear_simulation_test():
         outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
     )
     iron_yoke.physics_config.is_nonlinear = False
-    iron_yoke.training_config.pde_weight = 1.0
-    iron_yoke.training_config.interface_weight = 1.5
-    iron_yoke.training_config.interface_potential_weight = 1000.0
-    iron_yoke.training_config.interface_bn_weight = 500.0
-    iron_yoke.training_config.interface_ht_weight = 500.0
-    iron_yoke.training_config.number_of_interior_points = 4000
-    iron_yoke.training_config.number_of_surface_points = 2000
+    iron_yoke.training_config.pde_weight = 1.2
+    iron_yoke.training_config.interface_weight = 2.0             # Tăng trọng số giao diện
+    iron_yoke.training_config.interface_potential_weight = 2000.0
+    iron_yoke.training_config.interface_bn_weight = 1000.0
+    iron_yoke.training_config.interface_ht_weight = 1000.0
+    iron_yoke.training_config.pde_fading_beta = 120.0
+    iron_yoke.training_config.number_of_interior_points = 6000    # Tăng số điểm lấy mẫu
+    iron_yoke.training_config.number_of_surface_points = 3000
 
-    iron_yoke.network_config.hidden_layers = 4
-    iron_yoke.network_config.hidden_neurons = 64
+    iron_yoke.network_config.hidden_layers = 5                    # Tăng từ 4 lên 5 layers
+    iron_yoke.network_config.hidden_neurons = 128                 # Tăng từ 64 lên 128 neurons
     iron_yoke.network_config.activation_function = nn.SiLU()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.2
-    iron_yoke.network_config.fourier_mapping_size = 128
+    iron_yoke.network_config.fourier_sigma = 1.5
+    iron_yoke.network_config.fourier_mapping_size = 256           # Tăng từ 128 lên 256 features
     iron_yoke.build_domain()
 
     # -------------------------------------------------------------------------
-    # Miền 2 & 3: Nam châm trái/phải
+    # Miền 2 & 3: Nam châm trái/phải (Mạng thu gọn: 3 layers x 48 neurons)
     # -------------------------------------------------------------------------
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left", material_name="N30UH",
@@ -2501,14 +2525,17 @@ def run_linear_simulation_test():
         coercive_direction=(0, 1)
     )
     magnet_left.physics_config.is_nonlinear = False
-    magnet_left.training_config.number_of_interior_points = 2500
-    magnet_left.training_config.number_of_surface_points = 1500
-    magnet_left.network_config.hidden_layers = 4
-    magnet_left.network_config.hidden_neurons = 64
+    magnet_left.training_config.pde_weight = 1.0
+    magnet_left.training_config.interface_weight = 2.0
+    magnet_left.training_config.number_of_interior_points = 2000
+    magnet_left.training_config.number_of_surface_points = 1000
+
+    magnet_left.network_config.hidden_layers = 3                  # Thu gọn mạng
+    magnet_left.network_config.hidden_neurons = 48
     magnet_left.network_config.activation_function = nn.SiLU()
     magnet_left.network_config.fourier_features = True
-    magnet_left.network_config.fourier_sigma = 1.2
-    magnet_left.network_config.fourier_mapping_size = 128
+    magnet_left.network_config.fourier_sigma = 1.0
+    magnet_left.network_config.fourier_mapping_size = 64
     magnet_left.build_domain()
 
     magnet_right = sim_domain.create_material_domain(
@@ -2517,26 +2544,37 @@ def run_linear_simulation_test():
         coercive_direction=(0, -1)
     )
     magnet_right.physics_config.is_nonlinear = False
-    magnet_right.training_config.number_of_interior_points = 2500
-    magnet_right.training_config.number_of_surface_points = 1500
-    magnet_right.network_config.hidden_layers = 4
-    magnet_right.network_config.hidden_neurons = 64
+    magnet_right.training_config.pde_weight = 1.0
+    magnet_right.training_config.interface_weight = 2.0
+    magnet_right.training_config.number_of_interior_points = 2000
+    magnet_right.training_config.number_of_surface_points = 1000
+
+    magnet_right.network_config.hidden_layers = 3                  # Thu gọn mạng
+    magnet_right.network_config.hidden_neurons = 48
     magnet_right.network_config.activation_function = nn.SiLU()
     magnet_right.network_config.fourier_features = True
-    magnet_right.network_config.fourier_sigma = 1.2
-    magnet_right.network_config.fourier_mapping_size = 128
+    magnet_right.network_config.fourier_sigma = 1.0
+    magnet_right.network_config.fourier_mapping_size = 64
     magnet_right.build_domain()
 
     # -------------------------------------------------------------------------
-    # Miền 4: Background Air Domain
+    # Miền 4: Background Air Domain (Mạng LỚN NHẤT: 6 layers x 128 neurons, 18.000 điểm)
     # -------------------------------------------------------------------------
     bg_training_cfg = SimpleNamespace(
-        pde_weight=1.0, interface_weight=1.5, pde_fading_beta=100.0,
-        sampling_density_multiplier=1.0, number_of_interior_points=10000, number_of_surface_points=0
+        pde_weight=1.2, 
+        interface_weight=2.0, 
+        pde_fading_beta=120.0,
+        sampling_density_multiplier=1.0, 
+        number_of_interior_points=18000,                           # Tăng mạnh từ 10.000 lên 18.000 điểm
+        number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
-        hidden_layers=4, hidden_neurons=64, activation_function=nn.SiLU(),
-        fourier_features=True, fourier_sigma=1.2, fourier_mapping_size=128
+        hidden_layers=6,                                           # Mạng sâu nhất 6 layers
+        hidden_neurons=128,                                        # 128 neurons mỗi tầng
+        activation_function=nn.SiLU(),
+        fourier_features=True, 
+        fourier_sigma=1.5, 
+        fourier_mapping_size=256                                   # Tăng Fourier Mapping lên 256
     )
     sim_domain.build_background_domain(
         domain_name="background",
@@ -2549,12 +2587,12 @@ def run_linear_simulation_test():
     # =========================================================================
     # 6. THỰC THI THUẬT TOÁN
     # =========================================================================
-    print("[*] Chạy tiến trình huấn luyện bài toán tuyến tính (Trích xuất 10x frames)...")
+    print("[*] Bắt đầu chạy tiến trình huấn luyện tối ưu hóa sâu...")
     model.execute_training_process()
 
-    print("[*] Đang xuất biểu đồ trường từ tuyến tính...")
-    model.plot_fields(resolution=180, save_path=f"{output_dir}/linear_final_fields.png")
-    print(f"[✔] HOÀN THÀNH KIỂM THỬ TUYẾN TÍNH! Video MP4 được lưu tại: {output_dir}/")
+    print("[*] Đang xuất biểu đồ kết quả trường từ...")
+    model.plot_fields(resolution=200, save_path=f"{output_dir}/optimized_final_fields.png")
+    print(f"[✔] HOÀN THÀNH KIỂM THỬ! Kết quả lưu tại: {output_dir}/")
 
 
 ========================================
@@ -2692,10 +2730,12 @@ class TrainingManager:
         self.lbfgs_history_size = getattr(t_cfg, 'lbfgs_history_size', 50)
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
-        self.optimizer_adam = optim.Adam(model.parameters(), lr=self.base_learning_rate_adam)
+        
+        # CHỈ ĐĂNG KÝ THAM SỐ MẠNG CHÍNH NET_AZ CHO ADAM VÀ L-BFGS
+        self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
-            model.parameters(),
+            model.networks.parameters(),
             lr=self.lbfgs_learning_rate,
             max_iter=self.lbfgs_maximum_iterations,
             max_eval=self.lbfgs_maximum_evaluations,
@@ -2731,7 +2771,7 @@ class TrainingManager:
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return
 
-        print(f"\n[*] Bắt đầu Pre-training Mạng phụ $Net_{{\\nu}}$ ({epochs} epochs)...")
+        print(f"\n[*] Pre-training Mạng phụ $Net={{\\nu}}$ về hằng số ban đầu ({epochs} epochs)...")
         device = next(self.model.parameters()).device
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         
@@ -2762,13 +2802,9 @@ class TrainingManager:
             if loss_pre.requires_grad:
                 loss_pre.backward()
                 opt_nu.step()
-                
-            if (ep + 1) == 1 or (ep + 1) % 100 == 0:
-                print(f"Pre-train Net_nu Epoch {ep + 1:03d} | Loss_nu = {loss_pre.item():.4e}")
-                
-        print("[✔] Hoàn thành Pre-train Mạng phụ $Net_{\\nu}$!")
 
     def fit_nu_network_step(self, domains_data, alpha_damping=0.8, epochs=150):
+        """Hàm này CHỈ ĐƯỢC GỌI trong giai đoạn lặp FPI phi tuyến (Stage 1B)"""
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return 0.0
 
@@ -2845,8 +2881,9 @@ class TrainingManager:
                     
                 A_z_star = self.model.forward_network(key, pts)
                 
+                # Lấy nu_star từ Net_nu và DETACH để không truyền gradient vào Net_nu khi tối ưu Az
                 if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
-                    nu_star_net = self.model.forward_nu_network(key, pts)
+                    nu_star_net = self.model.forward_nu_network(key, pts).detach()
                 else:
                     nu_star_net = None
 
@@ -2943,7 +2980,7 @@ class TrainingManager:
             non_finite_streak = 0
                 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.networks.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
             scheduler_adam.step()
             
@@ -2970,7 +3007,7 @@ class TrainingManager:
 
         self.model.train()
         self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
+            self.model.networks.parameters(),
             lr=self.lbfgs_learning_rate,
             max_iter=max_iterations,
             max_eval=int(max_iterations * 1.25),

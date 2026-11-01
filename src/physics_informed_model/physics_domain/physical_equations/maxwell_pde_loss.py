@@ -52,7 +52,7 @@ class MaxwellPDELoss:
         dAz_dy_star = grad_A_star[:, 1:2] * self.L0
 
         # 2. H* = nu* * B* - Hc*
-        Hx_star = nu_star * dAz_dy_star - H_cx_star
+        Hx_star = nu_star * xdAz_dy_star - H_cx_star
         Hy_star = -nu_star * dAz_dx_star - H_cy_star
 
         # 3. curl(H*) = dHy*/dx* - dHx*/dy*
