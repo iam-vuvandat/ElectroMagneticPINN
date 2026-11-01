@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.colors import ListedColormap, BoundaryNorm, LogNorm
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
 def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=None, y_boundaries_tuple=None, resolution=150):
@@ -17,7 +17,6 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     dx = (x_boundaries_tuple[1] - x_boundaries_tuple[0]) / (resolution - 1)
     dy = (y_boundaries_tuple[1] - y_boundaries_tuple[0]) / (resolution - 1)
     
-    # Mở rộng extent nửa bước lưới để tâm pixel khớp hoàn toàn với đường biên hình học
     exact_extent = [
         x_boundaries_tuple[0] - dx / 2.0,
         x_boundaries_tuple[1] + dx / 2.0,
@@ -35,6 +34,7 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     reluctivity_tensor = physical_properties["reluctivity"]
     mu_r_tensor = VACUUM_RELUCTIVITY / reluctivity_tensor
     mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
+    mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
     
     hx_tensor = physical_properties["coercive_field_x"]
     hy_tensor = physical_properties["coercive_field_y"]
@@ -66,7 +66,6 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
                 closed_poly = np.vstack([outline, outline[0]])
                 ax.plot(closed_poly[:, 0], closed_poly[:, 1], color='#111111', linestyle='--', linewidth=1.2, alpha=0.9, zorder=5)
 
-    # 1. Material Layout
     palette = ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F', '#EDC948', '#B07AA1']
     color_list = [palette[(i - 1) % len(palette)] for i in range(1, total_domains)]
     color_list.append('#F2F4F7')
@@ -91,9 +90,13 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     axs[0, 0].set_aspect('equal')
     axs[0, 0].grid(True, linestyle=':', alpha=0.4)
 
-    # 2. Relative Permeability
-    im_mur = axs[0, 1].imshow(mu_r_grid, extent=exact_extent, origin='lower', interpolation='nearest', cmap="cividis")
-    fig.colorbar(im_mur, ax=axs[0, 1], label=r"Relative Permeability ($\mu_r$)")
+    # Relative Permeability trên thang Loga
+    v_max_mur = max(float(np.max(mu_r_clamped)), 10.0)
+    im_mur = axs[0, 1].imshow(
+        mu_r_clamped, extent=exact_extent, origin='lower', interpolation='nearest',
+        cmap="cividis", norm=LogNorm(vmin=1.0, vmax=v_max_mur)
+    )
+    fig.colorbar(im_mur, ax=axs[0, 1], label=r"Relative Permeability ($\mu_r$) [Log Scale]")
     draw_outlines(axs[0, 1])
     axs[0, 1].set_xlim(x_boundaries_tuple)
     axs[0, 1].set_ylim(y_boundaries_tuple)
@@ -103,7 +106,6 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     axs[0, 1].set_aspect('equal')
     axs[0, 1].grid(True, linestyle=':', alpha=0.4)
 
-    # 3. Magnetization Vector Field (Mũi tên thanh mảnh, chuẩn tỷ lệ)
     step = max(1, resolution // 35)
     X_sub = X_grid[::step, ::step]
     Y_sub = Y_grid[::step, ::step]
@@ -128,10 +130,10 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
             dir_x, dir_y,
             color=colors_hc,
             pivot='mid',
-            scale=45,            # Tăng scale để mũi tên ngắn lại vừa vặn
-            width=0.0035,        # Giảm độ rộng thân mũi tên
-            headwidth=3.2,       # Thu nhỏ bề ngang đầu mũi tên
-            headlength=3.8,      # Thu gọn chiều dài đầu mũi tên
+            scale=45,
+            width=0.0035,
+            headwidth=3.2,
+            headlength=3.8,
             headaxislength=3.2,
             zorder=4
         )
@@ -149,7 +151,6 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     axs[1, 0].set_aspect('equal')
     axs[1, 0].grid(True, linestyle=':', alpha=0.4)
 
-    # 4. Current Direction & Density
     axs[1, 1].set_facecolor('#FAFAFA')
     draw_outlines(axs[1, 1])
     Jz_sub = jz_grid[::step, ::step]

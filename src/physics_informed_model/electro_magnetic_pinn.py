@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 
 from types import SimpleNamespace
 from architectures.xpinn_architecture import XPINNArchitecture
@@ -32,25 +33,21 @@ class ElectroMagneticPINN:
             number_of_adam_epochs=2500,
             target_loss_threshold=1e-5,
 
-            # Cấu hình FPI Picard Outer Loop
             fpi_outer_iterations=10,
-            fpi_alpha_damping=0.25,
+            fpi_alpha_damping=1.0,
             fpi_tolerance=1e-5,
 
-            # Cấu hình Pre-train và Fit Net_nu (Đã linh hoạt hóa)
             pretrain_nu_epochs=300,
             pretrain_nu_lr=1e-2,
             fit_nu_epochs=250,
             fit_nu_lr=3e-3,
 
-            # Cấu hình kiểm soát Gradient và Scheduler
             grad_clip_max_norm=1.0,
             adam_eta_min=1e-6,
             max_non_finite_streak=5,
             adam_log_interval=100,
             lbfgs_log_interval=25,
 
-            # Cấu hình L-BFGS Refinement
             lbfgs_learning_rate=0.5,
             number_of_lbfgs_iterations=1500,
             lbfgs_maximum_evaluations=2500,
@@ -128,7 +125,6 @@ class ElectroMagneticPINN:
             
         self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
 
-        # Pre-train Net_nu theo cấu hình linh hoạt
         domains_data = self.collocation_sampler_instance.generate_all_domain_points()
         pre_ep = getattr(self.training_config, 'pretrain_nu_epochs', 300)
         pre_lr = getattr(self.training_config, 'pretrain_nu_lr', 1e-2)
@@ -212,6 +208,7 @@ class ElectroMagneticPINN:
                     mu_r_tensor[mask] = mu_val
 
         mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
+        mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
 
         fig, axs = plt.subplots(2, 2, figsize=figsize)
         
@@ -226,8 +223,14 @@ class ElectroMagneticPINN:
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_grid, levels=60, cmap="cividis")
-        fig.colorbar(c2, ax=axs[1, 0], label=r"$\mu_r$")
+        # Thang Loga cho độ từ thẩm mu_r
+        v_max_mur = max(float(np.max(mu_r_clamped)), 10.0)
+        levels_mur_log = np.logspace(0, np.log10(v_max_mur), 60)
+        c2 = axs[1, 0].contourf(
+            X_grid, Y_grid, mu_r_clamped, levels=levels_mur_log,
+            cmap="cividis", norm=LogNorm(vmin=1.0, vmax=v_max_mur)
+        )
+        fig.colorbar(c2, ax=axs[1, 0], label=r"$\mu_r$ (Log Scale)")
         axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
         axs[1, 0].set_aspect('equal')
 
@@ -257,12 +260,10 @@ class ElectroMagneticPINN:
         domains_data = resample_data_fn()
         t_cfg = self.training_config
 
-        # 1. Pre-training Net_nu
         pre_ep = getattr(t_cfg, 'pretrain_nu_epochs', 300)
         pre_lr = getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
         self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
 
-        # 2. Adam Stage
         total_adam_epochs = t_cfg.number_of_adam_epochs
         warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
         epochs_warmup = int(total_adam_epochs * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
@@ -278,7 +279,7 @@ class ElectroMagneticPINN:
 
         if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
             fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 10))
-            alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 0.25))
+            alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 1.0))
             fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
             epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
 
@@ -301,7 +302,6 @@ class ElectroMagneticPINN:
                     print(f"[✔] FPI Hội tụ sớm tại vòng {f_iter + 1}!")
                     break
 
-        # 3. L-BFGS Stage
         if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
             if getattr(self.sampler_config, 'resample_points_before_lbfgs_stage', True):
                 domains_data = resample_data_fn()
