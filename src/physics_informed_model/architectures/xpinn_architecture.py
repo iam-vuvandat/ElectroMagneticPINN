@@ -51,7 +51,7 @@ class XPINNArchitecture(nn.Module):
             sub_net = self._build_single_network(actual_input_dim, config)
             self.networks[net_key] = sub_net
 
-            # 2. Luôn dựng Mạng phụ (Net_nu) cho các miền vật liệu (kể cả tuyến tính hay phi tuyến)
+            # 2. Dựng Mạng phụ (Net_nu) cho các miền vật liệu
             if net_key != 'background':
                 nu_config = getattr(domain, 'nu_network_config', SimpleNamespace(
                     hidden_layers=2, hidden_neurons=32, activation_function=nn.SiLU(), fourier_features=False
@@ -67,13 +67,13 @@ class XPINNArchitecture(nn.Module):
                 nu_net = self._build_single_network(actual_nu_input_dim, nu_config)
                 self.nu_networks[net_key] = nu_net
                 
-                # Cấu hình khởi tạo đồng nhất cho Net_nu bám sát mu_r tuyến tính ban đầu
+                # Cấu hình khởi tạo cho Net_nu bám sát mu_r tuyến tính ban đầu
                 self._initialize_nu_network_constant(domain, net_key)
 
         self._initialize_weights()
 
     def _initialize_nu_network_constant(self, domain, net_key):
-        """Khởi tạo trọng số Net_nu sao cho xuất ra giá trị hằng số nu_star chuẩn ban đầu"""
+        """Khởi tạo trọng số Net_nu xuất ra giá trị hằng số nu_star ban đầu nhưng không triệt tiêu gradient"""
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         dummy_pts = torch.zeros((1, 2))
         nu_target_phys = domain.evaluate_reluctivity(dummy_pts, is_nonlinear=False).item()
@@ -88,8 +88,10 @@ class XPINNArchitecture(nn.Module):
         net = self.nu_networks[net_key]
         for module in net:
             if isinstance(module, nn.Linear):
-                nn.init.zeros_(module.weight)
+                # Sử dụng Xavier Normal với gain nhỏ thay vì gán trọng số bằng 0 để giữ gradient cho không gian (x, y)
+                nn.init.xavier_normal_(module.weight, gain=0.01)
                 nn.init.zeros_(module.bias)
-        # Gán bias của layer cuối để xuất ra đúng target_raw
+                
+        # Gán bias layer cuối để đảm bảo giá trị khởi tạo hằng số trung bình ban đầu
         last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
         nn.init.constant_(last_linear.bias, target_raw)
