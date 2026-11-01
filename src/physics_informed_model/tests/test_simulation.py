@@ -23,7 +23,7 @@ def run_nonlinear_simulation_test():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
     
-    print("[*] KHỞI TẠO XPINN PHI TUYẾN - CẤU HÌNH SIÊU THAM SỐ LINH HOẠT...")
+    print("[*] KHỞI TẠO XPINN PHI TUYẾN - DAMPING = 1.0 & TRỌNG SỐ GIAO DIỆN NÂNG CAO...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -53,7 +53,7 @@ def run_nonlinear_simulation_test():
 
     # Cấu hình FPI Outer Loop
     model.training_config.fpi_outer_iterations = 10               # 10 vòng lặp FPI ngoại
-    model.training_config.fpi_alpha_damping = 0.25               # Damping factor 0.25 (Đã chuẩn hóa)
+    model.training_config.fpi_alpha_damping = 1.0                # Cập nhật Damping factor = 1.0 (Full Update)
     model.training_config.fpi_tolerance = 1e-5                    # Dung sai FPI
 
     # Cấu hình Khớp Mạng phụ Net_nu
@@ -93,9 +93,9 @@ def run_nonlinear_simulation_test():
     )
     iron_yoke.physics_config.is_nonlinear = True
     iron_yoke.training_config.pde_weight = 1.0
-    iron_yoke.training_config.interface_potential_weight = 100.0
-    iron_yoke.training_config.interface_bn_weight = 50.0
-    iron_yoke.training_config.interface_ht_weight = 50.0
+    iron_yoke.training_config.interface_potential_weight = 300.0
+    iron_yoke.training_config.interface_bn_weight = 200.0         # Tăng Bn weight lên 200.0
+    iron_yoke.training_config.interface_ht_weight = 500.0         # Tăng Ht weight lên 500.0
     iron_yoke.training_config.pde_fading_beta = 60.0
     iron_yoke.training_config.number_of_interior_points = 4500
     iron_yoke.training_config.number_of_surface_points = 1500
@@ -121,9 +121,9 @@ def run_nonlinear_simulation_test():
     )
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.pde_weight = 1.0
-    magnet_left.training_config.interface_potential_weight = 100.0
-    magnet_left.training_config.interface_bn_weight = 50.0
-    magnet_left.training_config.interface_ht_weight = 50.0
+    magnet_left.training_config.interface_potential_weight = 300.0
+    magnet_left.training_config.interface_bn_weight = 200.0         # Tăng Bn weight lên 200.0
+    magnet_left.training_config.interface_ht_weight = 500.0         # Tăng Ht weight lên 500.0
     magnet_left.training_config.number_of_interior_points = 2000
     magnet_left.training_config.number_of_surface_points = 1000
 
@@ -142,9 +142,9 @@ def run_nonlinear_simulation_test():
     )
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.pde_weight = 1.0
-    magnet_right.training_config.interface_potential_weight = 100.0
-    magnet_right.training_config.interface_bn_weight = 50.0
-    magnet_right.training_config.interface_ht_weight = 50.0
+    magnet_right.training_config.interface_potential_weight = 300.0
+    magnet_right.training_config.interface_bn_weight = 200.0         # Tăng Bn weight lên 200.0
+    magnet_right.training_config.interface_ht_weight = 500.0         # Tăng Ht weight lên 500.0
     magnet_right.training_config.number_of_interior_points = 2000
     magnet_right.training_config.number_of_surface_points = 1000
 
