@@ -39,7 +39,7 @@ class XPINNArchitecture(nn.Module):
             else:
                 net_key = f'domain_{domain.domain_id}'
                 
-            # 1. Dựng Mạng chính (Net_Az) từ network_config
+            # 1. Dựng Mạng chính (Net_Az)
             config = domain.network_config
             if config.fourier_features:
                 actual_input_dim = config.fourier_mapping_size * 2
@@ -51,10 +51,8 @@ class XPINNArchitecture(nn.Module):
             sub_net = self._build_single_network(actual_input_dim, config)
             self.networks[net_key] = sub_net
 
-            # 2. Dựng Mạng phụ (Net_nu) từ nu_network_config cho miền phi tuyến
-            is_nonlinear_domain = getattr(domain.physics_config, 'is_nonlinear', False) or                                   (getattr(domain.physics_config, 'bh_curve_data', None) is not None)
-            
-            if is_nonlinear_domain and net_key != 'background':
+            # 2. Luôn dựng Mạng phụ (Net_nu) cho các miền vật liệu (kể cả tuyến tính hay phi tuyến)
+            if net_key != 'background':
                 nu_config = getattr(domain, 'nu_network_config', SimpleNamespace(
                     hidden_layers=2, hidden_neurons=32, activation_function=nn.SiLU(), fourier_features=False
                 ))
@@ -66,10 +64,32 @@ class XPINNArchitecture(nn.Module):
                 else:
                     actual_nu_input_dim = self.input_dim
 
-                self.nu_networks[net_key] = self._build_single_network(actual_nu_input_dim, nu_config)
-                print(
-                    f"[*] XPINNArchitecture: Đã khởi tạo Mạng phụ $Net_{{\\nu}}$ cho miền '{domain.domain_name}' ({net_key}) "
-                    f"[{nu_config.hidden_layers} layers x {nu_config.hidden_neurons} neurons]."
-                )
-            
+                nu_net = self._build_single_network(actual_nu_input_dim, nu_config)
+                self.nu_networks[net_key] = nu_net
+                
+                # Cấu hình khởi tạo đồng nhất cho Net_nu bám sát mu_r tuyến tính ban đầu
+                self._initialize_nu_network_constant(domain, net_key)
+
         self._initialize_weights()
+
+    def _initialize_nu_network_constant(self, domain, net_key):
+        """Khởi tạo trọng số Net_nu sao cho xuất ra giá trị hằng số nu_star chuẩn ban đầu"""
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        dummy_pts = torch.zeros((1, 2))
+        nu_target_phys = domain.evaluate_reluctivity(dummy_pts, is_nonlinear=False).item()
+        nu_target_star = max(nu_target_phys / sim_domain.nu0, 1e-6)
+        
+        # Inverse softplus: raw_val = ln(exp(nu_target_star) - 1)
+        if nu_target_star < 20.0:
+            target_raw = np.log(np.exp(nu_target_star) - 1.0 + 1e-12)
+        else:
+            target_raw = nu_target_star
+
+        net = self.nu_networks[net_key]
+        for module in net:
+            if isinstance(module, nn.Linear):
+                nn.init.zeros_(module.weight)
+                nn.init.zeros_(module.bias)
+        # Gán bias của layer cuối để xuất ra đúng target_raw
+        last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
+        nn.init.constant_(last_linear.bias, target_raw)

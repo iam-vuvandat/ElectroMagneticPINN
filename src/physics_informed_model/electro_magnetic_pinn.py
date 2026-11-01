@@ -114,6 +114,10 @@ class ElectroMagneticPINN:
             
         self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
 
+        # Pre-train ép Net_nu hội tụ tuyệt đối vào hằng số mu_r ban đầu
+        domains_data = self.collocation_sampler_instance.generate_all_domain_points()
+        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=300)
+
     def evaluate_fields(self, points_tensor, return_numpy=False):
         pinn_arch = self.pinn_architecture_instance
         sim_domain = self.simulation_domain_engine_instance

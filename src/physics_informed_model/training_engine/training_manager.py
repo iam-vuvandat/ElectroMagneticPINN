@@ -18,10 +18,12 @@ class TrainingManager:
         self.lbfgs_history_size = getattr(t_cfg, 'lbfgs_history_size', 50)
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
-        self.optimizer_adam = optim.Adam(model.parameters(), lr=self.base_learning_rate_adam)
+        
+        # CHỈ ĐĂNG KÝ THAM SỐ MẠNG CHÍNH NET_AZ CHO ADAM VÀ L-BFGS
+        self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
-            model.parameters(),
+            model.networks.parameters(),
             lr=self.lbfgs_learning_rate,
             max_iter=self.lbfgs_maximum_iterations,
             max_eval=self.lbfgs_maximum_evaluations,
@@ -57,7 +59,7 @@ class TrainingManager:
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return
 
-        print(f"\n[*] Bắt đầu Pre-training Mạng phụ $Net_{{\\nu}}$ ({epochs} epochs)...")
+        print(f"\n[*] Pre-training Mạng phụ $Net={{\\nu}}$ về hằng số ban đầu ({epochs} epochs)...")
         device = next(self.model.parameters()).device
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         
@@ -88,13 +90,9 @@ class TrainingManager:
             if loss_pre.requires_grad:
                 loss_pre.backward()
                 opt_nu.step()
-                
-            if (ep + 1) == 1 or (ep + 1) % 100 == 0:
-                print(f"Pre-train Net_nu Epoch {ep + 1:03d} | Loss_nu = {loss_pre.item():.4e}")
-                
-        print("[✔] Hoàn thành Pre-train Mạng phụ $Net_{\\nu}$!")
 
     def fit_nu_network_step(self, domains_data, alpha_damping=0.8, epochs=150):
+        """Hàm này CHỈ ĐƯỢC GỌI trong giai đoạn lặp FPI phi tuyến (Stage 1B)"""
         if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
             return 0.0
 
@@ -171,8 +169,9 @@ class TrainingManager:
                     
                 A_z_star = self.model.forward_network(key, pts)
                 
+                # Lấy nu_star từ Net_nu và DETACH để không truyền gradient vào Net_nu khi tối ưu Az
                 if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
-                    nu_star_net = self.model.forward_nu_network(key, pts)
+                    nu_star_net = self.model.forward_nu_network(key, pts).detach()
                 else:
                     nu_star_net = None
 
@@ -269,7 +268,7 @@ class TrainingManager:
             non_finite_streak = 0
                 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.networks.parameters(), max_norm=1.0)
             self.optimizer_adam.step()
             scheduler_adam.step()
             
@@ -296,7 +295,7 @@ class TrainingManager:
 
         self.model.train()
         self.optimizer_lbfgs = optim.LBFGS(
-            self.model.parameters(),
+            self.model.networks.parameters(),
             lr=self.lbfgs_learning_rate,
             max_iter=max_iterations,
             max_eval=int(max_iterations * 1.25),
