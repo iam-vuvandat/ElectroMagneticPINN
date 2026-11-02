@@ -9,7 +9,6 @@ def apply_visualization_config_modifications():
 
     # =========================================================================
     # 1. CẬP NHẬT: electro_magnetic_pinn.py
-    # Thêm cấu hình trực quan hóa linh hoạt và áp dụng trong plot_fields
     # =========================================================================
     pinn_core_code = '''import torch
 import torch.nn as nn
@@ -85,37 +84,36 @@ class ElectroMagneticPINN:
             mp4_codec="libx264",
             mp4_quality=8,
 
-            # Số cấp độ contour mặc định
-            contour_levels=50,
+            contour_levels=60,
 
             # 1. Sai số PDE Residual Error (axs[0, 1])
-            res_scale="log",          # "log" hoặc "linear"
-            res_vmin=1e-4,            # None để tự động
-            res_vmax=1e1,             # None để tự động
+            res_scale="log",          
+            res_vmin=1e-4,            
+            res_vmax=1e1,             
             res_cmap="Reds",
 
-            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2])
-            mur_scale="log",          # "log" hoặc "linear"
-            mur_vmin=1.0,             # None để tự động
-            mur_vmax=None,            # None để tự động (tính theo max thực tế)
-            mur_cmap="cividis",
+            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2]) - TUYẾN TÍNH CỐ ĐỊNH 0 - 3000
+            mur_scale="linear",       # Chuyển sang tuyến tính
+            mur_vmin=0.0,             # Min = 0
+            mur_vmax=3000.0,          # Max = 3000 cố định
+            mur_cmap="turbo",         # Colormap đa sắc dải rộng
 
             # 3. Thế vectơ từ A_z (axs[1, 0])
-            az_scale="linear",        # "linear" hoặc "log"
-            az_vmin=None,             # None để tự động
-            az_vmax=None,             # None để tự động
+            az_scale="linear",        
+            az_vmin=None,             
+            az_vmax=None,             
             az_cmap="jet",
 
-            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2])
-            b_mag_scale="linear",     # "linear" hoặc "log"
-            b_mag_vmin=0.0,           # Giới hạn dưới Bmap
-            b_mag_vmax=None,          # Giới hạn trên Bmap (None để tự động)
+            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2]) - CỐ ĐỊNH SCALE MIN-MAX
+            b_mag_scale="linear",     
+            b_mag_vmin=0.0,           # Min cố định = 0.0 T
+            b_mag_vmax=1.8,           # Max cố định = 1.8 T
             b_mag_cmap="jet",
 
             # 5. Thành phần từ trường B_y (cho plot_fields)
-            by_scale="linear",        # "linear" hoặc "log"
-            by_vmin=None,             # None để tự động
-            by_vmax=None,             # None để tự động
+            by_scale="linear",        
+            by_vmin=None,             
+            by_vmax=None,             
             by_cmap="coolwarm"
         )
         
@@ -259,10 +257,9 @@ class ElectroMagneticPINN:
                         mu_r_tensor[mask] = mu_val
 
         mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
-        mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
 
         fig, axs = plt.subplots(2, 2, figsize=figsize)
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
         
         # --- 1. A_z Plot ---
         az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
@@ -273,27 +270,29 @@ class ElectroMagneticPINN:
         axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
         axs[0, 0].set_aspect('equal')
 
-        # --- 2. |B| Magnitude Plot ---
+        # --- 2. |B| Magnitude Plot (Cố định Scale) ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_grid)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
-        c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
         fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        # --- 3. Relative Permeability \mu_r Plot ---
-        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- 3. Relative Permeability \mu_r Plot (Linear 0 - 3000) ---
+        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
         
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
-            norm_mur = LogNorm(vmin=v_min_mur, vmax=v_max_mur)
+            norm_mur = LogNorm(vmin=max(v_min_mur, 1.0), vmax=v_max_mur)
             lbl_mur = r"$\mu_r$ (Log Scale)"
         else:
             levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
             norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
         fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)
@@ -386,7 +385,6 @@ class ElectroMagneticPINN:
 
     # =========================================================================
     # 2. CẬP NHẬT: utils/training_visualizer.py
-    # Áp dụng đầy đủ cấu hình tùy chỉnh cho cả 8 subplots
     # =========================================================================
     visualizer_code = '''import os
 import torch
@@ -485,11 +483,10 @@ class TrainingVisualizer:
         B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
         B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
         mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(self.resolution, self.resolution)
-        mu_r_clamped = np.clip(mu_r_numpy, 1.0, None)
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
         fig, axs = plt.subplots(2, 4, figsize=(23, 10))
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
 
         # --- SUBPLOT 1: axs[0, 0] - Categorized Collocation Points ---
         ax_pts = axs[0, 0]
@@ -544,11 +541,12 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
-        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) - LINEAR SCALE (0 - 3000) ---
+        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
 
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             mur_min_clean = max(mur_min, 1e-3)
             mur_max_clean = max(mur_max, mur_min_clean * 2.0)
             norm_mur = LogNorm(vmin=mur_min_clean, vmax=mur_max_clean)
@@ -557,7 +555,7 @@ class TrainingVisualizer:
         else:
             norm_mur = Normalize(vmin=mur_min, vmax=mur_max)
             levels_mur = np.linspace(mur_min, mur_max, n_levels)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         contour_mur = axs[0, 2].contourf(
             self.X_grid, self.Y_grid, mu_r_clamped, levels=levels_mur,
@@ -585,18 +583,25 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
+        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| - CỐ ĐỊNH SCALE MIN-MAX ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_numpy)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
 
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        contour_b = axs[1, 1].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
+        axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ fixed [{b_min}-{b_max}T])")
         axs[1, 1].set_aspect('equal')
 
         # --- SUBPLOT 7: axs[1, 2] - Flux Density Vectors (B) ---
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max)
+        contour_b_bg = axs[1, 2].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
         step = max(1, self.resolution // 20)
         B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
@@ -672,7 +677,8 @@ class TrainingVisualizer:
     for file_path, content in files_to_update.items():
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        print(f"[✔] Đã cập nhật cấu hình trực quan hóa cho: {os.path.relpath(file_path, project_root)}")
+        print(f"[✔] Đã cập nhật thành công: {os.path.relpath(file_path, project_root)}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     apply_visualization_config_modifications()

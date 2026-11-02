@@ -72,37 +72,36 @@ class ElectroMagneticPINN:
             mp4_codec="libx264",
             mp4_quality=8,
 
-            # Số cấp độ contour mặc định
-            contour_levels=50,
+            contour_levels=60,
 
             # 1. Sai số PDE Residual Error (axs[0, 1])
-            res_scale="log",          # "log" hoặc "linear"
-            res_vmin=1e-4,            # None để tự động
-            res_vmax=1e1,             # None để tự động
+            res_scale="log",          
+            res_vmin=1e-4,            
+            res_vmax=1e1,             
             res_cmap="Reds",
 
-            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2])
-            mur_scale="log",          # "log" hoặc "linear"
-            mur_vmin=1.0,             # None để tự động
-            mur_vmax=None,            # None để tự động (tính theo max thực tế)
-            mur_cmap="cividis",
+            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2]) - TUYẾN TÍNH CỐ ĐỊNH 0 - 3000
+            mur_scale="linear",       # Chuyển sang tuyến tính
+            mur_vmin=0.0,             # Min = 0
+            mur_vmax=3000.0,          # Max = 3000 cố định
+            mur_cmap="turbo",         # Colormap đa sắc dải rộng
 
             # 3. Thế vectơ từ A_z (axs[1, 0])
-            az_scale="linear",        # "linear" hoặc "log"
-            az_vmin=None,             # None để tự động
-            az_vmax=None,             # None để tự động
+            az_scale="linear",        
+            az_vmin=None,             
+            az_vmax=None,             
             az_cmap="jet",
 
-            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2])
-            b_mag_scale="linear",     # "linear" hoặc "log"
-            b_mag_vmin=0.0,           # Giới hạn dưới Bmap
-            b_mag_vmax=None,          # Giới hạn trên Bmap (None để tự động)
+            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2]) - CỐ ĐỊNH SCALE MIN-MAX
+            b_mag_scale="linear",     
+            b_mag_vmin=0.0,           # Min cố định = 0.0 T
+            b_mag_vmax=1.8,           # Max cố định = 1.8 T
             b_mag_cmap="jet",
 
             # 5. Thành phần từ trường B_y (cho plot_fields)
-            by_scale="linear",        # "linear" hoặc "log"
-            by_vmin=None,             # None để tự động
-            by_vmax=None,             # None để tự động
+            by_scale="linear",        
+            by_vmin=None,             
+            by_vmax=None,             
             by_cmap="coolwarm"
         )
         
@@ -246,10 +245,9 @@ class ElectroMagneticPINN:
                         mu_r_tensor[mask] = mu_val
 
         mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
-        mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
 
         fig, axs = plt.subplots(2, 2, figsize=figsize)
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
         
         # --- 1. A_z Plot ---
         az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
@@ -260,27 +258,29 @@ class ElectroMagneticPINN:
         axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
         axs[0, 0].set_aspect('equal')
 
-        # --- 2. |B| Magnitude Plot ---
+        # --- 2. |B| Magnitude Plot (Cố định Scale) ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_grid)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
-        c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
         fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        # --- 3. Relative Permeability \mu_r Plot ---
-        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- 3. Relative Permeability \mu_r Plot (Linear 0 - 3000) ---
+        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
         
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
-            norm_mur = LogNorm(vmin=v_min_mur, vmax=v_max_mur)
+            norm_mur = LogNorm(vmin=max(v_min_mur, 1.0), vmax=v_max_mur)
             lbl_mur = r"$\mu_r$ (Log Scale)"
         else:
             levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
             norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
         fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)

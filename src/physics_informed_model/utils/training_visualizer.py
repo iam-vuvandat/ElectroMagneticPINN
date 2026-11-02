@@ -95,11 +95,10 @@ class TrainingVisualizer:
         B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
         B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
         mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(self.resolution, self.resolution)
-        mu_r_clamped = np.clip(mu_r_numpy, 1.0, None)
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
         fig, axs = plt.subplots(2, 4, figsize=(23, 10))
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
 
         # --- SUBPLOT 1: axs[0, 0] - Categorized Collocation Points ---
         ax_pts = axs[0, 0]
@@ -154,11 +153,12 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
-        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) - LINEAR SCALE (0 - 3000) ---
+        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
 
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             mur_min_clean = max(mur_min, 1e-3)
             mur_max_clean = max(mur_max, mur_min_clean * 2.0)
             norm_mur = LogNorm(vmin=mur_min_clean, vmax=mur_max_clean)
@@ -167,7 +167,7 @@ class TrainingVisualizer:
         else:
             norm_mur = Normalize(vmin=mur_min, vmax=mur_max)
             levels_mur = np.linspace(mur_min, mur_max, n_levels)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         contour_mur = axs[0, 2].contourf(
             self.X_grid, self.Y_grid, mu_r_clamped, levels=levels_mur,
@@ -195,18 +195,25 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
+        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| - CỐ ĐỊNH SCALE MIN-MAX ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_numpy)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
 
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        contour_b = axs[1, 1].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
+        axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ fixed [{b_min}-{b_max}T])")
         axs[1, 1].set_aspect('equal')
 
         # --- SUBPLOT 7: axs[1, 2] - Flux Density Vectors (B) ---
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max)
+        contour_b_bg = axs[1, 2].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
         step = max(1, self.resolution // 20)
         B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
