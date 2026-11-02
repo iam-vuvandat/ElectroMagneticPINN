@@ -69,7 +69,7 @@ def run_fpi_visualization_simulation_test():
     model.training_config.max_non_finite_streak = 5
     model.training_config.adam_log_interval = 50
 
-    model.training_config.fpi_alpha_damping = 0.35  # Hệ số giảm chấn FPI vừa phải
+    model.training_config.fpi_alpha_damping = 1.0  
     model.training_config.fpi_tolerance = 1e-6
 
     # Cấu hình huấn luyện Mạng phụ Net_nu
