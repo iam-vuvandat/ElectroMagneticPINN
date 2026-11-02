@@ -25,7 +25,7 @@ def run_high_precision_fpi_simulation_test():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (HIGH PRECISION)...")
+    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (FPI EQUALIZED ADAM EPOCHS)...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -52,35 +52,39 @@ def run_high_precision_fpi_simulation_test():
     # =========================================================================
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
-    model.training_config.enable_lbfgs_refinement_stage = True  # Bật L-BFGS để tinh chỉnh chính xác tối đa
+    model.training_config.enable_lbfgs_refinement_stage = True
 
-    # Cấu hình Warm-up + 20 vòng FPI
+    # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU ---
+    # Tăng số epoch mỗi bước FPI lên 500 epochs (BẰNG BƯỚC WARM-UP)
+    # 500 epochs Warm-up + 20 vòng FPI x 500 epochs = 10,500 Adam Epochs tổng cộng
     epochs_warmup_target = 500
-    fpi_iterations = 20                       # Đúng 20 bước FPI
-    epochs_per_fpi = 150                       # 150 epochs / vòng FPI (Tổng = 3,500 Adam Epochs)
+    fpi_iterations = 20
+    epochs_per_fpi = 500                      # Mỗi bước FPI chạy đủ 500 Adam epochs
     
     model.training_config.fpi_outer_iterations = fpi_iterations
-    model.training_config.fpi_alpha_damping = 0.35   # Hệ số giảm chấn FPI = 0.35
+    model.training_config.fpi_alpha_damping = 0.35   # Hệ số giảm chấn FPI 0.35
     model.training_config.fpi_tolerance = 1e-6
 
+    # Cấu hình tổng số Adam epochs trong training_config
     model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
+    # Tối ưu Adam để hội tụ cực sâu
     model.training_config.adam_learning_rate = 1e-3
-    model.training_config.target_loss_threshold = 1e-6
+    model.training_config.target_loss_threshold = 1e-7
     model.training_config.adam_eta_min = 1e-6
     model.training_config.grad_clip_max_norm = 1.0
     model.training_config.max_non_finite_streak = 5
     model.training_config.adam_log_interval = 100
 
-    # Cấu hình huấn luyện sâu cho Mạng phụ Net_nu
-    model.training_config.pretrain_nu_epochs = 400   # Pre-train kỹ lưỡng Net_nu ban đầu
+    # Cấu hình huấn luyện sâu cho Mạng phụ Net_nu tương ứng với Adam
+    model.training_config.pretrain_nu_epochs = 500   # Pre-train Net_nu 500 epochs
     model.training_config.pretrain_nu_lr = 5e-3
-    model.training_config.fit_nu_epochs = 250        # Tăng số epoch fit Net_nu mỗi vòng FPI
+    model.training_config.fit_nu_epochs = 400        # Fit Net_nu 400 epochs ở mỗi bước FPI
     model.training_config.fit_nu_lr = 3e-3
 
-    # Cấu hình L-BFGS Refinement
-    model.training_config.number_of_lbfgs_iterations = 1500
+    # Cấu hình L-BFGS Refinement tinh chỉnh sâu ở giai đoạn cuối
+    model.training_config.number_of_lbfgs_iterations = 2500
     model.training_config.lbfgs_learning_rate = 0.5
 
     # =========================================================================
@@ -89,7 +93,7 @@ def run_high_precision_fpi_simulation_test():
     model.visualization_config.active = True
     model.visualization_config.update_interval = 100          # Cứ 100 epochs xuất 1 frame
     model.visualization_config.output_directory = output_dir
-    model.visualization_config.resolution = 150              # Tăng độ phân giải hiển thị
+    model.visualization_config.resolution = 160
     model.visualization_config.generate_gif_animation = True
     model.visualization_config.gif_filename = "training_process.gif"
     model.visualization_config.generate_mp4_video = True
@@ -105,7 +109,7 @@ def run_high_precision_fpi_simulation_test():
     model.visualization_config.mur_cmap = "turbo"
 
     # =========================================================================
-    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (TĂNG MẠNH KÍCH THƯỚC MẠNG & SỐ ĐIỂM LẤY MẪU)
+    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (MẠNG LỚN & MẬT ĐỘ ĐIỂM DÀY ĐẶC)
     # =========================================================================
 
     # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
@@ -127,22 +131,20 @@ def run_high_precision_fpi_simulation_test():
     iron_yoke.training_config.interface_ht_weight = 1200.0
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
-    iron_yoke.training_config.number_of_interior_points = 5000   # Tăng số điểm lấy mẫu nội miền
-    iron_yoke.training_config.number_of_surface_points = 2500    # Tăng số điểm lấy mẫu ranh giới
+    iron_yoke.training_config.number_of_interior_points = 6000
+    iron_yoke.training_config.number_of_surface_points = 3000
 
-    # Tăng kích thước Mạng chính Net_Az cho iron_yoke
-    iron_yoke.network_config.hidden_layers = 5                  # Tăng lên 5 ẩn
-    iron_yoke.network_config.hidden_neurons = 128               # Tăng lên 128 neurons
+    iron_yoke.network_config.hidden_layers = 5
+    iron_yoke.network_config.hidden_neurons = 128
     iron_yoke.network_config.activation_function = nn.SiLU()
     iron_yoke.network_config.fourier_features = True
     iron_yoke.network_config.fourier_sigma = 1.2
-    iron_yoke.network_config.fourier_mapping_size = 256         # Fourier features 256
+    iron_yoke.network_config.fourier_mapping_size = 256
 
-    # Tăng kích thước & Bật Fourier Features cho Mạng phụ Net_nu
-    iron_yoke.nu_network_config.hidden_layers = 3               # Tăng lên 3 ẩn
-    iron_yoke.nu_network_config.hidden_neurons = 64              # Tăng lên 64 neurons
+    iron_yoke.nu_network_config.hidden_layers = 3
+    iron_yoke.nu_network_config.hidden_neurons = 64
     iron_yoke.nu_network_config.activation_function = nn.SiLU()
-    iron_yoke.nu_network_config.fourier_features = True          # Bật Fourier features cho Net_nu
+    iron_yoke.nu_network_config.fourier_features = True
     iron_yoke.nu_network_config.fourier_sigma = 1.0
     iron_yoke.nu_network_config.fourier_mapping_size = 64
 
@@ -159,8 +161,8 @@ def run_high_precision_fpi_simulation_test():
     magnet_left.physics_config.current = 0.0
     magnet_left.physics_config.is_nonlinear = False
 
-    magnet_left.training_config.number_of_interior_points = 2000
-    magnet_left.training_config.number_of_surface_points = 1200
+    magnet_left.training_config.number_of_interior_points = 2500
+    magnet_left.training_config.number_of_surface_points = 1500
 
     magnet_left.network_config.hidden_layers = 4
     magnet_left.network_config.hidden_neurons = 64
@@ -182,8 +184,8 @@ def run_high_precision_fpi_simulation_test():
     magnet_right.physics_config.current = 0.0
     magnet_right.physics_config.is_nonlinear = False
 
-    magnet_right.training_config.number_of_interior_points = 2000
-    magnet_right.training_config.number_of_surface_points = 1200
+    magnet_right.training_config.number_of_interior_points = 2500
+    magnet_right.training_config.number_of_surface_points = 1500
 
     magnet_right.network_config.hidden_layers = 4
     magnet_right.network_config.hidden_neurons = 64
@@ -203,7 +205,7 @@ def run_high_precision_fpi_simulation_test():
         interface_ht_weight=1200.0,
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=6000,
+        number_of_interior_points=8000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
