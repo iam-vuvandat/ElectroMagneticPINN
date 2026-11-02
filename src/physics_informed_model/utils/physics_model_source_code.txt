@@ -141,37 +141,36 @@ class ElectroMagneticPINN:
             mp4_codec="libx264",
             mp4_quality=8,
 
-            # Số cấp độ contour mặc định
-            contour_levels=50,
+            contour_levels=60,
 
             # 1. Sai số PDE Residual Error (axs[0, 1])
-            res_scale="log",          # "log" hoặc "linear"
-            res_vmin=1e-4,            # None để tự động
-            res_vmax=1e1,             # None để tự động
+            res_scale="log",          
+            res_vmin=1e-4,            
+            res_vmax=1e1,             
             res_cmap="Reds",
 
-            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2])
-            mur_scale="log",          # "log" hoặc "linear"
-            mur_vmin=1.0,             # None để tự động
-            mur_vmax=None,            # None để tự động (tính theo max thực tế)
-            mur_cmap="cividis",
+            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2]) - TUYẾN TÍNH CỐ ĐỊNH 0 - 3000
+            mur_scale="linear",       # Chuyển sang tuyến tính
+            mur_vmin=0.0,             # Min = 0
+            mur_vmax=3000.0,          # Max = 3000 cố định
+            mur_cmap="turbo",         # Colormap đa sắc dải rộng
 
             # 3. Thế vectơ từ A_z (axs[1, 0])
-            az_scale="linear",        # "linear" hoặc "log"
-            az_vmin=None,             # None để tự động
-            az_vmax=None,             # None để tự động
+            az_scale="linear",        
+            az_vmin=None,             
+            az_vmax=None,             
             az_cmap="jet",
 
-            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2])
-            b_mag_scale="linear",     # "linear" hoặc "log"
-            b_mag_vmin=0.0,           # Giới hạn dưới Bmap
-            b_mag_vmax=None,          # Giới hạn trên Bmap (None để tự động)
+            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2]) - CỐ ĐỊNH SCALE MIN-MAX
+            b_mag_scale="linear",     
+            b_mag_vmin=0.0,           # Min cố định = 0.0 T
+            b_mag_vmax=1.8,           # Max cố định = 1.8 T
             b_mag_cmap="jet",
 
             # 5. Thành phần từ trường B_y (cho plot_fields)
-            by_scale="linear",        # "linear" hoặc "log"
-            by_vmin=None,             # None để tự động
-            by_vmax=None,             # None để tự động
+            by_scale="linear",        
+            by_vmin=None,             
+            by_vmax=None,             
             by_cmap="coolwarm"
         )
         
@@ -315,10 +314,9 @@ class ElectroMagneticPINN:
                         mu_r_tensor[mask] = mu_val
 
         mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
-        mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
 
         fig, axs = plt.subplots(2, 2, figsize=figsize)
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
         
         # --- 1. A_z Plot ---
         az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
@@ -329,27 +327,29 @@ class ElectroMagneticPINN:
         axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
         axs[0, 0].set_aspect('equal')
 
-        # --- 2. |B| Magnitude Plot ---
+        # --- 2. |B| Magnitude Plot (Cố định Scale) ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_grid)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
-        c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
         fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        # --- 3. Relative Permeability \mu_r Plot ---
-        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- 3. Relative Permeability \mu_r Plot (Linear 0 - 3000) ---
+        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
         
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
-            norm_mur = LogNorm(vmin=v_min_mur, vmax=v_max_mur)
+            norm_mur = LogNorm(vmin=max(v_min_mur, 1.0), vmax=v_max_mur)
             lbl_mur = r"$\mu_r$ (Log Scale)"
         else:
             levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
             norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
         fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)
@@ -2500,119 +2500,192 @@ if torch.cuda.is_available():
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 
-def run_rigorous_nonlinear_simulation_test():
-    output_dir = "figure_nonlinear_rigorous_physics_test"
+def run_high_accuracy_simulation_test():
+    output_dir = "figure_high_accuracy_simulation_test"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG XPINN - ĐIỀU CHỈNH TRỌNG SỐ VẬT LÝ NGHIÊM NGẶT...")
+    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ƯU TIÊN ĐỘ CHÍNH XÁC CAO...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
 
-    # 1. CẤU HÌNH KHUNG TOẠ ĐỘ VÀ QUY MÔ VẬT LÝ
+    # =========================================================================
+    # 1. KHUNG TỌA ĐỘ VÀ QUY MÔ VẬT LÝ TOÀN CỤC
+    # =========================================================================
     sim_domain.physics_config.scale_L0 = 0.12
-    sim_domain.physics_config.scale_H0 = 800000.0 * 1.2
+    sim_domain.physics_config.scale_H0 = 960000.0  # 800000.0 * 1.2
+    sim_domain.physics_config.scale_nu0 = 795774.715459
     sim_domain.physics_config.allow_overlapping_domains = False
     sim_domain.x_boundaries_tuple = (-0.12, 0.12)
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
-    # 2. CẤU HÌNH LẤY MẪU ĐỘNG (COLLOCATION SAMPLER)
+    # =========================================================================
+    # 2. CẤU HÌNH LẤY MẪU ĐỘNG (COLLOCATION SAMPLER CONFIG)
+    # =========================================================================
     model.sampler_config.dynamic_resampling = True
-    model.sampler_config.resample_interval = 40
+    model.sampler_config.resample_interval = 50
     model.sampler_config.resample_points_before_lbfgs_stage = True
 
-    # 3. CẤU HÌNH THAM SỐ HUẤN LUYỆN & OPTIMIZER
+    # =========================================================================
+    # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN VÀ OPTIMIZER
+    # =========================================================================
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
     model.training_config.enable_lbfgs_refinement_stage = True
 
-    # Tiến trình Adam
-    model.training_config.number_of_adam_epochs = 6000
-    model.training_config.linear_warmup_epochs_ratio = 0.25      # ~1500 Epochs Warm-up
-    model.training_config.adam_learning_rate = 8e-4               # Giảm nhẹ LR để ổn định Fourier Features
+    # --- TÍNH TOÁN CÂN BẰNG EPOCH CHO FPI VÀ ADAM WARMUP ---
+    # Mục tiêu: Số Epoch mỗi bước FPI = Số Epoch Adam Warmup = 1,500 Epochs
+    # Tổng bước FPI = 20 vòng
+    # => Tổng Epoch Adaptation = 20 * 1,500 = 30,000 Epochs
+    # => Tổng Epoch Adam = 1,500 (Warmup) + 30,000 (Adaptation) = 31,500 Epochs
+    # => Warmup Ratio = 1,500 / 31,500 = 1 / 21 ≈ 0.0476190476
+    
+    epochs_warmup_target = 1500
+    fpi_iterations = 20
+    
+    model.training_config.fpi_outer_iterations = fpi_iterations
+    model.training_config.number_of_adam_epochs = epochs_warmup_target * (1 + fpi_iterations)  # 31,500 Epochs
+    model.training_config.linear_warmup_epochs_ratio = 1.0 / (1.0 + fpi_iterations)            # ~0.047619
+
+    model.training_config.adam_learning_rate = 5e-4
     model.training_config.target_loss_threshold = 1e-8
-
-    # Tiến trình FPI Outer Loop cho bài toán phi tuyến
-    model.training_config.fpi_outer_iterations = 12              # 12 vòng lặp FPI ngoại
-    model.training_config.fpi_alpha_damping = 0.5               # Damping factor = 0.5 giúp hội tụ mượt mà
-    model.training_config.fpi_tolerance = 1e-6                   # Siết chặt dung sai FPI
-
-    # Cấu hình Mạng phụ Net_nu
-    model.training_config.pretrain_nu_epochs = 400              # Tăng pretrain cho Net_nu
-    model.training_config.pretrain_nu_lr = 8e-3
-    model.training_config.fit_nu_epochs = 300                   # Tăng số epoch fit Net_nu mỗi bước FPI
-    model.training_config.fit_nu_lr = 2e-3
-
-    # Kiểm soát Gradient & Nhật ký
-    model.training_config.grad_clip_max_norm = 1.0
     model.training_config.adam_eta_min = 1e-6
+    model.training_config.grad_clip_max_norm = 1.0
     model.training_config.max_non_finite_streak = 5
     model.training_config.adam_log_interval = 100
-    model.training_config.lbfgs_log_interval = 25
 
-    # Cấu hình tinh chỉnh sâu L-BFGS
-    model.training_config.number_of_lbfgs_iterations = 2000
-    model.training_config.lbfgs_learning_rate = 0.4
-    model.training_config.lbfgs_maximum_evaluations = 3500
+    # Damping FPI giảm xuống 0.2 để mịn hóa cập nhật nu, tránh vọt loss
+    model.training_config.fpi_alpha_damping = 0.2
+    model.training_config.fpi_tolerance = 1e-6
+
+    # Cấu hình huấn luyện mạng phụ Net_nu
+    model.training_config.pretrain_nu_epochs = 500
+    model.training_config.pretrain_nu_lr = 5e-3
+    model.training_config.fit_nu_epochs = 400
+    model.training_config.fit_nu_lr = 1e-3
+
+    # Cấu hình tinh chỉnh L-BFGS
+    model.training_config.lbfgs_learning_rate = 0.3
+    model.training_config.number_of_lbfgs_iterations = 3000
+    model.training_config.lbfgs_maximum_evaluations = 5000
     model.training_config.lbfgs_tolerance_gradient = 1e-12
     model.training_config.lbfgs_tolerance_change = 1e-12
-    model.training_config.lbfgs_history_size = 100              # Mở rộng lịch sử Hessian xấp xỉ
+    model.training_config.lbfgs_history_size = 100
+    model.training_config.lbfgs_log_interval = 25
 
-    # 4. TRỰC QUAN HÓA
+    # =========================================================================
+    # 4. CẤU HÌNH TRỰC QUAN HÓA VÀ XUẤT VIDEO (FPS = 0.5)
+    # =========================================================================
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 100
+    model.visualization_config.update_interval = 150
     model.visualization_config.output_directory = output_dir
-    model.visualization_config.resolution = 140
-    model.visualization_config.generate_gif_animation = False
+    model.visualization_config.resolution = 160
+    model.visualization_config.generate_gif_animation = True
+    model.visualization_config.gif_filename = "training_process.gif"
     model.visualization_config.generate_mp4_video = True
-    model.visualization_config.mp4_filename = "rigorous_physics_training.mp4"
+    model.visualization_config.mp4_filename = "high_accuracy_training.mp4"
+    
+    # Cài đặt tốc độ khung hình thấp (0.5 FPS = 2 giây / frame)
+    model.visualization_config.animation_fps = 0.5
+    model.visualization_config.gif_fps = 0.5
+    
+    model.visualization_config.mp4_codec = "libx264"
+    model.visualization_config.mp4_quality = 8
+    model.visualization_config.contour_levels = 70
 
-    # 5. CẤU HÌNH VÀ SIẾT TRỌNG SỐ CHO CÁC MIỀN VẬT LIỆU
+    # Cấu hình dải màu hiển thị
+    model.visualization_config.res_scale = "log"
+    model.visualization_config.res_vmin = 1e-4
+    model.visualization_config.res_vmax = 1e1
+    model.visualization_config.res_cmap = "Reds"
 
-    # --- MIỀN LÕI SẮT PHI TUYẾN (Iron Yoke) ---
+    model.visualization_config.mur_scale = "linear"
+    model.visualization_config.mur_vmin = 0.0
+    model.visualization_config.mur_vmax = 3000.0
+    model.visualization_config.mur_cmap = "turbo"
+
+    model.visualization_config.az_scale = "linear"
+    model.visualization_config.az_vmin = -0.03
+    model.visualization_config.az_vmax = 0.005
+    model.visualization_config.az_cmap = "jet"
+
+    model.visualization_config.b_mag_scale = "linear"
+    model.visualization_config.b_mag_vmin = 0.0
+    model.visualization_config.b_mag_vmax = 1.8
+    model.visualization_config.b_mag_cmap = "jet"
+
+    model.visualization_config.by_scale = "linear"
+    model.visualization_config.by_vmin = -1.8
+    model.visualization_config.by_vmax = 1.8
+    model.visualization_config.by_cmap = "coolwarm"
+
+    # =========================================================================
+    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (NÂNG KÍCH THƯỚC MẠNG LÕI SẮT)
+    # =========================================================================
+
+    # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) - MẠNG MỞ RỘNG ---
     iron_yoke = sim_domain.create_material_domain(
-        domain_name="iron_yoke", material_name="steel_1008",
+        domain_name="iron_yoke",
+        material_name="steel_1008",
         outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
     )
+    iron_yoke.physics_config.relative_permeability = 1000.0
+    iron_yoke.physics_config.coercive = [0.0, 0.0]
+    iron_yoke.physics_config.current = 0.0
     iron_yoke.physics_config.is_nonlinear = True
-    iron_yoke.training_config.pde_weight = 3.0                   # Tăng lực ép PDE trong vùng sắt
-    iron_yoke.training_config.interface_potential_weight = 500.0
-    iron_yoke.training_config.interface_bn_weight = 800.0        # Tăng trọng số liên tục Bn
-    iron_yoke.training_config.interface_ht_weight = 1200.0       # Siết chặt điều kiện Ht Ampère
-    iron_yoke.training_config.pde_fading_beta = 80.0             # Đồng bộ beta fading
-    iron_yoke.training_config.number_of_interior_points = 5000
-    iron_yoke.training_config.number_of_surface_points = 2500   # Mật độ lấy mẫu biên dày đặc
 
-    iron_yoke.network_config.hidden_layers = 4
-    iron_yoke.network_config.hidden_neurons = 64
+    iron_yoke.training_config.pde_weight = 4.0
+    iron_yoke.training_config.pde_nonlinear_weight = 1.5
+    iron_yoke.training_config.interface_weight = 1.0
+    iron_yoke.training_config.interface_potential_weight = 600.0
+    iron_yoke.training_config.interface_bn_weight = 1000.0
+    iron_yoke.training_config.interface_ht_weight = 1500.0
+    iron_yoke.training_config.pde_fading_beta = 80.0
+    iron_yoke.training_config.sampling_density_multiplier = 1.5
+    iron_yoke.training_config.number_of_interior_points = 8000
+    iron_yoke.training_config.number_of_surface_points = 4000
+
+    # Nâng dung lượng mạng Net_Az cho sắt từ (5 ẩn x 128 neurons, Fourier 256)
+    iron_yoke.network_config.hidden_layers = 5
+    iron_yoke.network_config.hidden_neurons = 128
     iron_yoke.network_config.activation_function = nn.SiLU()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.2
-    iron_yoke.network_config.fourier_mapping_size = 128
+    iron_yoke.network_config.fourier_sigma = 1.5
+    iron_yoke.network_config.fourier_mapping_size = 256
 
-    iron_yoke.nu_network_config.hidden_layers = 3
-    iron_yoke.nu_network_config.hidden_neurons = 48
+    # Nâng dung lượng mạng Net_nu cho sắt từ (4 ẩn x 64 neurons)
+    iron_yoke.nu_network_config.hidden_layers = 4
+    iron_yoke.nu_network_config.hidden_neurons = 64
     iron_yoke.nu_network_config.activation_function = nn.SiLU()
     iron_yoke.nu_network_config.fourier_features = False
+    iron_yoke.nu_network_config.fourier_sigma = 1.0
+    iron_yoke.nu_network_config.fourier_mapping_size = 64
 
     iron_yoke.build_domain()
 
-    # --- MIỀN NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
+    # --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
     magnet_left = sim_domain.create_material_domain(
-        domain_name="magnet_left", material_name="N30UH",
+        domain_name="magnet_left",
+        material_name="N30UH",
         outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
         coercive_direction=(0, 1)
     )
+    magnet_left.physics_config.relative_permeability = 1.05
+    magnet_left.physics_config.current = 0.0
     magnet_left.physics_config.is_nonlinear = False
+
     magnet_left.training_config.pde_weight = 1.0
-    magnet_left.training_config.interface_potential_weight = 500.0
-    magnet_left.training_config.interface_bn_weight = 800.0
-    magnet_left.training_config.interface_ht_weight = 1200.0
+    magnet_left.training_config.pde_nonlinear_weight = 1.0
+    magnet_left.training_config.interface_weight = 1.0
+    magnet_left.training_config.interface_potential_weight = 600.0
+    magnet_left.training_config.interface_bn_weight = 1000.0
+    magnet_left.training_config.interface_ht_weight = 1500.0
     magnet_left.training_config.pde_fading_beta = 80.0
-    magnet_left.training_config.number_of_interior_points = 2500
-    magnet_left.training_config.number_of_surface_points = 1800
+    magnet_left.training_config.sampling_density_multiplier = 1.0
+    magnet_left.training_config.number_of_interior_points = 3500
+    magnet_left.training_config.number_of_surface_points = 2200
 
     magnet_left.network_config.hidden_layers = 4
     magnet_left.network_config.hidden_neurons = 64
@@ -2620,22 +2693,37 @@ def run_rigorous_nonlinear_simulation_test():
     magnet_left.network_config.fourier_features = True
     magnet_left.network_config.fourier_sigma = 1.2
     magnet_left.network_config.fourier_mapping_size = 128
+
+    magnet_left.nu_network_config.hidden_layers = 2
+    magnet_left.nu_network_config.hidden_neurons = 32
+    magnet_left.nu_network_config.activation_function = nn.SiLU()
+    magnet_left.nu_network_config.fourier_features = False
+    magnet_left.nu_network_config.fourier_sigma = 1.0
+    magnet_left.nu_network_config.fourier_mapping_size = 32
+
     magnet_left.build_domain()
 
-    # --- MIỀN NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
+    # --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
     magnet_right = sim_domain.create_material_domain(
-        domain_name="magnet_right", material_name="N30UH",
+        domain_name="magnet_right",
+        material_name="N30UH",
         outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]],
         coercive_direction=(0, -1)
     )
+    magnet_right.physics_config.relative_permeability = 1.05
+    magnet_right.physics_config.current = 0.0
     magnet_right.physics_config.is_nonlinear = False
+
     magnet_right.training_config.pde_weight = 1.0
-    magnet_right.training_config.interface_potential_weight = 500.0
-    magnet_right.training_config.interface_bn_weight = 800.0
-    magnet_right.training_config.interface_ht_weight = 1200.0
+    magnet_right.training_config.pde_nonlinear_weight = 1.0
+    magnet_right.training_config.interface_weight = 1.0
+    magnet_right.training_config.interface_potential_weight = 600.0
+    magnet_right.training_config.interface_bn_weight = 1000.0
+    magnet_right.training_config.interface_ht_weight = 1500.0
     magnet_right.training_config.pde_fading_beta = 80.0
-    magnet_right.training_config.number_of_interior_points = 2500
-    magnet_right.training_config.number_of_surface_points = 1800
+    magnet_right.training_config.sampling_density_multiplier = 1.0
+    magnet_right.training_config.number_of_interior_points = 3500
+    magnet_right.training_config.number_of_surface_points = 2200
 
     magnet_right.network_config.hidden_layers = 4
     magnet_right.network_config.hidden_neurons = 64
@@ -2643,14 +2731,27 @@ def run_rigorous_nonlinear_simulation_test():
     magnet_right.network_config.fourier_features = True
     magnet_right.network_config.fourier_sigma = 1.2
     magnet_right.network_config.fourier_mapping_size = 128
+
+    magnet_right.nu_network_config.hidden_layers = 2
+    magnet_right.nu_network_config.hidden_neurons = 32
+    magnet_right.nu_network_config.activation_function = nn.SiLU()
+    magnet_right.nu_network_config.fourier_features = False
+    magnet_right.nu_network_config.fourier_sigma = 1.0
+    magnet_right.nu_network_config.fourier_mapping_size = 32
+
     magnet_right.build_domain()
 
-    # --- MIỀN KHÔNG KHÍ NỀN (Background Air Domain) ---
+    # --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
     bg_training_cfg = SimpleNamespace(
         pde_weight=1.0,
+        pde_nonlinear_weight=1.0,
+        interface_weight=1.0,
+        interface_potential_weight=600.0,
+        interface_bn_weight=1000.0,
+        interface_ht_weight=1500.0,
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=9000,
+        number_of_interior_points=12000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
@@ -2667,14 +2768,22 @@ def run_rigorous_nonlinear_simulation_test():
         network_config=bg_network_cfg
     )
 
+    # =========================================================================
+    # 6. THỰC THI HUẤN LUYỆN
+    # =========================================================================
     model.update_electromagnetic_pinn()
 
-    print("[*] Bắt đầu tiến trình huấn luyện mô phỏng với trọng số vật lý tối ưu...")
+    print("[*] Bắt đầu tiến trình huấn luyện chính xác cao...")
     model.execute_training_process()
 
-    print("[*] Xuất biểu đồ trường từ phi tuyến kết quả...")
-    model.plot_fields(resolution=220, save_path=f"{output_dir}/rigorous_physics_final_fields.png")
-    print(f"[✔] HOÀN THÀNH KIỂM THỬ VẬT LÝ NGHIÊM NGẶT! Kết quả lưu tại: {output_dir}/")
+    print("[*] Xuất biểu đồ trường từ kết quả...")
+    model.plot_fields(
+        resolution=240,
+        save_path=f"{output_dir}/high_accuracy_final_fields.png",
+        show=False,
+        figsize=(14, 11)
+    )
+    print(f"[✔] HOÀN THÀNH MÔ PHỎNG! Kết quả lưu tại: {output_dir}/")
 
 
 
@@ -3158,7 +3267,6 @@ def apply_visualization_config_modifications():
 
     # =========================================================================
     # 1. CẬP NHẬT: electro_magnetic_pinn.py
-    # Thêm cấu hình trực quan hóa linh hoạt và áp dụng trong plot_fields
     # =========================================================================
     pinn_core_code = '''import torch
 import torch.nn as nn
@@ -3234,37 +3342,36 @@ class ElectroMagneticPINN:
             mp4_codec="libx264",
             mp4_quality=8,
 
-            # Số cấp độ contour mặc định
-            contour_levels=50,
+            contour_levels=60,
 
             # 1. Sai số PDE Residual Error (axs[0, 1])
-            res_scale="log",          # "log" hoặc "linear"
-            res_vmin=1e-4,            # None để tự động
-            res_vmax=1e1,             # None để tự động
+            res_scale="log",          
+            res_vmin=1e-4,            
+            res_vmax=1e1,             
             res_cmap="Reds",
 
-            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2])
-            mur_scale="log",          # "log" hoặc "linear"
-            mur_vmin=1.0,             # None để tự động
-            mur_vmax=None,            # None để tự động (tính theo max thực tế)
-            mur_cmap="cividis",
+            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2]) - TUYẾN TÍNH CỐ ĐỊNH 0 - 3000
+            mur_scale="linear",       # Chuyển sang tuyến tính
+            mur_vmin=0.0,             # Min = 0
+            mur_vmax=3000.0,          # Max = 3000 cố định
+            mur_cmap="turbo",         # Colormap đa sắc dải rộng
 
             # 3. Thế vectơ từ A_z (axs[1, 0])
-            az_scale="linear",        # "linear" hoặc "log"
-            az_vmin=None,             # None để tự động
-            az_vmax=None,             # None để tự động
+            az_scale="linear",        
+            az_vmin=None,             
+            az_vmax=None,             
             az_cmap="jet",
 
-            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2])
-            b_mag_scale="linear",     # "linear" hoặc "log"
-            b_mag_vmin=0.0,           # Giới hạn dưới Bmap
-            b_mag_vmax=None,          # Giới hạn trên Bmap (None để tự động)
+            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2]) - CỐ ĐỊNH SCALE MIN-MAX
+            b_mag_scale="linear",     
+            b_mag_vmin=0.0,           # Min cố định = 0.0 T
+            b_mag_vmax=1.8,           # Max cố định = 1.8 T
             b_mag_cmap="jet",
 
             # 5. Thành phần từ trường B_y (cho plot_fields)
-            by_scale="linear",        # "linear" hoặc "log"
-            by_vmin=None,             # None để tự động
-            by_vmax=None,             # None để tự động
+            by_scale="linear",        
+            by_vmin=None,             
+            by_vmax=None,             
             by_cmap="coolwarm"
         )
         
@@ -3408,10 +3515,9 @@ class ElectroMagneticPINN:
                         mu_r_tensor[mask] = mu_val
 
         mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
-        mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
 
         fig, axs = plt.subplots(2, 2, figsize=figsize)
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
         
         # --- 1. A_z Plot ---
         az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
@@ -3422,27 +3528,29 @@ class ElectroMagneticPINN:
         axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
         axs[0, 0].set_aspect('equal')
 
-        # --- 2. |B| Magnitude Plot ---
+        # --- 2. |B| Magnitude Plot (Cố định Scale) ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_grid)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
-        c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
         fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        # --- 3. Relative Permeability \mu_r Plot ---
-        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- 3. Relative Permeability \mu_r Plot (Linear 0 - 3000) ---
+        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
         
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
-            norm_mur = LogNorm(vmin=v_min_mur, vmax=v_max_mur)
+            norm_mur = LogNorm(vmin=max(v_min_mur, 1.0), vmax=v_max_mur)
             lbl_mur = r"$\mu_r$ (Log Scale)"
         else:
             levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
             norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
         fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)
@@ -3535,7 +3643,6 @@ class ElectroMagneticPINN:
 
     # =========================================================================
     # 2. CẬP NHẬT: utils/training_visualizer.py
-    # Áp dụng đầy đủ cấu hình tùy chỉnh cho cả 8 subplots
     # =========================================================================
     visualizer_code = '''import os
 import torch
@@ -3634,11 +3741,10 @@ class TrainingVisualizer:
         B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
         B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
         mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(self.resolution, self.resolution)
-        mu_r_clamped = np.clip(mu_r_numpy, 1.0, None)
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
         fig, axs = plt.subplots(2, 4, figsize=(23, 10))
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
 
         # --- SUBPLOT 1: axs[0, 0] - Categorized Collocation Points ---
         ax_pts = axs[0, 0]
@@ -3693,11 +3799,12 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
-        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) - LINEAR SCALE (0 - 3000) ---
+        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
 
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             mur_min_clean = max(mur_min, 1e-3)
             mur_max_clean = max(mur_max, mur_min_clean * 2.0)
             norm_mur = LogNorm(vmin=mur_min_clean, vmax=mur_max_clean)
@@ -3706,7 +3813,7 @@ class TrainingVisualizer:
         else:
             norm_mur = Normalize(vmin=mur_min, vmax=mur_max)
             levels_mur = np.linspace(mur_min, mur_max, n_levels)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         contour_mur = axs[0, 2].contourf(
             self.X_grid, self.Y_grid, mu_r_clamped, levels=levels_mur,
@@ -3734,18 +3841,25 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
+        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| - CỐ ĐỊNH SCALE MIN-MAX ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_numpy)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
 
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        contour_b = axs[1, 1].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
+        axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ fixed [{b_min}-{b_max}T])")
         axs[1, 1].set_aspect('equal')
 
         # --- SUBPLOT 7: axs[1, 2] - Flux Density Vectors (B) ---
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max)
+        contour_b_bg = axs[1, 2].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
         step = max(1, self.resolution // 20)
         B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
@@ -3821,7 +3935,8 @@ class TrainingVisualizer:
     for file_path, content in files_to_update.items():
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        print(f"[✔] Đã cập nhật cấu hình trực quan hóa cho: {os.path.relpath(file_path, project_root)}")
+        print(f"[✔] Đã cập nhật thành công: {os.path.relpath(file_path, project_root)}")
+
 
 
 ========================================
@@ -3925,11 +4040,10 @@ class TrainingVisualizer:
         B_y_numpy = B_y_phys.cpu().numpy().reshape(self.resolution, self.resolution)
         B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
         mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(self.resolution, self.resolution)
-        mu_r_clamped = np.clip(mu_r_numpy, 1.0, None)
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
         fig, axs = plt.subplots(2, 4, figsize=(23, 10))
-        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+        n_levels = getattr(vis_cfg, 'contour_levels', 60)
 
         # --- SUBPLOT 1: axs[0, 0] - Categorized Collocation Points ---
         ax_pts = axs[0, 0]
@@ -3984,11 +4098,12 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
-        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
-        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) - LINEAR SCALE (0 - 3000) ---
+        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+        mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
 
-        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
             mur_min_clean = max(mur_min, 1e-3)
             mur_max_clean = max(mur_max, mur_min_clean * 2.0)
             norm_mur = LogNorm(vmin=mur_min_clean, vmax=mur_max_clean)
@@ -3997,7 +4112,7 @@ class TrainingVisualizer:
         else:
             norm_mur = Normalize(vmin=mur_min, vmax=mur_max)
             levels_mur = np.linspace(mur_min, mur_max, n_levels)
-            lbl_mur = r"$\mu_r$ (Linear Scale)"
+            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
 
         contour_mur = axs[0, 2].contourf(
             self.X_grid, self.Y_grid, mu_r_clamped, levels=levels_mur,
@@ -4025,18 +4140,25 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
+        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| - CỐ ĐỊNH SCALE MIN-MAX ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_numpy)), 1e-3)
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+        b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)
         levels_b = np.linspace(b_min, b_max, n_levels)
 
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+        contour_b = axs[1, 1].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-        axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
+        axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ fixed [{b_min}-{b_max}T])")
         axs[1, 1].set_aspect('equal')
 
         # --- SUBPLOT 7: axs[1, 2] - Flux Density Vectors (B) ---
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max)
+        contour_b_bg = axs[1, 2].contourf(
+            self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
+            cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max
+        )
         fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
         step = max(1, self.resolution // 20)
         B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)

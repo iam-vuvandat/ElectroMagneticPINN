@@ -8,7 +8,7 @@ def apply_visualization_config_modifications():
     visualizer_file = os.path.join(project_root, 'utils', 'training_visualizer.py')
 
     # =========================================================================
-    # 1. CẬP NHẬT: electro_magnetic_pinn.py
+    # 1. CẬP NHẬT: electro_magnetic_pinn.py (plot_fields đọc nu từ Net_nu)
     # =========================================================================
     pinn_core_code = '''import torch
 import torch.nn as nn
@@ -69,7 +69,6 @@ class ElectroMagneticPINN:
             lbfgs_history_size=50
         )
         
-        # Cấu hình trực quan hóa mở rộng cho toàn bộ 8 đồ thị
         self.visualization_config = SimpleNamespace(
             active=False,
             update_interval=200,
@@ -86,31 +85,26 @@ class ElectroMagneticPINN:
 
             contour_levels=60,
 
-            # 1. Sai số PDE Residual Error (axs[0, 1])
             res_scale="log",          
             res_vmin=1e-4,            
             res_vmax=1e1,             
             res_cmap="Reds",
 
-            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2]) - TUYẾN TÍNH CỐ ĐỊNH 0 - 3000
-            mur_scale="linear",       # Chuyển sang tuyến tính
-            mur_vmin=0.0,             # Min = 0
-            mur_vmax=3000.0,          # Max = 3000 cố định
-            mur_cmap="turbo",         # Colormap đa sắc dải rộng
+            mur_scale="linear",       
+            mur_vmin=0.0,             
+            mur_vmax=3000.0,          
+            mur_cmap="turbo",         
 
-            # 3. Thế vectơ từ A_z (axs[1, 0])
             az_scale="linear",        
             az_vmin=None,             
             az_vmax=None,             
             az_cmap="jet",
 
-            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2]) - CỐ ĐỊNH SCALE MIN-MAX
             b_mag_scale="linear",     
-            b_mag_vmin=0.0,           # Min cố định = 0.0 T
-            b_mag_vmax=1.8,           # Max cố định = 1.8 T
+            b_mag_vmin=0.0,           
+            b_mag_vmax=1.8,           
             b_mag_cmap="jet",
 
-            # 5. Thành phần từ trường B_y (cho plot_fields)
             by_scale="linear",        
             by_vmin=None,             
             by_vmax=None,             
@@ -220,6 +214,7 @@ class ElectroMagneticPINN:
     def plot_fields(self, resolution=180, save_path=None, show=False, figsize=(12, 10)):
         sim_domain = self.simulation_domain_engine_instance
         vis_cfg = self.visualization_config
+        pinn_arch = self.pinn_architecture_instance
 
         xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
         x_coords = np.linspace(xb[0], xb[1], resolution)
@@ -247,11 +242,19 @@ class ElectroMagneticPINN:
 
         for domain in sim_domain.domains_list:
             if getattr(domain, 'domain_name', '') != 'background':
-                mask = (mat_ids == float(domain.domain_id))
+                d_id = domain.domain_id
+                net_key = f'domain_{d_id}'
+                mask = (mat_ids == float(d_id))
                 if mask.any():
                     if getattr(domain.physics_config, 'is_nonlinear', False):
-                        nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
-                        mu_r_tensor[mask] = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys.squeeze(), min=1e-6))
+                        # ĐỌC TRỰC TIẾP TỪ MẠNG NET_NU
+                        if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
+                            with torch.no_grad():
+                                nu_star_pred = pinn_arch.forward_nu_network(net_key, eval_pts[mask])
+                                mu_r_tensor[mask] = (1.0 / torch.clamp(nu_star_pred.squeeze(), min=1e-6))
+                        else:
+                            nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
+                            mu_r_tensor[mask] = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys.squeeze(), min=1e-6))
                     else:
                         mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
                         mu_r_tensor[mask] = mu_val
@@ -270,7 +273,7 @@ class ElectroMagneticPINN:
         axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
         axs[0, 0].set_aspect('equal')
 
-        # --- 2. |B| Magnitude Plot (Cố định Scale) ---
+        # --- 2. |B| Magnitude Plot ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
         b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
         b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
@@ -280,7 +283,7 @@ class ElectroMagneticPINN:
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        # --- 3. Relative Permeability \mu_r Plot (Linear 0 - 3000) ---
+        # --- 3. Relative Permeability \mu_r Plot ---
         v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
         v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
         mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
@@ -384,7 +387,7 @@ class ElectroMagneticPINN:
 '''
 
     # =========================================================================
-    # 2. CẬP NHẬT: utils/training_visualizer.py
+    # 2. CẬP NHẬT: utils/training_visualizer.py (save_frame đọc nu từ Net_nu)
     # =========================================================================
     visualizer_code = '''import os
 import torch
@@ -459,8 +462,14 @@ class TrainingVisualizer:
                 By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
                 if getattr(domain.physics_config, 'is_nonlinear', False):
-                    B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
-                    nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
+                    # ĐỌC TRỰC TIẾP TỪ MẠNG NET_NU NẾU CÓ
+                    if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
+                        with torch.no_grad():
+                            nu_star_pred = model.forward_nu_network(net_key, eval_points)
+                            nu_dom = nu_star_pred * sim_domain.nu0
+                    else:
+                        B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
+                        nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
                 else:
                     nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
 
@@ -541,7 +550,7 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) - LINEAR SCALE (0 - 3000) ---
+        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
         mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
         mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
         mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -583,7 +592,7 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| - CỐ ĐỊNH SCALE MIN-MAX ---
+        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
         b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
         b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)

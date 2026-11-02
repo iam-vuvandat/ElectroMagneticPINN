@@ -71,8 +71,14 @@ class TrainingVisualizer:
                 By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
                 if getattr(domain.physics_config, 'is_nonlinear', False):
-                    B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
-                    nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
+                    # ĐỌC TRỰC TIẾP TỪ MẠNG NET_NU NẾU CÓ
+                    if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
+                        with torch.no_grad():
+                            nu_star_pred = model.forward_nu_network(net_key, eval_points)
+                            nu_dom = nu_star_pred * sim_domain.nu0
+                    else:
+                        B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
+                        nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
                 else:
                     nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
 
@@ -153,7 +159,7 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) - LINEAR SCALE (0 - 3000) ---
+        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
         mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
         mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
         mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -195,7 +201,7 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| - CỐ ĐỊNH SCALE MIN-MAX ---
+        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
         b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
         b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)
