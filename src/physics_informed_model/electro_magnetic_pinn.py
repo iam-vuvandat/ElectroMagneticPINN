@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, Normalize
 
 from types import SimpleNamespace
 from architectures.xpinn_architecture import XPINNArchitecture
@@ -57,6 +57,7 @@ class ElectroMagneticPINN:
             lbfgs_history_size=50
         )
         
+        # Cấu hình trực quan hóa mở rộng cho toàn bộ 8 đồ thị
         self.visualization_config = SimpleNamespace(
             active=False,
             update_interval=200,
@@ -69,7 +70,40 @@ class ElectroMagneticPINN:
             animation_fps=5,
             gif_fps=5,
             mp4_codec="libx264",
-            mp4_quality=8
+            mp4_quality=8,
+
+            # Số cấp độ contour mặc định
+            contour_levels=50,
+
+            # 1. Sai số PDE Residual Error (axs[0, 1])
+            res_scale="log",          # "log" hoặc "linear"
+            res_vmin=1e-4,            # None để tự động
+            res_vmax=1e1,             # None để tự động
+            res_cmap="Reds",
+
+            # 2. Độ từ thẩm tương đối mu_r (axs[0, 2])
+            mur_scale="log",          # "log" hoặc "linear"
+            mur_vmin=1.0,             # None để tự động
+            mur_vmax=None,            # None để tự động (tính theo max thực tế)
+            mur_cmap="cividis",
+
+            # 3. Thế vectơ từ A_z (axs[1, 0])
+            az_scale="linear",        # "linear" hoặc "log"
+            az_vmin=None,             # None để tự động
+            az_vmax=None,             # None để tự động
+            az_cmap="jet",
+
+            # 4. Mật độ từ thông |B| (axs[1, 1] & axs[1, 2])
+            b_mag_scale="linear",     # "linear" hoặc "log"
+            b_mag_vmin=0.0,           # Giới hạn dưới Bmap
+            b_mag_vmax=None,          # Giới hạn trên Bmap (None để tự động)
+            b_mag_cmap="jet",
+
+            # 5. Thành phần từ trường B_y (cho plot_fields)
+            by_scale="linear",        # "linear" hoặc "log"
+            by_vmin=None,             # None để tự động
+            by_vmax=None,             # None để tự động
+            by_cmap="coolwarm"
         )
         
         self.simulation_domain_engine_instance = SimulationDomain(electro_magnetic_pinn=self)
@@ -174,6 +208,8 @@ class ElectroMagneticPINN:
 
     def plot_fields(self, resolution=180, save_path=None, show=False, figsize=(12, 10)):
         sim_domain = self.simulation_domain_engine_instance
+        vis_cfg = self.visualization_config
+
         xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
         x_coords = np.linspace(xb[0], xb[1], resolution)
         y_coords = np.linspace(yb[0], yb[1], resolution)
@@ -213,29 +249,49 @@ class ElectroMagneticPINN:
         mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
 
         fig, axs = plt.subplots(2, 2, figsize=figsize)
+        n_levels = getattr(vis_cfg, 'contour_levels', 50)
         
-        c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=60, cmap="jet")
+        # --- 1. A_z Plot ---
+        az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
+        az_vmax = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_grid))
+        levels_az = np.linspace(az_vmin, az_vmax, n_levels) if az_vmin != az_vmax else n_levels
+        c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=levels_az, cmap=vis_cfg.az_cmap)
         fig.colorbar(c0, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
         axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
         axs[0, 0].set_aspect('equal')
 
-        b_max = max(float(np.max(B_mag_grid)), 1e-3)
-        c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=np.linspace(0, b_max, 60), cmap="jet")
+        # --- 2. |B| Magnitude Plot ---
+        b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_grid)), 1e-3)
+        levels_b = np.linspace(b_min, b_max, n_levels)
+        c1 = axs[0, 1].contourf(X_grid, Y_grid, B_mag_grid, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
         fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
         axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
         axs[0, 1].set_aspect('equal')
 
-        v_max_mur = max(float(np.max(mu_r_clamped)), 10.0)
-        levels_mur_log = np.logspace(0, np.log10(v_max_mur), 60)
-        c2 = axs[1, 0].contourf(
-            X_grid, Y_grid, mu_r_clamped, levels=levels_mur_log,
-            cmap="cividis", norm=LogNorm(vmin=1.0, vmax=v_max_mur)
-        )
-        fig.colorbar(c2, ax=axs[1, 0], label=r"$\mu_r$ (Log Scale)")
+        # --- 3. Relative Permeability \mu_r Plot ---
+        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
+        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+        
+        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+            levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
+            norm_mur = LogNorm(vmin=v_min_mur, vmax=v_max_mur)
+            lbl_mur = r"$\mu_r$ (Log Scale)"
+        else:
+            levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
+            norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
+            lbl_mur = r"$\mu_r$ (Linear Scale)"
+
+        c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
+        fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)
         axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
         axs[1, 0].set_aspect('equal')
 
-        c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=60, cmap="coolwarm")
+        # --- 4. B_y Component Plot ---
+        by_vmin = vis_cfg.by_vmin if vis_cfg.by_vmin is not None else float(np.min(B_y_grid))
+        by_vmax = vis_cfg.by_vmax if vis_cfg.by_vmax is not None else float(np.max(B_y_grid))
+        levels_by = np.linspace(by_vmin, by_vmax, n_levels) if by_vmin != by_vmax else n_levels
+        c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=levels_by, cmap=vis_cfg.by_cmap)
         fig.colorbar(c3, ax=axs[1, 1], label=r"$B_y$ (T)")
         axs[1, 1].set_title(r"Field Component ($B_y$)")
         axs[1, 1].set_aspect('equal')

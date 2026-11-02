@@ -2,7 +2,7 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, Normalize
 import imageio
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
@@ -41,7 +41,8 @@ class TrainingVisualizer:
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         pde_evaluator = self.electro_magnetic_pinn.maxwell_pde_loss_instance
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        
+        vis_cfg = self.electro_magnetic_pinn.visualization_config
+
         model.eval()
         computation_device = next(model.parameters()).device
         eval_points = self.eval_points_tensor.to(computation_device).detach().clone().requires_grad_(True)
@@ -98,7 +99,9 @@ class TrainingVisualizer:
         residual_numpy = residual_total.cpu().numpy().reshape(self.resolution, self.resolution)
         
         fig, axs = plt.subplots(2, 4, figsize=(23, 10))
-        
+        n_levels = getattr(vis_cfg, 'contour_levels', 50)
+
+        # --- SUBPLOT 1: axs[0, 0] - Categorized Collocation Points ---
         ax_pts = axs[0, 0]
         ax_pts.set_title("Categorized Collocation Points")
         domain_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b']
@@ -131,22 +134,50 @@ class TrainingVisualizer:
         ax_pts.set_ylim(self.y_bounds)
         ax_pts.set_aspect('equal')
         
-        res_abs = np.clip(np.abs(residual_numpy), 1e-6, 1e2)
-        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, res_abs, levels=50, cmap="Reds", norm=LogNorm(vmin=1e-4, vmax=1e1))
+        # --- SUBPLOT 2: axs[0, 1] - PDE Residual Error ---
+        res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else float(np.min(residual_numpy))
+        res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else float(np.max(residual_numpy))
+
+        if getattr(vis_cfg, 'res_scale', 'log') == 'log':
+            res_min_clean = max(res_min, 1e-6)
+            res_max_clean = max(res_max, res_min_clean * 10.0)
+            res_abs = np.clip(np.abs(residual_numpy), res_min_clean, res_max_clean)
+            norm_res = LogNorm(vmin=res_min_clean, vmax=res_max_clean)
+            levels_res = np.logspace(np.log10(res_min_clean), np.log10(res_max_clean), n_levels)
+        else:
+            res_abs = residual_numpy
+            norm_res = Normalize(vmin=res_min, vmax=res_max)
+            levels_res = np.linspace(res_min, res_max, n_levels)
+
+        contour_res = axs[0, 1].contourf(self.X_grid, self.Y_grid, res_abs, levels=levels_res, cmap=vis_cfg.res_cmap, norm=norm_res)
         fig.colorbar(contour_res, ax=axs[0, 1])
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        v_max_mur = max(float(np.max(mu_r_clamped)), 10.0)
-        levels_mur_log = np.logspace(0, np.log10(v_max_mur), 50)
+        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
+        mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 1.0
+        mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else max(float(np.max(mu_r_clamped)), 10.0)
+
+        if getattr(vis_cfg, 'mur_scale', 'log') == 'log':
+            mur_min_clean = max(mur_min, 1e-3)
+            mur_max_clean = max(mur_max, mur_min_clean * 2.0)
+            norm_mur = LogNorm(vmin=mur_min_clean, vmax=mur_max_clean)
+            levels_mur = np.logspace(np.log10(mur_min_clean), np.log10(mur_max_clean), n_levels)
+            lbl_mur = r"$\mu_r$ (Log Scale)"
+        else:
+            norm_mur = Normalize(vmin=mur_min, vmax=mur_max)
+            levels_mur = np.linspace(mur_min, mur_max, n_levels)
+            lbl_mur = r"$\mu_r$ (Linear Scale)"
+
         contour_mur = axs[0, 2].contourf(
-            self.X_grid, self.Y_grid, mu_r_clamped, levels=levels_mur_log,
-            cmap="cividis", norm=LogNorm(vmin=1.0, vmax=v_max_mur)
+            self.X_grid, self.Y_grid, mu_r_clamped, levels=levels_mur,
+            cmap=vis_cfg.mur_cmap, norm=norm_mur
         )
-        fig.colorbar(contour_mur, ax=axs[0, 2], label=r"$\mu_r$ (Log Scale)")
+        fig.colorbar(contour_mur, ax=axs[0, 2], label=lbl_mur)
         axs[0, 2].set_title(r"Permeability Distribution ($\mu_r$)")
         axs[0, 2].set_aspect('equal')
         
+        # --- SUBPLOT 4: axs[0, 3] - Loss Optimization History ---
         axs[0, 3].plot(self.epoch_history, self.loss_history, 'b-')
         axs[0, 3].set_yscale('log')
         axs[0, 3].set_title("Loss Optimization")
@@ -154,19 +185,28 @@ class TrainingVisualizer:
         axs[0, 3].set_ylabel("Loss")
         axs[0, 3].grid(True, which="both", ls="-", alpha=0.2)
         
-        contour_az = axs[1, 0].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=50, cmap="jet")
+        # --- SUBPLOT 5: axs[1, 0] - Magnetic Vector Potential A_z ---
+        az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
+        az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
+        levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
+
+        contour_az = axs[1, 0].contourf(self.X_grid, self.Y_grid, A_z_numpy, levels=levels_az, cmap=vis_cfg.az_cmap)
         fig.colorbar(contour_az, ax=axs[1, 0], label="A_z (Wb/m)")
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        b_max_val = max(float(np.max(B_mag_numpy)), 1e-3)
-        levels_b = np.linspace(0.0, b_max_val, 50)
-        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap="jet", vmin=0.0, vmax=b_max_val)
+        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
+        b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
+        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else max(float(np.max(B_mag_numpy)), 1e-3)
+        levels_b = np.linspace(b_min, b_max, n_levels)
+
+        contour_b = axs[1, 1].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
         fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
         axs[1, 1].set_title("Flux Density Magnitude ($|B|$)")
         axs[1, 1].set_aspect('equal')
 
-        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap="jet", alpha=0.3, vmin=0.0, vmax=b_max_val)
+        # --- SUBPLOT 7: axs[1, 2] - Flux Density Vectors (B) ---
+        contour_b_bg = axs[1, 2].contourf(self.X_grid, self.Y_grid, B_mag_numpy, levels=levels_b, cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max)
         fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
         step = max(1, self.resolution // 20)
         B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
@@ -178,6 +218,7 @@ class TrainingVisualizer:
         axs[1, 2].set_title("Flux Density Vectors (B)")
         axs[1, 2].set_aspect('equal')
 
+        # --- SUBPLOT 8: axs[1, 3] - Material Classification ---
         mat_id_numpy = mat_id.cpu().numpy().reshape(self.resolution, self.resolution)
         im_mat = axs[1, 3].imshow(mat_id_numpy, extent=[self.x_bounds[0], self.x_bounds[1], self.y_bounds[0], self.y_bounds[1]], origin='lower', interpolation='nearest', cmap='tab10')
         fig.colorbar(im_mat, ax=axs[1, 3], label="Domain ID")
