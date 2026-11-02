@@ -25,7 +25,7 @@ def run_high_precision_fpi_simulation_test():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (FPI EQUALIZED ADAM EPOCHS)...")
+    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (FPI EQUALIZED ADAM EPOCHS = 1500)...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -54,12 +54,11 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.enable_nonlinear_adaptation_stage = True
     model.training_config.enable_lbfgs_refinement_stage = True
 
-    # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU ---
-    # Tăng số epoch mỗi bước FPI lên 500 epochs (BẰNG BƯỚC WARM-UP)
-    # 500 epochs Warm-up + 20 vòng FPI x 500 epochs = 10,500 Adam Epochs tổng cộng
-    epochs_warmup_target = 500
+    # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (NÂNG NÊN 1500 EPOCHS / BƯỚC) ---
+    # 1500 epochs Warm-up + 20 vòng FPI x 1500 epochs = 31,500 Adam Epochs tổng cộng
+    epochs_warmup_target = 1500
     fpi_iterations = 20
-    epochs_per_fpi = 500                      # Mỗi bước FPI chạy đủ 500 Adam epochs
+    epochs_per_fpi = 1500                     # Mỗi bước FPI chạy đủ 1500 Adam epochs
     
     model.training_config.fpi_outer_iterations = fpi_iterations
     model.training_config.fpi_alpha_damping = 0.35   # Hệ số giảm chấn FPI 0.35
@@ -78,13 +77,13 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.adam_log_interval = 100
 
     # Cấu hình huấn luyện sâu cho Mạng phụ Net_nu tương ứng với Adam
-    model.training_config.pretrain_nu_epochs = 500   # Pre-train Net_nu 500 epochs
+    model.training_config.pretrain_nu_epochs = 1000  # Pre-train Net_nu 1000 epochs
     model.training_config.pretrain_nu_lr = 5e-3
-    model.training_config.fit_nu_epochs = 400        # Fit Net_nu 400 epochs ở mỗi bước FPI
+    model.training_config.fit_nu_epochs = 800        # Fit Net_nu 800 epochs ở mỗi bước FPI
     model.training_config.fit_nu_lr = 3e-3
 
     # Cấu hình L-BFGS Refinement tinh chỉnh sâu ở giai đoạn cuối
-    model.training_config.number_of_lbfgs_iterations = 2500
+    model.training_config.number_of_lbfgs_iterations = 3000
     model.training_config.lbfgs_learning_rate = 0.5
 
     # =========================================================================
