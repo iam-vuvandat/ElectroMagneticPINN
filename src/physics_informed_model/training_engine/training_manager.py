@@ -216,7 +216,7 @@ class TrainingManager:
                 # CẮT ĐỒ THỊ ĐẠO HÀM DÙNG DETACH() ĐỂ TRÁNH RÒ RỈ GRADIENT VÀO ADAM
                 if hasattr(self.model, 'nu_networks') and net_key in self.model.nu_networks:
                     nu_star_pred = self.model.forward_nu_network(net_key, pts)
-                    nu_star_net = nu_star_pred.detach() if nu_star_pred is not None else None
+                    nu_star_net = nu_star_pred if nu_star_pred is not None else None
                 else:
                     nu_star_net = None
 

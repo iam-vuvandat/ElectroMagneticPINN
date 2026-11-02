@@ -75,8 +75,8 @@ def run_fpi_visualization_simulation_test():
     # Cấu hình huấn luyện Mạng phụ Net_nu
     model.training_config.pretrain_nu_epochs = 150
     model.training_config.pretrain_nu_lr = 5e-3
-    model.training_config.fit_nu_epochs = 100
-    model.training_config.fit_nu_lr = 2e-3
+    model.training_config.fit_nu_epochs = 200
+    model.training_config.fit_nu_lr = 4e-3
 
     # =========================================================================
     # 4. CẤU HÌNH TRỰC QUAN HÓA (BẬT XUẤT FRAME / GIF / MP4)
@@ -135,7 +135,9 @@ def run_fpi_visualization_simulation_test():
     iron_yoke.nu_network_config.hidden_layers = 2
     iron_yoke.nu_network_config.hidden_neurons = 32
     iron_yoke.nu_network_config.activation_function = nn.SiLU()
-    iron_yoke.nu_network_config.fourier_features = False
+    iron_yoke.nu_network_config.fourier_features = True
+    iron_yoke.nu_network_config.fourier_sigma = 1.0
+    iron_yoke.nu_network_config.fourier_mapping_size = 64
 
     iron_yoke.build_domain()
 
