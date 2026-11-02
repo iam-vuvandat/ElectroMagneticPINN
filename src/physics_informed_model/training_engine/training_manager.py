@@ -2,6 +2,32 @@ import time
 import torch
 import torch.optim as optim
 
+def resolve_domain_net_key(domain, arch_instance):
+    """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
+    d_name = getattr(domain, 'domain_name', '')
+    if d_name == 'background':
+        return 'background'
+
+    d_id = getattr(domain, 'domain_id', None)
+    candidates = []
+    if d_id is not None:
+        candidates.append(f'domain_{d_id}')
+    if d_name:
+        candidates.append(d_name)
+
+    if arch_instance is not None:
+        if hasattr(arch_instance, 'nu_networks'):
+            for k in candidates:
+                if k in arch_instance.nu_networks:
+                    return k
+        if hasattr(arch_instance, 'networks'):
+            for k in candidates:
+                if k in arch_instance.networks:
+                    return k
+
+    return candidates[0] if candidates else 'background'
+
+
 class TrainingManager:
     def __init__(self, electro_magnetic_pinn):
         self.electro_magnetic_pinn = electro_magnetic_pinn
@@ -78,12 +104,13 @@ class TrainingManager:
             loss_pre = torch.tensor(0.0, device=device)
             
             for key, data in domains_dict.items():
-                if key in self.model.nu_networks:
-                    domain = data["domain_object"]
+                domain = data["domain_object"]
+                net_key = resolve_domain_net_key(domain, self.model)
+                if net_key in self.model.nu_networks:
                     pts = data["interior_points"].to(device)
                     
                     if pts.shape[0] > 0:
-                        nu_pred_star = self.model.forward_nu_network(key, pts)
+                        nu_pred_star = self.model.forward_nu_network(net_key, pts)
                         nu_target_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
                         nu_target_star = nu_target_phys / sim_domain.nu0
                         
@@ -111,8 +138,9 @@ class TrainingManager:
         max_nu_diff = 0.0
 
         for key, data in domains_dict.items():
-            if key in self.model.nu_networks:
-                domain = data["domain_object"]
+            domain = data["domain_object"]
+            net_key = resolve_domain_net_key(domain, self.model)
+            if net_key in self.model.nu_networks:
                 if not getattr(domain.physics_config, 'is_nonlinear', False):
                     continue
 
@@ -120,7 +148,7 @@ class TrainingManager:
                 if pts.shape[0] > 0:
                     pts_grad = pts.detach().clone().requires_grad_(True)
                     with torch.enable_grad():
-                        Az_star = self.model.forward_network(key, pts_grad)
+                        Az_star = self.model.forward_network(net_key, pts_grad)
                         grad_Az = torch.autograd.grad(
                             outputs=Az_star, inputs=pts_grad,
                             grad_outputs=torch.ones_like(Az_star), create_graph=False
@@ -130,30 +158,29 @@ class TrainingManager:
                         B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
                         
                     with torch.no_grad():
-                        # Tính nhãn chuẩn độ từ kháng từ bản đồ trường B hiện tại
                         nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys.detach(), is_nonlinear=True)
                         nu_BH_star = (nu_BH_phys / sim_domain.nu0).detach()
                         
-                        nu_old_star = self.model.forward_nu_network(key, pts).detach()
+                        nu_old_star = self.model.forward_nu_network(net_key, pts).detach()
                         nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
                         
                         diff_val = torch.max(torch.abs(nu_target_star - nu_old_star)).item()
                         max_nu_diff = max(max_nu_diff, diff_val)
-                        targets_dict[key] = (pts, nu_target_star)
+                        targets_dict[net_key] = (pts, nu_target_star)
 
         if not targets_dict:
             return 0.0
 
         nu_params = []
-        for key in targets_dict.keys():
-            nu_params.extend(self.model.nu_networks[key].parameters())
+        for k in targets_dict.keys():
+            nu_params.extend(self.model.nu_networks[k].parameters())
         opt_nu = optim.Adam(nu_params, lr=lr)
 
         for _ in range(epochs):
             opt_nu.zero_grad()
             total_fit_loss = torch.tensor(0.0, device=device)
-            for key, (pts, nu_target_star) in targets_dict.items():
-                nu_pred_star = self.model.forward_nu_network(key, pts)
+            for k, (pts, nu_target_star) in targets_dict.items():
+                nu_pred_star = self.model.forward_nu_network(k, pts)
                 total_fit_loss = total_fit_loss + torch.mean((nu_pred_star - nu_target_star) ** 2)
             total_fit_loss.backward()
             opt_nu.step()
@@ -177,16 +204,19 @@ class TrainingManager:
 
         for key, data in domains_dict.items():
             domain = data["domain_object"]
+            net_key = resolve_domain_net_key(domain, self.model)
             pts = data["interior_points"].to(device)
             
             if pts.shape[0] > 0:
                 if not pts.requires_grad:
                     pts = pts.detach().clone().requires_grad_(True)
                     
-                A_z_star = self.model.forward_network(key, pts)
+                A_z_star = self.model.forward_network(net_key, pts)
                 
-                if hasattr(self.model, 'nu_networks') and key in self.model.nu_networks:
-                    nu_star_net = self.model.forward_nu_network(key, pts)
+                # CẮT ĐỒ THỊ ĐẠO HÀM DÙNG DETACH() ĐỂ TRÁNH RÒ RỈ GRADIENT VÀO ADAM
+                if hasattr(self.model, 'nu_networks') and net_key in self.model.nu_networks:
+                    nu_star_pred = self.model.forward_nu_network(net_key, pts)
+                    nu_star_net = nu_star_pred.detach() if nu_star_pred is not None else None
                 else:
                     nu_star_net = None
 
@@ -208,12 +238,12 @@ class TrainingManager:
                 pde_loss_sum += scaled_pde_loss.item()
 
             outer_pts = data.get("outer_surface_points", data.get("surface_points", torch.empty((0, 2)))).to(device)
-            if outer_pts.shape[0] > 0 and key != 'background':
+            if outer_pts.shape[0] > 0 and net_key != 'background':
                 if not outer_pts.requires_grad:
                     outer_pts = outer_pts.detach().clone().requires_grad_(True)
                     
                 w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
-                    key_a=key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
+                    key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
                 )
                 scaled_if_loss = w_if_loss
                 total_loss = total_loss + scaled_if_loss

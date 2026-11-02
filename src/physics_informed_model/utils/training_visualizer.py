@@ -6,6 +6,32 @@ from matplotlib.colors import LogNorm, Normalize
 import imageio
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
+def resolve_domain_net_key(domain, arch_instance):
+    """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
+    d_name = getattr(domain, 'domain_name', '')
+    if d_name == 'background':
+        return 'background'
+
+    d_id = getattr(domain, 'domain_id', None)
+    candidates = []
+    if d_id is not None:
+        candidates.append(f'domain_{d_id}')
+    if d_name:
+        candidates.append(d_name)
+
+    if arch_instance is not None:
+        if hasattr(arch_instance, 'nu_networks'):
+            for k in candidates:
+                if k in arch_instance.nu_networks:
+                    return k
+        if hasattr(arch_instance, 'networks'):
+            for k in candidates:
+                if k in arch_instance.networks:
+                    return k
+
+    return candidates[0] if candidates else 'background'
+
+
 class TrainingVisualizer:
     def __init__(self, electro_magnetic_pinn=None, parent_pinn=None):
         self.electro_magnetic_pinn = electro_magnetic_pinn if electro_magnetic_pinn is not None else parent_pinn
@@ -58,7 +84,7 @@ class TrainingVisualizer:
 
         for domain in sim_domain.domains_list:
             d_id = domain.domain_id
-            net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
+            net_key = resolve_domain_net_key(domain, model)
             mask_bool = (mat_id == float(d_id))
             if mask_bool.any():
                 Az_sub_star = model.forward_network(net_key, eval_points)
@@ -106,7 +132,7 @@ class TrainingVisualizer:
         fig, axs = plt.subplots(2, 4, figsize=(23, 10))
         n_levels = getattr(vis_cfg, 'contour_levels', 60)
 
-        # --- SUBPLOT 1: axs[0, 0] - Categorized Collocation Points ---
+        # --- SUBPLOT 1: axs[0, 0] ---
         ax_pts = axs[0, 0]
         ax_pts.set_title("Categorized Collocation Points")
         domain_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b']
@@ -139,7 +165,7 @@ class TrainingVisualizer:
         ax_pts.set_ylim(self.y_bounds)
         ax_pts.set_aspect('equal')
         
-        # --- SUBPLOT 2: axs[0, 1] - PDE Residual Error ---
+        # --- SUBPLOT 2: axs[0, 1] ---
         res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else float(np.min(residual_numpy))
         res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else float(np.max(residual_numpy))
 
@@ -159,7 +185,7 @@ class TrainingVisualizer:
         axs[0, 1].set_title("PDE Residual Error")
         axs[0, 1].set_aspect('equal')
 
-        # --- SUBPLOT 3: axs[0, 2] - Permeability Distribution (\mu_r) ---
+        # --- SUBPLOT 3: axs[0, 2] ---
         mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
         mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
         mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -183,7 +209,7 @@ class TrainingVisualizer:
         axs[0, 2].set_title(r"Permeability Distribution ($\mu_r$)")
         axs[0, 2].set_aspect('equal')
         
-        # --- SUBPLOT 4: axs[0, 3] - Loss Optimization History ---
+        # --- SUBPLOT 4: axs[0, 3] ---
         axs[0, 3].plot(self.epoch_history, self.loss_history, 'b-')
         axs[0, 3].set_yscale('log')
         axs[0, 3].set_title("Loss Optimization")
@@ -191,7 +217,7 @@ class TrainingVisualizer:
         axs[0, 3].set_ylabel("Loss")
         axs[0, 3].grid(True, which="both", ls="-", alpha=0.2)
         
-        # --- SUBPLOT 5: axs[1, 0] - Magnetic Vector Potential A_z ---
+        # --- SUBPLOT 5: axs[1, 0] ---
         az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
         az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
         levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
@@ -201,7 +227,7 @@ class TrainingVisualizer:
         axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
         axs[1, 0].set_aspect('equal')
 
-        # --- SUBPLOT 6: axs[1, 1] - Flux Density Magnitude |B| ---
+        # --- SUBPLOT 6: axs[1, 1] ---
         b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
         b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
         b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)
@@ -215,7 +241,7 @@ class TrainingVisualizer:
         axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ fixed [{b_min}-{b_max}T])")
         axs[1, 1].set_aspect('equal')
 
-        # --- SUBPLOT 7: axs[1, 2] - Flux Density Vectors (B) ---
+        # --- SUBPLOT 7: axs[1, 2] ---
         contour_b_bg = axs[1, 2].contourf(
             self.X_grid, self.Y_grid, b_mag_clamped, levels=levels_b,
             cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max
@@ -231,7 +257,7 @@ class TrainingVisualizer:
         axs[1, 2].set_title("Flux Density Vectors (B)")
         axs[1, 2].set_aspect('equal')
 
-        # --- SUBPLOT 8: axs[1, 3] - Material Classification ---
+        # --- SUBPLOT 8: axs[1, 3] ---
         mat_id_numpy = mat_id.cpu().numpy().reshape(self.resolution, self.resolution)
         im_mat = axs[1, 3].imshow(mat_id_numpy, extent=[self.x_bounds[0], self.x_bounds[1], self.y_bounds[0], self.y_bounds[1]], origin='lower', interpolation='nearest', cmap='tab10')
         fig.colorbar(im_mat, ax=axs[1, 3], label="Domain ID")

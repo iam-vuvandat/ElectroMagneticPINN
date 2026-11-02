@@ -16,6 +16,32 @@ from physics_domain.collocation_sampler import CollocationSampler
 from utils.training_visualizer import TrainingVisualizer
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
+def resolve_domain_net_key(domain, arch_instance):
+    """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
+    d_name = getattr(domain, 'domain_name', '')
+    if d_name == 'background':
+        return 'background'
+
+    d_id = getattr(domain, 'domain_id', None)
+    candidates = []
+    if d_id is not None:
+        candidates.append(f'domain_{d_id}')
+    if d_name:
+        candidates.append(d_name)
+
+    if arch_instance is not None:
+        if hasattr(arch_instance, 'nu_networks'):
+            for k in candidates:
+                if k in arch_instance.nu_networks:
+                    return k
+        if hasattr(arch_instance, 'networks'):
+            for k in candidates:
+                if k in arch_instance.networks:
+                    return k
+
+    return candidates[0] if candidates else 'background'
+
+
 class ElectroMagneticPINN:
     def __init__(self):
         self.sampler_config = SimpleNamespace(
@@ -172,7 +198,7 @@ class ElectroMagneticPINN:
 
         for domain in sim_domain.domains_list:
             d_id = domain.domain_id
-            net_key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{d_id}'
+            net_key = resolve_domain_net_key(domain, pinn_arch)
             mask_bool = (mat_id == float(d_id))
             
             if mask_bool.any():
@@ -231,18 +257,19 @@ class ElectroMagneticPINN:
         for domain in sim_domain.domains_list:
             if getattr(domain, 'domain_name', '') != 'background':
                 d_id = domain.domain_id
-                net_key = f'domain_{d_id}'
+                net_key = resolve_domain_net_key(domain, pinn_arch)
                 mask = (mat_ids == float(d_id))
                 if mask.any():
                     if getattr(domain.physics_config, 'is_nonlinear', False):
-                        # ĐỌC TRỰC TIẾP TỪ MẠNG NET_NU
                         if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
                             with torch.no_grad():
                                 nu_star_pred = pinn_arch.forward_nu_network(net_key, eval_pts[mask])
-                                mu_r_tensor[mask] = (1.0 / torch.clamp(nu_star_pred.squeeze(), min=1e-6))
+                                mu_r_vals = (1.0 / torch.clamp(nu_star_pred, min=1e-6)).view(-1)
+                                mu_r_tensor[mask] = mu_r_vals
                         else:
                             nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
-                            mu_r_tensor[mask] = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys.squeeze(), min=1e-6))
+                            mu_r_vals = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys, min=1e-6)).view(-1)
+                            mu_r_tensor[mask] = mu_r_vals
                     else:
                         mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
                         mu_r_tensor[mask] = mu_val

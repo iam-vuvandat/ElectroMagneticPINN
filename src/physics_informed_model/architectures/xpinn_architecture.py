@@ -72,14 +72,15 @@ class XPINNArchitecture(nn.Module):
         self._initialize_weights()
 
     def _initialize_nu_network_constant(self, domain, net_key):
-        """Khởi tạo Net_nu vừa bám giá trị ban đầu vừa giữ gradient cho không gian (x, y)"""
+        """Khởi tạo Net_nu vừa bám giá trị ban đầu vừa giữ chính xác số học cho độ từ thẩm lớn."""
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         dummy_pts = torch.zeros((1, 2))
         nu_target_phys = domain.evaluate_reluctivity(dummy_pts, is_nonlinear=False).item()
         nu_target_star = max(nu_target_phys / sim_domain.nu0, 1e-6)
         
         if nu_target_star < 20.0:
-            target_raw = np.log(np.exp(nu_target_star) - 1.0 + 1e-12)
+            # Sử dụng np.expm1 để tránh lỗi mất chính xác khi nu_target_star rất nhỏ
+            target_raw = np.log(max(np.expm1(nu_target_star), 1e-12))
         else:
             target_raw = nu_target_star
 
