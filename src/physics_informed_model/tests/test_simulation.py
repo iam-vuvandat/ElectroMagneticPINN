@@ -19,13 +19,13 @@ if torch.cuda.is_available():
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 
-def run_fpi_visualization_simulation_test():
-    output_dir = "figure_fpi_visualization_simulation_test"
+def run_high_precision_fpi_simulation_test():
+    output_dir = "figure_high_precision_fpi_simulation_test"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG XPINN (BẬT TÍNH NĂNG XUẤT FRAME / GIF / MP4)...")
+    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (HIGH PRECISION)...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -44,63 +44,68 @@ def run_fpi_visualization_simulation_test():
     # 2. CẤU HÌNH LẤY MẪU ĐỘNG (COLLOCATION SAMPLER CONFIG)
     # =========================================================================
     model.sampler_config.dynamic_resampling = True
-    model.sampler_config.resample_interval = 50
-    model.sampler_config.resample_points_before_lbfgs_stage = False
+    model.sampler_config.resample_interval = 100
+    model.sampler_config.resample_points_before_lbfgs_stage = True
 
     # =========================================================================
     # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN VÀ OPTIMIZER
     # =========================================================================
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
-    model.training_config.enable_lbfgs_refinement_stage = False  # Tập trung quan sát FPI
+    model.training_config.enable_lbfgs_refinement_stage = True  # Bật L-BFGS để tinh chỉnh chính xác tối đa
 
-    # Cấu hình 200 epochs Warm-up + 10 vòng FPI (mỗi vòng 100 epochs) = 1,200 Epochs
-    epochs_warmup_target = 200
-    fpi_iterations = 10
+    # Cấu hình Warm-up + 20 vòng FPI
+    epochs_warmup_target = 500
+    fpi_iterations = 20                       # Đúng 20 bước FPI
+    epochs_per_fpi = 150                       # 150 epochs / vòng FPI (Tổng = 3,500 Adam Epochs)
     
     model.training_config.fpi_outer_iterations = fpi_iterations
-    model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * 100)
+    model.training_config.fpi_alpha_damping = 0.35   # Hệ số giảm chấn FPI = 0.35
+    model.training_config.fpi_tolerance = 1e-6
+
+    model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
     model.training_config.adam_learning_rate = 1e-3
     model.training_config.target_loss_threshold = 1e-6
-    model.training_config.adam_eta_min = 1e-5
+    model.training_config.adam_eta_min = 1e-6
     model.training_config.grad_clip_max_norm = 1.0
     model.training_config.max_non_finite_streak = 5
-    model.training_config.adam_log_interval = 50
+    model.training_config.adam_log_interval = 100
 
-    model.training_config.fpi_alpha_damping = 1.0  
-    model.training_config.fpi_tolerance = 1e-6
-
-    # Cấu hình huấn luyện Mạng phụ Net_nu
-    model.training_config.pretrain_nu_epochs = 150
+    # Cấu hình huấn luyện sâu cho Mạng phụ Net_nu
+    model.training_config.pretrain_nu_epochs = 400   # Pre-train kỹ lưỡng Net_nu ban đầu
     model.training_config.pretrain_nu_lr = 5e-3
-    model.training_config.fit_nu_epochs = 200
-    model.training_config.fit_nu_lr = 4e-3
+    model.training_config.fit_nu_epochs = 250        # Tăng số epoch fit Net_nu mỗi vòng FPI
+    model.training_config.fit_nu_lr = 3e-3
+
+    # Cấu hình L-BFGS Refinement
+    model.training_config.number_of_lbfgs_iterations = 1500
+    model.training_config.lbfgs_learning_rate = 0.5
 
     # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA (BẬT XUẤT FRAME / GIF / MP4)
+    # 4. CẤU HÌNH TRỰC QUAN HÓA (LƯU FRAME & ANIMATION)
     # =========================================================================
-    model.visualization_config.active = True                  # BẬT LƯU FRAME TỰ ĐỘNG
-    model.visualization_config.update_interval = 50           # Cứ 50 epochs lưu 1 frame ảnh
+    model.visualization_config.active = True
+    model.visualization_config.update_interval = 100          # Cứ 100 epochs xuất 1 frame
     model.visualization_config.output_directory = output_dir
-    model.visualization_config.resolution = 120               # Độ phân giải ảnh frame (80-120 vừa đẹp và lưu nhanh)
+    model.visualization_config.resolution = 150              # Tăng độ phân giải hiển thị
     model.visualization_config.generate_gif_animation = True
     model.visualization_config.gif_filename = "training_process.gif"
     model.visualization_config.generate_mp4_video = True
     model.visualization_config.mp4_filename = "training_process.mp4"
-    model.visualization_config.animation_fps = 2.0            # 2 khung hình / giây
-    model.visualization_config.gif_fps = 2.0
-    model.visualization_config.contour_levels = 60
+    model.visualization_config.animation_fps = 3.0
+    model.visualization_config.gif_fps = 3.0
+    model.visualization_config.contour_levels = 80
 
-    # Cấu hình dải màu hiển thị mu_r
+    # Cấu hình dải màu mur tự động co giãn theo thực tế lõi sắt
     model.visualization_config.mur_scale = "linear"
-    model.visualization_config.mur_vmin = 0.0
-    model.visualization_config.mur_vmax = 3000.0
+    model.visualization_config.mur_vmin = None
+    model.visualization_config.mur_vmax = None
     model.visualization_config.mur_cmap = "turbo"
 
     # =========================================================================
-    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU
+    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (TĂNG MẠNH KÍCH THƯỚC MẠNG & SỐ ĐIỂM LẤY MẪU)
     # =========================================================================
 
     # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
@@ -114,28 +119,30 @@ def run_fpi_visualization_simulation_test():
     iron_yoke.physics_config.current = 0.0
     iron_yoke.physics_config.is_nonlinear = True
 
-    iron_yoke.training_config.pde_weight = 3.0
+    iron_yoke.training_config.pde_weight = 5.0
     iron_yoke.training_config.pde_nonlinear_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.0
-    iron_yoke.training_config.interface_potential_weight = 500.0
-    iron_yoke.training_config.interface_bn_weight = 800.0
-    iron_yoke.training_config.interface_ht_weight = 1000.0
+    iron_yoke.training_config.interface_potential_weight = 800.0
+    iron_yoke.training_config.interface_bn_weight = 1000.0
+    iron_yoke.training_config.interface_ht_weight = 1200.0
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
-    iron_yoke.training_config.number_of_interior_points = 3000
-    iron_yoke.training_config.number_of_surface_points = 1500
+    iron_yoke.training_config.number_of_interior_points = 5000   # Tăng số điểm lấy mẫu nội miền
+    iron_yoke.training_config.number_of_surface_points = 2500    # Tăng số điểm lấy mẫu ranh giới
 
-    iron_yoke.network_config.hidden_layers = 4
-    iron_yoke.network_config.hidden_neurons = 64
+    # Tăng kích thước Mạng chính Net_Az cho iron_yoke
+    iron_yoke.network_config.hidden_layers = 5                  # Tăng lên 5 ẩn
+    iron_yoke.network_config.hidden_neurons = 128               # Tăng lên 128 neurons
     iron_yoke.network_config.activation_function = nn.SiLU()
     iron_yoke.network_config.fourier_features = True
     iron_yoke.network_config.fourier_sigma = 1.2
-    iron_yoke.network_config.fourier_mapping_size = 128
+    iron_yoke.network_config.fourier_mapping_size = 256         # Fourier features 256
 
-    iron_yoke.nu_network_config.hidden_layers = 2
-    iron_yoke.nu_network_config.hidden_neurons = 32
+    # Tăng kích thước & Bật Fourier Features cho Mạng phụ Net_nu
+    iron_yoke.nu_network_config.hidden_layers = 3               # Tăng lên 3 ẩn
+    iron_yoke.nu_network_config.hidden_neurons = 64              # Tăng lên 64 neurons
     iron_yoke.nu_network_config.activation_function = nn.SiLU()
-    iron_yoke.nu_network_config.fourier_features = True
+    iron_yoke.nu_network_config.fourier_features = True          # Bật Fourier features cho Net_nu
     iron_yoke.nu_network_config.fourier_sigma = 1.0
     iron_yoke.nu_network_config.fourier_mapping_size = 64
 
@@ -152,15 +159,15 @@ def run_fpi_visualization_simulation_test():
     magnet_left.physics_config.current = 0.0
     magnet_left.physics_config.is_nonlinear = False
 
-    magnet_left.training_config.number_of_interior_points = 1200
-    magnet_left.training_config.number_of_surface_points = 800
+    magnet_left.training_config.number_of_interior_points = 2000
+    magnet_left.training_config.number_of_surface_points = 1200
 
-    magnet_left.network_config.hidden_layers = 3
-    magnet_left.network_config.hidden_neurons = 48
+    magnet_left.network_config.hidden_layers = 4
+    magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.SiLU()
     magnet_left.network_config.fourier_features = True
     magnet_left.network_config.fourier_sigma = 1.0
-    magnet_left.network_config.fourier_mapping_size = 64
+    magnet_left.network_config.fourier_mapping_size = 128
 
     magnet_left.build_domain()
 
@@ -175,15 +182,15 @@ def run_fpi_visualization_simulation_test():
     magnet_right.physics_config.current = 0.0
     magnet_right.physics_config.is_nonlinear = False
 
-    magnet_right.training_config.number_of_interior_points = 1200
-    magnet_right.training_config.number_of_surface_points = 800
+    magnet_right.training_config.number_of_interior_points = 2000
+    magnet_right.training_config.number_of_surface_points = 1200
 
-    magnet_right.network_config.hidden_layers = 3
-    magnet_right.network_config.hidden_neurons = 48
+    magnet_right.network_config.hidden_layers = 4
+    magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.SiLU()
     magnet_right.network_config.fourier_features = True
     magnet_right.network_config.fourier_sigma = 1.0
-    magnet_right.network_config.fourier_mapping_size = 64
+    magnet_right.network_config.fourier_mapping_size = 128
 
     magnet_right.build_domain()
 
@@ -191,21 +198,21 @@ def run_fpi_visualization_simulation_test():
     bg_training_cfg = SimpleNamespace(
         pde_weight=1.0,
         interface_weight=1.0,
-        interface_potential_weight=500.0,
-        interface_bn_weight=800.0,
-        interface_ht_weight=1000.0,
+        interface_potential_weight=800.0,
+        interface_bn_weight=1000.0,
+        interface_ht_weight=1200.0,
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=4000,
+        number_of_interior_points=6000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
-        hidden_layers=3,
-        hidden_neurons=48,
+        hidden_layers=4,
+        hidden_neurons=64,
         activation_function=nn.SiLU(),
         fourier_features=True,
         fourier_sigma=1.0,
-        fourier_mapping_size=64
+        fourier_mapping_size=128
     )
     sim_domain.build_background_domain(
         domain_name="background",
@@ -218,18 +225,18 @@ def run_fpi_visualization_simulation_test():
     # =========================================================================
     model.update_electromagnetic_pinn()
 
-    print("[*] Bắt đầu huấn luyện và lưu frame định kỳ...")
+    print("[*] Bắt đầu tiến trình huấn luyện độ chính xác cao...")
     model.execute_training_process()
 
     print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
     model.plot_fields(
-        resolution=160,
+        resolution=200,
         save_path=f"{output_dir}/fpi_final_fields.png",
         show=False,
         figsize=(12, 10)
     )
-    print(f"[✔] HOÀN THÀNH! Tất cả frame ảnh (`frame_00001.png`,...), video (`training_process.mp4`) và GIF (`training_process.gif`) đã lưu tại: {output_dir}/")
+    print(f"[✔] HOÀN THÀNH! Kết quả và animation đã lưu tại: {output_dir}/")
 
 
 if __name__ == "__main__":
-    run_fpi_visualization_simulation_test()
+    run_high_precision_fpi_simulation_test()
