@@ -22,6 +22,7 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     training_manager_instance.completed_adam_epochs = 0
     
     for epoch in range(epochs):
+        training_manager_instance.global_step += 1
         if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
             domains_data = resample_fn()
 
@@ -54,7 +55,7 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
             )
             
         if training_manager_instance.visualizer and (epoch + 1) % training_manager_instance.visualizer_update_interval == 0:
-            training_manager_instance.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
+            training_manager_instance.visualizer.save_frame(training_manager_instance.global_step, current_loss_value, domains_data)
             
     print(f"[*] KẾT THÚC ADAM. Lý do: {stop_reason}")
     return domains_data

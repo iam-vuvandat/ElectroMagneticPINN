@@ -1,3 +1,4 @@
+from IPython.display import Image, display
 import os
 import imageio
 
@@ -11,3 +12,11 @@ def generate_gif(visualizer_instance):
     full_gif_path = os.path.join(visualizer_instance.output_directory, output_filename)
     images = [imageio.imread(f) for f in visualizer_instance.frame_paths if os.path.exists(f)]
     imageio.mimsave(full_gif_path, images, fps=fps, loop=0)
+    # Tự động hiển thị GIF trực tiếp trên màn hình Colab / Jupyter Output
+    try:
+        if os.path.exists(full_gif_path):
+            print("[*] Đang hiển thị GIF tiến trình huấn luyện lên Colab...")
+            display(Image(filename=full_gif_path))
+    except Exception as e:
+        print(f"[!] Không thể hiển thị GIF trực tiếp: {e}")
+

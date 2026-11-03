@@ -23,11 +23,14 @@ if os.path.exists(output_dir):
     shutil.rmtree(output_dir)
 os.makedirs(output_dir)
 
-print("[*] KHỞI TẠO MÔ PHỎNG ĐỘ CHÍNH XÁC CAO (HIGH PRECISION PHYSICAL SIMULATION)...")
+print("[*] KHỞI TẠO MÔ PHỎNG ĐỘ CHÍNH XÁC CAO (DÙNG MISH, ADAM HỘI TỤ SÂU)...")
 
 model = ElectroMagneticPINN()
 sim_domain = model.simulation_domain_engine_instance
 
+# =========================================================================
+# 1. KHUNG TỌA ĐỘ VÀ QUY MÔ VẬT LÝ TOÀN CỤC
+# =========================================================================
 sim_domain.physics_config.scale_L0 = 0.12
 sim_domain.physics_config.scale_H0 = 960000.0
 sim_domain.physics_config.scale_nu0 = 795774.715459
@@ -35,36 +38,54 @@ sim_domain.physics_config.allow_overlapping_domains = False
 sim_domain.x_boundaries_tuple = (-0.12, 0.12)
 sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
+# =========================================================================
+# 2. CẤU HÌNH LẤY MẪU ĐỘNG (COLLOCATION SAMPLER CONFIG)
+# =========================================================================
 model.sampler_config.dynamic_resampling = True
 model.sampler_config.resample_interval = 100
 model.sampler_config.resample_points_before_lbfgs_stage = True
 
+# =========================================================================
+# 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN CHO ADAM HỘI TỤ SÂU
+# =========================================================================
 model.training_config.enable_linear_warmup_stage = True
 model.training_config.enable_nonlinear_adaptation_stage = True
 model.training_config.enable_lbfgs_refinement_stage = True
 
-epochs_warmup_target = 1200
+# --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (1500 EPOCHS / BƯỚC) ---
+epochs_warmup_target = 1500
 fpi_iterations = 20
-epochs_per_fpi = 600
+epochs_per_fpi = 1500                     # Mỗi bước FPI chạy 1500 Adam epochs
 
 model.training_config.fpi_outer_iterations = fpi_iterations
-model.training_config.fpi_alpha_damping = 0.7
-model.training_config.fpi_tolerance = 1e-8
-model.training_config.target_loss_threshold = 1e-8
+model.training_config.fpi_alpha_damping = 1.0     # Damping 1.0 cho FPI
+model.training_config.fpi_tolerance = 1e-6
 
+# Cấu hình tổng số Adam epochs trong training_config
 model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
 model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
+# Tối ưu Adam để hội tụ cực sâu
 model.training_config.adam_learning_rate = 1e-3
-model.training_config.adam_log_interval = 50
+model.training_config.target_loss_threshold = 1e-7
+model.training_config.adam_eta_min = 1e-6
+model.training_config.grad_clip_max_norm = 1.0
+model.training_config.max_non_finite_streak = 5
+model.training_config.adam_log_interval = 100
 
-model.training_config.pretrain_nu_epochs = 600
+# Cấu hình huấn luyện cho Mạng phụ Net_nu
+model.training_config.pretrain_nu_epochs = 1000  # Pre-train Net_nu 1000 epochs
 model.training_config.pretrain_nu_lr = 5e-3
-model.training_config.fit_nu_epochs = 400
-model.training_config.fit_nu_lr = 2e-3
+model.training_config.fit_nu_epochs = 800        # Fit Net_nu 800 epochs ở mỗi bước FPI
+model.training_config.fit_nu_lr = 3e-3
 
-model.training_config.number_of_lbfgs_iterations = 1500
+# Cấu hình L-BFGS Refinement tinh chỉnh sâu ở giai đoạn cuối
+model.training_config.number_of_lbfgs_iterations = 3000
+model.training_config.lbfgs_learning_rate = 0.5
 
+# =========================================================================
+# 4. CẤU HÌNH TRỰC QUAN HÓA (THANG LINEAR CHO MU_R TỪ 0.0 ĐẾN 3000.0)
+# =========================================================================
 model.visualization_config.active = True
 model.visualization_config.update_interval = 100
 model.visualization_config.output_directory = output_dir
@@ -79,11 +100,17 @@ model.visualization_config.mp4_codec = "libx264"
 model.visualization_config.mp4_quality = 8
 model.visualization_config.contour_levels = 80
 
+# Cài đặt thang linear giới hạn 0.0 đến 3000.0 cho mu_r
 model.visualization_config.mur_scale = "linear"
 model.visualization_config.mur_vmin = 0.0
 model.visualization_config.mur_vmax = 3000.0
 model.visualization_config.mur_cmap = "turbo"
 
+# =========================================================================
+# 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (CHUYỂN SANG DÙNG nn.Mish())
+# =========================================================================
+
+# --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
 iron_yoke = sim_domain.create_material_domain(
     domain_name="iron_yoke",
     material_name="steel_1008",
@@ -101,20 +128,21 @@ iron_yoke.training_config.number_of_surface_points = 2500
 
 iron_yoke.network_config.hidden_layers = 4
 iron_yoke.network_config.hidden_neurons = 96
-iron_yoke.network_config.activation_function = nn.SiLU()
+iron_yoke.network_config.activation_function = nn.Mish()
 iron_yoke.network_config.fourier_features = True
 iron_yoke.network_config.fourier_sigma = 1.5
 iron_yoke.network_config.fourier_mapping_size = 96
 
 iron_yoke.nu_network_config.hidden_layers = 3
 iron_yoke.nu_network_config.hidden_neurons = 64
-iron_yoke.nu_network_config.activation_function = nn.SiLU()
+iron_yoke.nu_network_config.activation_function = nn.Mish()
 iron_yoke.nu_network_config.fourier_features = True
 iron_yoke.nu_network_config.fourier_sigma = 1.2
 iron_yoke.nu_network_config.fourier_mapping_size = 64
 
 iron_yoke.build_domain()
 
+# --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
 magnet_left = sim_domain.create_material_domain(
     domain_name="magnet_left",
     material_name="N30UH",
@@ -130,13 +158,14 @@ magnet_left.training_config.number_of_surface_points = 800
 
 magnet_left.network_config.hidden_layers = 4
 magnet_left.network_config.hidden_neurons = 64
-magnet_left.network_config.activation_function = nn.SiLU()
+magnet_left.network_config.activation_function = nn.Mish()
 magnet_left.network_config.fourier_features = True
 magnet_left.network_config.fourier_sigma = 1.2
 magnet_left.network_config.fourier_mapping_size = 64
 
 magnet_left.build_domain()
 
+# --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
 magnet_right = sim_domain.create_material_domain(
     domain_name="magnet_right",
     material_name="N30UH",
@@ -152,13 +181,14 @@ magnet_right.training_config.number_of_surface_points = 800
 
 magnet_right.network_config.hidden_layers = 4
 magnet_right.network_config.hidden_neurons = 64
-magnet_right.network_config.activation_function = nn.SiLU()
+magnet_right.network_config.activation_function = nn.Mish()
 magnet_right.network_config.fourier_features = True
 magnet_right.network_config.fourier_sigma = 1.2
 magnet_right.network_config.fourier_mapping_size = 64
 
 magnet_right.build_domain()
 
+# --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
 bg_training_cfg = SimpleNamespace(
     pde_weight=1.5,
     interface_weight=3.0,
@@ -168,7 +198,7 @@ bg_training_cfg = SimpleNamespace(
 bg_network_cfg = SimpleNamespace(
     hidden_layers=4,
     hidden_neurons=64,
-    activation_function=nn.SiLU(),
+    activation_function=nn.Mish(),
     fourier_features=True,
     fourier_sigma=1.2,
     fourier_mapping_size=64
@@ -179,6 +209,9 @@ sim_domain.build_background_domain(
     network_config=bg_network_cfg
 )
 
+# =========================================================================
+# 6. THỰC THI HUẤN LUYỆN VÀ TẠO ANIMATION
+# =========================================================================
 model.update_electromagnetic_pinn()
 
 print("[*] Bắt đầu tiến trình huấn luyện chính xác cao...")

@@ -210,36 +210,9 @@ class CollocationSampler:
         if x_max <= x_min or y_max <= y_min:
             raise ValueError("Lỗi lấy mẫu: Khung biên của SimulationDomain không hợp lệ.")
 
-        mat_domains = [d for d in simulation_domain_object.domains_list if getattr(d, 'domain_name', '') != 'background']
-        if not mat_domains:
-            return self._sample_air_box(simulation_domain_object, number_of_points, x_min, x_max, y_min, y_max)
+        # Lấy mẫu đồng đều (Sobol) toàn bộ miền không khí nền loại trừ phần thuộc vật liệu
+        return self._sample_air_box(simulation_domain_object, number_of_points, x_min, x_max, y_min, y_max)
 
-        all_outlines = np.vstack([np.array(d.geometry_config.outline) for d in mat_domains])
-        mx_min, mx_max = float(np.min(all_outlines[:, 0])), float(np.max(all_outlines[:, 0]))
-        my_min, my_max = float(np.min(all_outlines[:, 1])), float(np.max(all_outlines[:, 1]))
-        
-        pad_x = 0.15 * (x_max - x_min)
-        pad_y = 0.15 * (y_max - y_min)
-        gx_min = max(x_min, mx_min - pad_x)
-        gx_max = min(x_max, mx_max + pad_x)
-        gy_min = max(y_min, my_min - pad_y)
-        gy_max = min(y_max, my_max + pad_y)
-
-        tight_pad_x = 0.03 * (x_max - x_min)
-        tight_pad_y = 0.03 * (y_max - y_min)
-        tx_min = max(x_min, mx_min - tight_pad_x)
-        tx_max = min(x_max, mx_max + tight_pad_x)
-        ty_min = max(y_min, my_min - tight_pad_y)
-        ty_max = min(y_max, my_max + tight_pad_y)
-
-        n_tight = int(round(number_of_points * 0.25))
-        n_focus = int(round(number_of_points * 0.35))
-        n_uniform = number_of_points - n_focus - n_tight
-
-        pts_uniform = self._sample_air_box(simulation_domain_object, n_uniform, x_min, x_max, y_min, y_max)
-        pts_focus = self._sample_air_box(simulation_domain_object, n_focus, gx_min, gx_max, gy_min, gy_max)
-        pts_tight = self._sample_air_box(simulation_domain_object, n_tight, tx_min, tx_max, ty_min, ty_max)
-        return torch.cat([pts_uniform, pts_focus, pts_tight], dim=0)
 
     def generate_all_domain_points(self, simulation_domain_object=None):
         if simulation_domain_object is None:

@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 
 def get_base_dir():
@@ -12,79 +13,13 @@ def get_base_dir():
         os.getcwd()
     ]
     for cand in candidates:
-        if os.path.isdir(os.path.join(cand, "training_engine")):
+        if os.path.isdir(os.path.join(cand, "training_visualizer")):
             return cand
     return os.path.abspath(os.path.join(script_dir, ".."))
 
-def fix_evaluate_reluctivity(base_dir):
-    """
-    Sửa triệt để thuật toán nội suy trong evaluate_reluctivity.py:
-    Sử dụng torch.bucketize(..., right=True) - 1 và xử lý mượt khoảng B -> 0 
-    để không bị sập chỉ số âm về 0 làm phẳng nu_BH.
-    """
-    file_path = os.path.join(base_dir, "simulation_domain_engine", "material_domain", "evaluate_reluctivity.py")
-    if not os.path.exists(file_path):
-        print(f"[!] Không tìm thấy file: {file_path}")
-        return
-
-    code_content = '''import torch
-from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
-
-def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None, is_nonlinear=None):
-    if is_nonlinear is None:
-        is_nonlinear = getattr(self.physics_config, 'is_nonlinear', False)
-
-    if not is_nonlinear:
-        mu_r = float(getattr(self.physics_config, 'relative_permeability', 1.0))
-        const_nu = VACUUM_RELUCTIVITY / max(mu_r, 1e-6)
-        return torch.full(
-            (points_tensor.shape[0], 1),
-            const_nu,
-            dtype=points_tensor.dtype,
-            device=points_tensor.device
-        )
-
-    bh_data = getattr(self.physics_config, 'bh_curve_data', None)
-    if isinstance(bh_data, (list, tuple)) and len(bh_data) == 2:
-        b_pts = torch.tensor(bh_data[0], dtype=points_tensor.dtype, device=points_tensor.device)
-        h_pts = torch.tensor(bh_data[1], dtype=points_tensor.dtype, device=points_tensor.device)
-
-        if B_magnitude_tensor is None:
-            B_magnitude_tensor = torch.zeros(
-                (points_tensor.shape[0], 1),
-                dtype=points_tensor.dtype,
-                device=points_tensor.device
-            )
-
-        b_flat = B_magnitude_tensor.view(-1)
-        
-        # Nội suy chính xác khoảng B_pts không bị tràn chỉ số âm
-        indices = torch.bucketize(b_flat, b_pts, right=True) - 1
-        indices = torch.clamp(indices, 0, len(b_pts) - 2)
-
-        b0, b1 = b_pts[indices], b_pts[indices + 1]
-        h0, h1 = h_pts[indices], h_pts[indices + 1]
-
-        t = (b_flat - b0) / (b1 - b0 + 1e-12)
-        h_interp = h0 + t * (h1 - h0)
-
-        # Xử lý giới hạn khi B tiến sát 0
-        nu_zero = h_pts[1] / max(b_pts[1].item(), 1e-12)
-        nu_tensor = torch.where(b_flat > 1e-7, h_interp / torch.clamp(b_flat, min=1e-7), nu_zero)
-        return nu_tensor.view(-1, 1)
-
-    raise ValueError(f"Domain '{self.domain_name}' thiếu dữ liệu bh_curve_data hợp lệ.")
-'''
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write(code_content)
-    print(f"[✔] Đã sửa lỗi thuật toán nội suy B-H tại: {file_path}")
-
-def fix_fit_nu_network_step(base_dir):
-    """
-    Sửa fit_nu_network_step.py: Đảm bảo pts_grad được truyền vào evaluate_reluctivity 
-    và bật is_nonlinear=True cùng B_magnitude_tensor.
-    """
-    file_path = os.path.join(base_dir, "training_engine", "fit_nu_network_step.py")
+def add_colab_gif_display(base_dir):
+    """Bổ sung tính năng tự động hiển thị GIF trên Colab vào generate_gif.py."""
+    file_path = os.path.join(base_dir, "training_visualizer", "generate_gif.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
         return
@@ -92,23 +27,41 @@ def fix_fit_nu_network_step(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    old_target_calc = "nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)"
-    new_target_calc = "nu_BH_phys = domain.evaluate_reluctivity(pts_grad, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)"
+    # 1. Thêm import IPython.display ở đầu file nếu chưa có
+    if "from IPython.display import Image, display" not in content:
+        content = "from IPython.display import Image, display\n" + content
 
-    if old_target_calc in content:
-        content = content.replace(old_target_calc, new_target_calc)
+    # 2. Đoạn mã tự động hiển thị GIF trên Notebook/Colab
+    display_code = """
+    # Tự động hiển thị GIF trực tiếp trên màn hình Colab / Jupyter Output
+    try:
+        if os.path.exists(full_gif_path):
+            print("[*] Đang hiển thị GIF tiến trình huấn luyện lên Colab...")
+            display(Image(filename=full_gif_path))
+    except Exception as e:
+        print(f"[!] Không thể hiển thị GIF trực tiếp: {e}")
+"""
+
+    # 3. Chèn đoạn mã hiển thị vào sau câu lệnh ghi GIF (mimsave hoặc print)
+    if "display(Image(filename=full_gif_path))" not in content:
+        if "imageio.mimsave" in content:
+            pattern = r"(imageio\.mimsave\(.*?\))"
+            content = re.sub(pattern, r"\1" + display_code, content, count=1)
+        elif "print(f\"[✔] Đã tạo file GIF" in content or "print(f'[✔] Đã tạo file GIF" in content:
+            pattern = r"(print\(f[\"']\[✔\] Đã tạo file GIF.*?[\"']\))"
+            content = re.sub(pattern, r"\1\n" + display_code, content, count=1)
+        
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        print(f"[✔] Đã sửa luồng truyền tham số cho fit_nu_network_step tại: {file_path}")
+        print(f"[✔] Đã cập nhật tính năng tự động hiển thị GIF vào: {file_path}")
+    else:
+        print(f"[i] Tính năng hiển thị GIF đã được tích hợp sẵn trong {file_path}")
 
 def main():
     base_dir = get_base_dir()
-    print(f"[*] Đang thực thi sửa đổi logic (giữ nguyên material_data.py) tại: {base_dir}\n")
-    
-    fix_evaluate_reluctivity(base_dir)
-    fix_fit_nu_network_step(base_dir)
-    
-    print("\n[✔] HOÀN TẤT SỬA LỖI! Tuyệt đối không can thiệp vào material_data.py.")
+    print(f"[*] Tiến hành cập nhật hiển thị GIF lên Colab tại: {base_dir}\n")
+    add_colab_gif_display(base_dir)
+    print("\n[✔] HOÀN TẤT! Sau khi kết thúc huấn luyện, file GIF sẽ tự động chạy trực tiếp trong cell output của Colab.")
 
 if __name__ == "__main__":
     main()

@@ -43,6 +43,7 @@ class TrainingManager:
         )
         self.last_loss_breakdown = {}
         self.completed_adam_epochs = 0
+        self.global_step = 0
 
     @property
     def model(self):
