@@ -720,14 +720,13 @@ class XPINNArchitecture(nn.Module):
         self._initialize_weights()
 
     def _initialize_nu_network_constant(self, domain, net_key):
-        """Khởi tạo Net_nu vừa bám giá trị ban đầu vừa giữ chính xác số học cho độ từ thẩm lớn."""
+        """Khởi tạo Net_nu vừa bám giá trị ban đầu vừa mở rộng tính biến thiên không gian."""
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         dummy_pts = torch.zeros((1, 2))
         nu_target_phys = domain.evaluate_reluctivity(dummy_pts, is_nonlinear=False).item()
         nu_target_star = max(nu_target_phys / sim_domain.nu0, 1e-6)
         
         if nu_target_star < 20.0:
-            # Sử dụng np.expm1 để tránh lỗi mất chính xác khi nu_target_star rất nhỏ
             target_raw = np.log(max(np.expm1(nu_target_star), 1e-12))
         else:
             target_raw = nu_target_star
@@ -735,7 +734,8 @@ class XPINNArchitecture(nn.Module):
         net = self.nu_networks[net_key]
         for module in net:
             if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight, gain=0.01)
+                # Tăng gain khởi tạo lên 0.10 để không làm phẳng độ dốc không gian
+                nn.init.xavier_normal_(module.weight, gain=0.10)
                 nn.init.zeros_(module.bias)
                 
         last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
@@ -2598,14 +2598,13 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.enable_nonlinear_adaptation_stage = True
     model.training_config.enable_lbfgs_refinement_stage = True
 
-    # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (NÂNG NÊN 1500 EPOCHS / BƯỚC) ---
-    # 1500 epochs Warm-up + 20 vòng FPI x 1500 epochs = 31,500 Adam Epochs tổng cộng
+    # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (1500 EPOCHS / BƯỚC) ---
     epochs_warmup_target = 1500
     fpi_iterations = 20
-    epochs_per_fpi = 1500                     # Mỗi bước FPI chạy đủ 1500 Adam epochs
+    epochs_per_fpi = 1500                     # Mỗi bước FPI chạy 1500 Adam epochs
     
     model.training_config.fpi_outer_iterations = fpi_iterations
-    model.training_config.fpi_alpha_damping = 1.0 
+    model.training_config.fpi_alpha_damping = 1.0     # Damping 1.0 cho FPI
     model.training_config.fpi_tolerance = 1e-6
 
     # Cấu hình tổng số Adam epochs trong training_config
@@ -2620,7 +2619,7 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.max_non_finite_streak = 5
     model.training_config.adam_log_interval = 100
 
-    # Cấu hình huấn luyện sâu cho Mạng phụ Net_nu tương ứng với Adam
+    # Cấu hình huấn luyện cho Mạng phụ Net_nu
     model.training_config.pretrain_nu_epochs = 1000  # Pre-train Net_nu 1000 epochs
     model.training_config.pretrain_nu_lr = 5e-3
     model.training_config.fit_nu_epochs = 800        # Fit Net_nu 800 epochs ở mỗi bước FPI
@@ -2631,7 +2630,7 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.lbfgs_learning_rate = 0.5
 
     # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA (LƯU FRAME & ANIMATION)
+    # 4. CẤU HÌNH TRỰC QUAN HÓA (LOGSCALE HIỂN THỊ PHÂN HÓA MUR)
     # =========================================================================
     model.visualization_config.active = True
     model.visualization_config.update_interval = 100          # Cứ 100 epochs xuất 1 frame
@@ -2645,14 +2644,14 @@ def run_high_precision_fpi_simulation_test():
     model.visualization_config.gif_fps = 3.0
     model.visualization_config.contour_levels = 80
 
-    # Cấu hình dải màu mur tự động co giãn theo thực tế lõi sắt
-    model.visualization_config.mur_scale = "linear"
-    model.visualization_config.mur_vmin = None
-    model.visualization_config.mur_vmax = None
+    # Chuyển mur sang LogScale để quan sát rõ rệt sự phân hóa từ bão hòa đến từ thẩm mạnh
+    model.visualization_config.mur_scale = "log"
+    model.visualization_config.mur_vmin = 1.0
+    model.visualization_config.mur_vmax = 7000.0
     model.visualization_config.mur_cmap = "turbo"
 
     # =========================================================================
-    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (MẠNG LỚN & MẬT ĐỘ ĐIỂM DÀY ĐẶC)
+    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU
     # =========================================================================
 
     # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
@@ -2946,7 +2945,9 @@ class TrainingManager:
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         
-        self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
+        # Đưa cả tham số của Net_Az và Net_nu vào Adam để tối ưu thống nhất khi cần
+        all_params = list(model.networks.parameters()) + (list(model.nu_networks.parameters()) if hasattr(model, 'nu_networks') else [])
+        self.optimizer_adam = optim.Adam(all_params, lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
             model.networks.parameters(),
@@ -3027,8 +3028,8 @@ class TrainingManager:
             return 0.0
 
         t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
-        alpha_damping = alpha_damping if alpha_damping is not None else getattr(t_cfg, 'fpi_alpha_damping', 0.25)
-        epochs = epochs if epochs is not None else getattr(t_cfg, 'fit_nu_epochs', 250)
+        alpha_damping = alpha_damping if alpha_damping is not None else getattr(t_cfg, 'fpi_alpha_damping', 1.0)
+        epochs = epochs if epochs is not None else getattr(t_cfg, 'fit_nu_epochs', 400)
         lr = lr if lr is not None else getattr(t_cfg, 'fit_nu_lr', 3e-3)
 
         device = next(self.model.parameters()).device
@@ -3048,26 +3049,30 @@ class TrainingManager:
                 pts = data["interior_points"].to(device)
                 if pts.shape[0] > 0:
                     pts_grad = pts.detach().clone().requires_grad_(True)
-                    with torch.enable_grad():
-                        Az_star = self.model.forward_network(net_key, pts_grad)
-                        grad_Az = torch.autograd.grad(
-                            outputs=Az_star, inputs=pts_grad,
-                            grad_outputs=torch.ones_like(Az_star), create_graph=False
-                        )[0]
-                        Bx_star = grad_Az[:, 1:2] * sim_domain.L0
-                        By_star = -grad_Az[:, 0:1] * sim_domain.L0
-                        B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
-                        
-                    with torch.no_grad():
-                        nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys.detach(), is_nonlinear=True)
-                        nu_BH_star = (nu_BH_phys / sim_domain.nu0).detach()
-                        
-                        nu_old_star = self.model.forward_nu_network(net_key, pts).detach()
-                        nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
-                        
-                        diff_val = torch.max(torch.abs(nu_target_star - nu_old_star)).item()
-                        max_nu_diff = max(max_nu_diff, diff_val)
-                        targets_dict[net_key] = (pts, nu_target_star)
+                    
+                    # 1. Tính toán từ thông B(x,y) thực tế từ Net_Az
+                    Az_star = self.model.forward_network(net_key, pts_grad)
+                    grad_Az = torch.autograd.grad(
+                        outputs=Az_star, inputs=pts_grad,
+                        grad_outputs=torch.ones_like(Az_star), create_graph=True
+                    )[0]
+                    Bx_star = grad_Az[:, 1:2] * sim_domain.L0
+                    By_star = -grad_Az[:, 0:1] * sim_domain.L0
+                    B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
+                    
+                    # 2. Đánh giá độ từ kháng phi tuyến thực tế từ đường cong B-H
+                    nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
+                    nu_BH_star = nu_BH_phys / sim_domain.nu0
+
+                    # 3. Lấy nu hiện tại từ Net_nu
+                    nu_old_star = self.model.forward_nu_network(net_key, pts)
+                    
+                    # 4. Giữ nguyên Đồ thị Đạo hàm (Graph) cho quá trình giảm chấn FPI
+                    nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
+                    
+                    diff_val = torch.max(torch.abs(nu_target_star.detach() - nu_old_star.detach())).item()
+                    max_nu_diff = max(max_nu_diff, diff_val)
+                    targets_dict[net_key] = (pts, nu_target_star.detach())
 
         if not targets_dict:
             return 0.0
@@ -3114,7 +3119,7 @@ class TrainingManager:
                     
                 A_z_star = self.model.forward_network(net_key, pts)
                 
-                # CẮT ĐỒ THỊ ĐẠO HÀM DÙNG DETACH() ĐỂ TRÁNH RÒ RỈ GRADIENT VÀO ADAM
+                # Giữ luồng đạo hàm không gian cho Net_nu
                 if hasattr(self.model, 'nu_networks') and net_key in self.model.nu_networks:
                     nu_star_pred = self.model.forward_nu_network(net_key, pts)
                     nu_star_net = nu_star_pred if nu_star_pred is not None else None
@@ -3282,68 +3287,6 @@ class TrainingManager:
 ========================================
 
 --- FILE: utils\modify_project.py ---
-
-import os
-import re
-
-def modify_training_manager(file_path):
-    if not os.path.exists(file_path):
-        print(f"[-] Không tìm thấy file: {file_path}")
-        return False
-
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # 1. Sửa lỗi .detach() làm đứt chuỗi đạo hàm không gian của Net_nu
-    old_pattern = r"nu_star_net\s*=\s*nu_star_pred\.detach\(\)\s*if\s*nu_star_pred\s*is\s*not\s*None\s*else\s*None"
-    new_code = "nu_star_net = nu_star_pred if nu_star_pred is not None else None"
-
-    if re.search(old_pattern, content):
-        content = re.sub(old_pattern, new_code, content)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"[✔] Đã sửa lỗi .detach() trong: {file_path}")
-        return True
-    else:
-        print(f"[!] Không tìm thấy đoạn code nu_star_pred.detach() hoặc đã được sửa trước đó trong: {file_path}")
-        return False
-
-
-def modify_test_simulation(file_path):
-    if not os.path.exists(file_path):
-        print(f"[-] Không tìm thấy file: {file_path}")
-        return False
-
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # 1. Bật Fourier Features cho nu_network_config của iron_yoke
-    content = content.replace(
-        "iron_yoke.nu_network_config.fourier_features = False",
-        "iron_yoke.nu_network_config.fourier_features = True\n    iron_yoke.nu_network_config.fourier_sigma = 1.0\n    iron_yoke.nu_network_config.fourier_mapping_size = 64"
-    )
-
-    # 2. Tăng tham số fit_nu_epochs và fit_nu_lr
-    content = content.replace("model.training_config.fit_nu_epochs = 100", "model.training_config.fit_nu_epochs = 200")
-    content = content.replace("model.training_config.fit_nu_lr = 2e-3", "model.training_config.fit_nu_lr = 4e-3")
-
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print(f"[✔] Đã cập nhật cấu hình Net_nu và Fourier Features trong: {file_path}")
-    return True
-
-
-def main():
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    
-    training_manager_path = os.path.join(base_dir, "training_engine", "training_manager.py")
-    test_sim_path = os.path.join(base_dir, "tests", "test_simulation.py")
-
-    print("[*] Đang thực thi chỉnh sửa dự án...")
-    modify_training_manager(training_manager_path)
-    modify_test_simulation(test_sim_path)
-    print("[*] Hoàn tất!")
-
 
 
 ========================================
