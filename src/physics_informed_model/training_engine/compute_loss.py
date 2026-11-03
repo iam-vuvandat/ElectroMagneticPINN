@@ -31,10 +31,8 @@ def compute_loss(training_manager_instance, domains_data):
             
             if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
                 nu_star_pred = model.forward_nu_network(net_key, pts)
-                # Detach nu_star_pred để ngăn gradient PDE làm nhiễu Net_nu trong lúc luyện Net_Az
-                # Giữ nguyên đồ thị autograd để tính toán đạo hàm không gian 
-abla 
-            nu_star_net = nu_star_pred if nu_star_pred is not None else None
+                # Giu nguyen do thi autograd de tinh dao ham grad(nu) trong Maxwell PDE
+                nu_star_net = nu_star_pred if nu_star_pred is not None else None
             else:
                 nu_star_net = None
 
