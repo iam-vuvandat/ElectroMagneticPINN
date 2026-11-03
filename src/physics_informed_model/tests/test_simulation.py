@@ -27,7 +27,7 @@ def run_high_precision_fpi_simulation_test():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (CÓ TỰ ĐIỀU CHỈNH TRỌNG SỐ LOSS)...")
+    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (DÙNG MISH & TỰ ĐIỀU CHỈNH TRỌNG SỐ LOSS)...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -143,14 +143,14 @@ def run_high_precision_fpi_simulation_test():
 
     iron_yoke.network_config.hidden_layers = 5
     iron_yoke.network_config.hidden_neurons = 128
-    iron_yoke.network_config.activation_function = nn.SiLU()
+    iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
     iron_yoke.network_config.fourier_sigma = 1.2
     iron_yoke.network_config.fourier_mapping_size = 256
 
     iron_yoke.nu_network_config.hidden_layers = 3
     iron_yoke.nu_network_config.hidden_neurons = 64
-    iron_yoke.nu_network_config.activation_function = nn.SiLU()
+    iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
     iron_yoke.nu_network_config.fourier_sigma = 1.0
     iron_yoke.nu_network_config.fourier_mapping_size = 64
@@ -173,7 +173,7 @@ def run_high_precision_fpi_simulation_test():
 
     magnet_left.network_config.hidden_layers = 4
     magnet_left.network_config.hidden_neurons = 64
-    magnet_left.network_config.activation_function = nn.SiLU()
+    magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = True
     magnet_left.network_config.fourier_sigma = 1.0
     magnet_left.network_config.fourier_mapping_size = 128
@@ -196,7 +196,7 @@ def run_high_precision_fpi_simulation_test():
 
     magnet_right.network_config.hidden_layers = 4
     magnet_right.network_config.hidden_neurons = 64
-    magnet_right.network_config.activation_function = nn.SiLU()
+    magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = True
     magnet_right.network_config.fourier_sigma = 1.0
     magnet_right.network_config.fourier_mapping_size = 128
@@ -218,7 +218,7 @@ def run_high_precision_fpi_simulation_test():
     bg_network_cfg = SimpleNamespace(
         hidden_layers=4,
         hidden_neurons=64,
-        activation_function=nn.SiLU(),
+        activation_function=nn.Mish(),
         fourier_features=True,
         fourier_sigma=1.0,
         fourier_mapping_size=128
