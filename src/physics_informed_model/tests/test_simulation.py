@@ -54,14 +54,13 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.enable_nonlinear_adaptation_stage = True
     model.training_config.enable_lbfgs_refinement_stage = True
 
-    # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (NÂNG NÊN 1500 EPOCHS / BƯỚC) ---
-    # 1500 epochs Warm-up + 20 vòng FPI x 1500 epochs = 31,500 Adam Epochs tổng cộng
+    # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (1500 EPOCHS / BƯỚC) ---
     epochs_warmup_target = 1500
     fpi_iterations = 20
-    epochs_per_fpi = 1500                     # Mỗi bước FPI chạy đủ 1500 Adam epochs
+    epochs_per_fpi = 1500                     # Mỗi bước FPI chạy 1500 Adam epochs
     
     model.training_config.fpi_outer_iterations = fpi_iterations
-    model.training_config.fpi_alpha_damping = 1.0 
+    model.training_config.fpi_alpha_damping = 1.0     # Damping 1.0 cho FPI
     model.training_config.fpi_tolerance = 1e-6
 
     # Cấu hình tổng số Adam epochs trong training_config
@@ -76,7 +75,7 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.max_non_finite_streak = 5
     model.training_config.adam_log_interval = 100
 
-    # Cấu hình huấn luyện sâu cho Mạng phụ Net_nu tương ứng với Adam
+    # Cấu hình huấn luyện cho Mạng phụ Net_nu
     model.training_config.pretrain_nu_epochs = 1000  # Pre-train Net_nu 1000 epochs
     model.training_config.pretrain_nu_lr = 5e-3
     model.training_config.fit_nu_epochs = 800        # Fit Net_nu 800 epochs ở mỗi bước FPI
@@ -87,7 +86,7 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.lbfgs_learning_rate = 0.5
 
     # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA (LƯU FRAME & ANIMATION)
+    # 4. CẤU HÌNH TRỰC QUAN HÓA (LOGSCALE HIỂN THỊ PHÂN HÓA MUR)
     # =========================================================================
     model.visualization_config.active = True
     model.visualization_config.update_interval = 100          # Cứ 100 epochs xuất 1 frame
@@ -101,14 +100,14 @@ def run_high_precision_fpi_simulation_test():
     model.visualization_config.gif_fps = 3.0
     model.visualization_config.contour_levels = 80
 
-    # Cấu hình dải màu mur tự động co giãn theo thực tế lõi sắt
-    model.visualization_config.mur_scale = "linear"
-    model.visualization_config.mur_vmin = None
-    model.visualization_config.mur_vmax = None
+    # Chuyển mur sang LogScale để quan sát rõ rệt sự phân hóa từ bão hòa đến từ thẩm mạnh
+    model.visualization_config.mur_scale = "log"
+    model.visualization_config.mur_vmin = 1.0
+    model.visualization_config.mur_vmax = 7000.0
     model.visualization_config.mur_cmap = "turbo"
 
     # =========================================================================
-    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (MẠNG LỚN & MẬT ĐỘ ĐIỂM DÀY ĐẶC)
+    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU
     # =========================================================================
 
     # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
