@@ -61,7 +61,7 @@ def run_high_precision_fpi_simulation_test():
     epochs_per_fpi = 1500                     # Mỗi bước FPI chạy đủ 1500 Adam epochs
     
     model.training_config.fpi_outer_iterations = fpi_iterations
-    model.training_config.fpi_alpha_damping = 0.35   # Hệ số giảm chấn FPI 0.35
+    model.training_config.fpi_alpha_damping = 1.0 
     model.training_config.fpi_tolerance = 1e-6
 
     # Cấu hình tổng số Adam epochs trong training_config
