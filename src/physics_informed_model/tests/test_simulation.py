@@ -43,13 +43,14 @@ model.training_config.enable_linear_warmup_stage = True
 model.training_config.enable_nonlinear_adaptation_stage = True
 model.training_config.enable_lbfgs_refinement_stage = True
 
-epochs_warmup_target = 800
-fpi_iterations = 12
-epochs_per_fpi = 400
+epochs_warmup_target = 1200
+fpi_iterations = 20
+epochs_per_fpi = 600
 
 model.training_config.fpi_outer_iterations = fpi_iterations
 model.training_config.fpi_alpha_damping = 0.7
-model.training_config.fpi_tolerance = 1e-6
+model.training_config.fpi_tolerance = 1e-8
+model.training_config.target_loss_threshold = 1e-8
 
 model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
 model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
@@ -57,12 +58,12 @@ model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.
 model.training_config.adam_learning_rate = 1e-3
 model.training_config.adam_log_interval = 50
 
-model.training_config.pretrain_nu_epochs = 400
+model.training_config.pretrain_nu_epochs = 600
 model.training_config.pretrain_nu_lr = 5e-3
-model.training_config.fit_nu_epochs = 250
+model.training_config.fit_nu_epochs = 400
 model.training_config.fit_nu_lr = 2e-3
 
-model.training_config.number_of_lbfgs_iterations = 800
+model.training_config.number_of_lbfgs_iterations = 1500
 
 model.visualization_config.active = True
 model.visualization_config.update_interval = 100
@@ -70,9 +71,12 @@ model.visualization_config.output_directory = output_dir
 model.visualization_config.resolution = 160
 model.visualization_config.generate_gif_animation = True
 model.visualization_config.gif_filename = "high_precision_mur_training_process.gif"
-model.visualization_config.generate_mp4_video = False
+model.visualization_config.generate_mp4_video = True
+model.visualization_config.mp4_filename = "high_precision_mur_training_process.mp4"
 model.visualization_config.animation_fps = 5.0
 model.visualization_config.gif_fps = 5.0
+model.visualization_config.mp4_codec = "libx264"
+model.visualization_config.mp4_quality = 8
 model.visualization_config.contour_levels = 80
 
 model.visualization_config.mur_scale = "linear"
@@ -158,7 +162,7 @@ magnet_right.build_domain()
 bg_training_cfg = SimpleNamespace(
     pde_weight=1.5,
     interface_weight=3.0,
-    number_of_interior_points=7500,
+    number_of_interior_points=12000,
     number_of_surface_points=0
 )
 bg_network_cfg = SimpleNamespace(
