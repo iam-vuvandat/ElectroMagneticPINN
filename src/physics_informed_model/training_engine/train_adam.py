@@ -12,6 +12,10 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     max_non_finite_streak = getattr(t_cfg, 'max_non_finite_streak', 5)
     log_interval = getattr(t_cfg, 'adam_log_interval', 100)
 
+    dynamic_interval = getattr(t_cfg, 'dynamic_weight_update_interval', 50)
+    enable_dynamic = getattr(t_cfg, 'enable_dynamic_weighting', False)
+    dynamic_method = getattr(t_cfg, 'dynamic_weight_method', 'grad_norm')
+
     for param_group in training_manager_instance.optimizer_adam.param_groups:
         param_group['initial_lr'] = training_manager_instance.base_learning_rate_adam
         param_group['lr'] = training_manager_instance.base_learning_rate_adam
@@ -24,6 +28,10 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     for epoch in range(epochs):
         if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
             domains_data = resample_fn()
+
+        # Tự động cập nhật trọng số động theo Grad-Norm Balancing theo chu kỳ
+        if enable_dynamic and dynamic_method == "grad_norm" and epoch > 0 and epoch % dynamic_interval == 0:
+            training_manager_instance.update_dynamic_loss_weights()
 
         training_manager_instance.optimizer_adam.zero_grad(set_to_none=True)
         loss = training_manager_instance.compute_loss(domains_data)

@@ -24,6 +24,12 @@ class ElectroMagneticPINN:
         )
         
         self.training_config = SimpleNamespace(
+            enable_dynamic_weighting=True,
+            dynamic_weight_method="grad_norm", # "grad_norm" hoặc "uncertainty"
+            dynamic_weight_update_interval=50,
+            dynamic_weight_alpha=0.1,
+            max_interface_weight_clamp=20.0,
+
             enable_linear_warmup_stage=True,
             enable_nonlinear_adaptation_stage=True,
             enable_lbfgs_refinement_stage=True,

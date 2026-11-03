@@ -13,10 +13,14 @@ def compute_loss(training_manager_instance, domains_data):
     ht_if_sum = 0.0
     weighted_if_sum = 0.0
 
+    unweighted_pde_tensor = (dummy_param * 0.0).sum()
+    unweighted_if_tensor = (dummy_param * 0.0).sum()
+
     domains_dict = domains_data.get("domains", domains_data)
     shared_dict = domains_data.get("shared_interfaces", {})
     pinn = training_manager_instance.electro_magnetic_pinn
     bg_domain = pinn.simulation_domain_engine_instance.background_domain
+    t_cfg = getattr(pinn, 'training_config', None)
 
     for key, data in domains_dict.items():
         domain = data["domain_object"]
@@ -31,7 +35,6 @@ def compute_loss(training_manager_instance, domains_data):
             
             if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
                 nu_star_pred = model.forward_nu_network(net_key, pts)
-                # Giu nguyen do thi autograd de tinh dao ham grad(nu) trong Maxwell PDE
                 nu_star_net = nu_star_pred if nu_star_pred is not None else None
             else:
                 nu_star_net = None
@@ -47,8 +50,9 @@ def compute_loss(training_manager_instance, domains_data):
             fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
             
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
-            w_pde = float(domain.training_config.pde_weight)
+            unweighted_pde_tensor = unweighted_pde_tensor + loss_pde_domain
 
+            w_pde = float(getattr(domain.training_config, 'pde_weight', 1.0))
             scaled_pde_loss = w_pde * loss_pde_domain
             total_loss = total_loss + scaled_pde_loss
             pde_loss_sum += scaled_pde_loss.item()
@@ -61,6 +65,7 @@ def compute_loss(training_manager_instance, domains_data):
             w_if_loss, val_l, bn_l, ht_l = training_manager_instance.interface_evaluator._compute_pair_components(
                 key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
             )
+            unweighted_if_tensor = unweighted_if_tensor + (val_l + bn_l + ht_l)
             scaled_if_loss = w_if_loss
             total_loss = total_loss + scaled_if_loss
 
@@ -79,6 +84,7 @@ def compute_loss(training_manager_instance, domains_data):
                 key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
                 key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts
             )
+            unweighted_if_tensor = unweighted_if_tensor + (val_l + bn_l + ht_l)
             scaled_shared_loss = w_shared_loss
             total_loss = total_loss + scaled_shared_loss
 
@@ -86,6 +92,14 @@ def compute_loss(training_manager_instance, domains_data):
             bn_if_sum += bn_l.item()
             ht_if_sum += ht_l.item()
             weighted_if_sum += scaled_shared_loss.item()
+
+    # Lưu lại tensor loss phục vụ tính Grad-Norm
+    training_manager_instance.last_unweighted_pde_tensor = unweighted_pde_tensor
+    training_manager_instance.last_unweighted_if_tensor = unweighted_if_tensor
+
+    # Nếu dùng phương pháp Uncertainty
+    if getattr(t_cfg, 'enable_dynamic_weighting', False) and training_manager_instance.loss_weighter is not None:
+        total_loss = training_manager_instance.loss_weighter(unweighted_pde_tensor, unweighted_if_tensor)
 
     training_manager_instance.last_loss_breakdown = {
         "pde_loss": pde_loss_sum,

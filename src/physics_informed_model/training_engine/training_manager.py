@@ -1,5 +1,6 @@
 import time
 import torch
+import torch.nn as nn
 import torch.optim as optim
 
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
@@ -8,6 +9,17 @@ from training_engine.fit_nu_network_step import fit_nu_network_step
 from training_engine.compute_loss import compute_loss
 from training_engine.train_adam import train_adam
 from training_engine.train_lbfgs import train_lbfgs
+
+
+class AutomaticLossWeighter(nn.Module):
+    def __init__(self, num_losses=2):
+        super().__init__()
+        self.params = nn.Parameter(torch.zeros(num_losses, requires_grad=True))
+
+    def forward(self, loss_pde, loss_interface):
+        p_pde = 0.5 * torch.exp(-self.params[0])
+        p_if = 0.5 * torch.exp(-self.params[1])
+        return p_pde * loss_pde + p_if * loss_interface + 0.5 * (self.params[0] + self.params[1])
 
 
 class TrainingManager:
@@ -26,10 +38,17 @@ class TrainingManager:
         self.lbfgs_history_size = getattr(t_cfg, 'lbfgs_history_size', 50)
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
-        
-        # Đưa cả tham số của Net_Az và Net_nu vào Adam để tối ưu thống nhất khi cần
-        # Chỉ tối ưu hóa tham số của Net_Az trong Adam. Net_nu được cập nhật riêng qua bước FPI (fit_nu_network_step)
-        self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
+
+        # Khởi tạo loss_weighter nếu chọn phương pháp Uncertainty
+        if getattr(t_cfg, 'enable_dynamic_weighting', False) and getattr(t_cfg, 'dynamic_weight_method', '') == "uncertainty":
+            self.loss_weighter = AutomaticLossWeighter(num_losses=2).to(self.electro_magnetic_pinn.computation_device)
+            self.optimizer_adam = optim.Adam(
+                list(model.networks.parameters()) + list(self.loss_weighter.parameters()),
+                lr=self.base_learning_rate_adam
+            )
+        else:
+            self.loss_weighter = None
+            self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
             model.networks.parameters(),
@@ -43,6 +62,8 @@ class TrainingManager:
         )
         self.last_loss_breakdown = {}
         self.completed_adam_epochs = 0
+        self.last_unweighted_pde_tensor = None
+        self.last_unweighted_if_tensor = None
 
     @property
     def model(self):
@@ -63,6 +84,40 @@ class TrainingManager:
     @property
     def visualizer_update_interval(self):
         return self.electro_magnetic_pinn.visualization_config.update_interval
+
+    def update_dynamic_loss_weights(self):
+        """Thuật toán Cân bằng Gradient Norm (Grad-Norm Balancing)."""
+        if self.last_unweighted_pde_tensor is None or self.last_unweighted_if_tensor is None:
+            return
+
+        model = self.model
+        t_cfg = self.electro_magnetic_pinn.training_config
+        alpha = getattr(t_cfg, 'dynamic_weight_alpha', 0.1)
+        max_clamp = getattr(t_cfg, 'max_interface_weight_clamp', 20.0)
+
+        # Lấy tham số của lớp cuối cùng trong mạng chính Net_Az
+        last_param = None
+        for p in model.networks.parameters():
+            if p.requires_grad:
+                last_param = p
+
+        if last_param is None or last_param.grad is None:
+            return
+
+        grad_pde = torch.autograd.grad(self.last_unweighted_pde_tensor, last_param, retain_graph=True)[0]
+        grad_if = torch.autograd.grad(self.last_unweighted_if_tensor, last_param, retain_graph=True)[0]
+
+        norm_pde = torch.mean(torch.abs(grad_pde))
+        norm_if = torch.mean(torch.abs(grad_if))
+
+        w_target = norm_pde / (norm_if + 1e-8)
+
+        # Cập nhật mượt trọng số interface cho các domain
+        for domain in self.electro_magnetic_pinn.simulation_domain_engine_instance.domains_list:
+            if getattr(domain, 'domain_name', '') != 'background':
+                w_curr = float(getattr(domain.training_config, 'interface_weight', 1.0))
+                w_new = (1.0 - alpha) * w_curr + alpha * w_target.item()
+                domain.training_config.interface_weight = min(max(w_new, 0.1), max_clamp)
 
     def pretrain_nu_networks(self, domains_data, epochs=None, lr=None):
         return pretrain_nu_networks(self, domains_data, epochs=epochs, lr=lr)
