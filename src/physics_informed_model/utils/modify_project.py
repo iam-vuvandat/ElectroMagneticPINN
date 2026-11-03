@@ -1,7 +1,56 @@
 import os
+import sys
+
+def get_base_dir():
+    """
+    Xác định thư mục gốc 'physics_informed_model' một cách linh hoạt,
+    hoạt động chính xác dù modify_project.py được gọi từ root repository,
+    từ thư mục utils, hoặc từ thư mục làm việc hiện tại (cwd).
+    """
+    candidates = []
+    
+    # 1. Thử từ vị trí của file script (__file__)
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.extend([
+            script_dir,
+            os.path.abspath(os.path.join(script_dir, "..")),
+            os.path.join(script_dir, "src", "physics_informed_model"),
+            os.path.join(script_dir, "physics_informed_model"),
+        ])
+    except NameError:
+        pass
+
+    # 2. Thử từ thư mục làm việc hiện tại (cwd)
+    cwd = os.getcwd()
+    candidates.extend([
+        cwd,
+        os.path.join(cwd, "src", "physics_informed_model"),
+        os.path.join(cwd, "physics_informed_model"),
+    ])
+
+    # Kiểm tra candidate nào chứa thư mục training_visualizer hoặc là physics_informed_model
+    for cand in candidates:
+        if os.path.isdir(os.path.join(cand, "training_visualizer")) or os.path.basename(cand) == "physics_informed_model":
+            return cand
+
+    # Fallback: Tìm ngược lên các thư mục cha
+    for start_path in candidates[:2]:
+        curr = start_path
+        while curr and curr != os.path.dirname(curr):
+            target = os.path.join(curr, "src", "physics_informed_model")
+            if os.path.isdir(target):
+                return target
+            if os.path.isdir(os.path.join(curr, "training_visualizer")):
+                return curr
+            curr = os.path.dirname(curr)
+
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 def create_resolve_domain_net_key_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "resolve_domain_net_key.py")
     content = '''def resolve_domain_net_key(domain, arch_instance):
     """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
@@ -35,6 +84,7 @@ def create_resolve_domain_net_key_file(base_dir):
 
 def create_save_frame_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "save_frame.py")
     content = '''import os
 import torch
@@ -264,6 +314,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
 
 def create_generate_gif_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "generate_gif.py")
     content = '''import os
 import imageio
@@ -286,6 +337,7 @@ def generate_gif(visualizer_instance):
 
 def create_generate_mp4_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "generate_mp4.py")
     content = '''import os
 import imageio
@@ -317,6 +369,7 @@ def generate_mp4(visualizer_instance):
 
 def create_generate_animations_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "generate_animations.py")
     content = '''def generate_animations(visualizer_instance):
     cfg = visualizer_instance.electro_magnetic_pinn.visualization_config
@@ -332,6 +385,7 @@ def create_generate_animations_file(base_dir):
 
 def update_training_visualizer_class(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "training_visualizer.py")
     content = '''import os
 import torch
@@ -391,6 +445,7 @@ class TrainingVisualizer:
 
 def update_init_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "__init__.py")
     content = '''from .training_visualizer import TrainingVisualizer
 from .resolve_domain_net_key import resolve_domain_net_key
@@ -414,8 +469,8 @@ __all__ = [
 
 
 def main():
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    print("[*] Đang tiến hành mô-đun hóa thư mục training_visualizer...")
+    base_dir = get_base_dir()
+    print(f"[*] Đang tiến hành mô-đun hóa thư mục training_visualizer tại: {base_dir}")
     
     create_resolve_domain_net_key_file(base_dir)
     create_save_frame_file(base_dir)
@@ -426,7 +481,6 @@ def main():
     update_init_file(base_dir)
     
     print("[✔] Hoàn tất quá trình tách file cho training_visualizer!")
-
 
 if __name__ == "__main__":
     main()
