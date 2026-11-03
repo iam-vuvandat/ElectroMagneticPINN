@@ -16,10 +16,73 @@ def get_base_dir():
             return cand
     return os.path.abspath(os.path.join(script_dir, ".."))
 
+def fix_evaluate_reluctivity(base_dir):
+    """
+    Sửa triệt để thuật toán nội suy trong evaluate_reluctivity.py:
+    Sử dụng torch.bucketize(..., right=True) - 1 và xử lý mượt khoảng B -> 0 
+    để không bị sập chỉ số âm về 0 làm phẳng nu_BH.
+    """
+    file_path = os.path.join(base_dir, "simulation_domain_engine", "material_domain", "evaluate_reluctivity.py")
+    if not os.path.exists(file_path):
+        print(f"[!] Không tìm thấy file: {file_path}")
+        return
+
+    code_content = '''import torch
+from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+
+def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None, is_nonlinear=None):
+    if is_nonlinear is None:
+        is_nonlinear = getattr(self.physics_config, 'is_nonlinear', False)
+
+    if not is_nonlinear:
+        mu_r = float(getattr(self.physics_config, 'relative_permeability', 1.0))
+        const_nu = VACUUM_RELUCTIVITY / max(mu_r, 1e-6)
+        return torch.full(
+            (points_tensor.shape[0], 1),
+            const_nu,
+            dtype=points_tensor.dtype,
+            device=points_tensor.device
+        )
+
+    bh_data = getattr(self.physics_config, 'bh_curve_data', None)
+    if isinstance(bh_data, (list, tuple)) and len(bh_data) == 2:
+        b_pts = torch.tensor(bh_data[0], dtype=points_tensor.dtype, device=points_tensor.device)
+        h_pts = torch.tensor(bh_data[1], dtype=points_tensor.dtype, device=points_tensor.device)
+
+        if B_magnitude_tensor is None:
+            B_magnitude_tensor = torch.zeros(
+                (points_tensor.shape[0], 1),
+                dtype=points_tensor.dtype,
+                device=points_tensor.device
+            )
+
+        b_flat = B_magnitude_tensor.view(-1)
+        
+        # Nội suy chính xác khoảng B_pts không bị tràn chỉ số âm
+        indices = torch.bucketize(b_flat, b_pts, right=True) - 1
+        indices = torch.clamp(indices, 0, len(b_pts) - 2)
+
+        b0, b1 = b_pts[indices], b_pts[indices + 1]
+        h0, h1 = h_pts[indices], h_pts[indices + 1]
+
+        t = (b_flat - b0) / (b1 - b0 + 1e-12)
+        h_interp = h0 + t * (h1 - h0)
+
+        # Xử lý giới hạn khi B tiến sát 0
+        nu_zero = h_pts[1] / max(b_pts[1].item(), 1e-12)
+        nu_tensor = torch.where(b_flat > 1e-7, h_interp / torch.clamp(b_flat, min=1e-7), nu_zero)
+        return nu_tensor.view(-1, 1)
+
+    raise ValueError(f"Domain '{self.domain_name}' thiếu dữ liệu bh_curve_data hợp lệ.")
+'''
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(code_content)
+    print(f"[✔] Đã sửa lỗi thuật toán nội suy B-H tại: {file_path}")
+
 def fix_fit_nu_network_step(base_dir):
     """
-    Sửa fit_nu_network_step.py: Đảm bảo B_magnitude_tensor và is_nonlinear=True 
-    được truyền đúng cách để tính nu_BH_phys phi tuyến biến thiên không gian.
+    Sửa fit_nu_network_step.py: Đảm bảo pts_grad được truyền vào evaluate_reluctivity 
+    và bật is_nonlinear=True cùng B_magnitude_tensor.
     """
     file_path = os.path.join(base_dir, "training_engine", "fit_nu_network_step.py")
     if not os.path.exists(file_path):
@@ -29,7 +92,6 @@ def fix_fit_nu_network_step(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # Sửa dòng tính nu_BH_phys chuẩn autograd & truyền B_mag_phys
     old_target_calc = "nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)"
     new_target_calc = "nu_BH_phys = domain.evaluate_reluctivity(pts_grad, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)"
 
@@ -37,87 +99,16 @@ def fix_fit_nu_network_step(base_dir):
         content = content.replace(old_target_calc, new_target_calc)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        print(f"[✔] Đã sửa lỗi truyền tọa độ cho B_magnitude_tensor trong: {file_path}")
-    else:
-        print(f"[i] File {file_path} đã chuẩn hoặc không cần sửa.")
-
-def fix_interface_loss(base_dir):
-    """
-    Sửa interface_loss.py: Truyền B_magnitude_tensor=B_mag_a_phys và is_nonlinear=True khi gọi evaluate_reluctivity.
-    """
-    file_path = os.path.join(base_dir, "physics_domain", "physical_equations", "interface_loss.py")
-    if not os.path.exists(file_path):
-        print(f"[!] Không tìm thấy file: {file_path}")
-        return
-
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    old_code_a = "nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys) / self.nu0"
-    new_code_a = "nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys, is_nonlinear=True) / self.nu0"
-    
-    old_code_b = "nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys) / self.nu0"
-    new_code_b = "nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys, is_nonlinear=True) / self.nu0"
-
-    content = content.replace(old_code_a, new_code_a).replace(old_code_b, new_code_b)
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print(f"[✔] Đã cập nhật đánh giá độ từ trở phi tuyến ở điều kiện biên trong: {file_path}")
-
-def update_material_data_bh_curve(base_dir):
-    """
-    Cập nhật đường cong B-H thép từ mềm phi tuyến cao (mu_r_max = 6953.37 tại B = 0.9T).
-    """
-    file_path = os.path.join(base_dir, "simulation_domain_engine", "material_library", "material_data.py")
-    if not os.path.exists(file_path):
-        print(f"[!] Không tìm thấy file: {file_path}")
-        return
-
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    old_steel_block = """            SimpleNamespace(
-                name="steel_1008",
-                relative_permeability=1000.0,  
-                coercive=[0.0, 0.0],
-                bh_curve_data=[
-                    # B_points (Tesla)
-                    [0.0, 0.2402, 0.8654, 1.1106, 1.2458, 1.331, 1.5, 1.6, 1.683, 
-                     1.741, 1.78, 1.905, 2.025, 2.085, 2.13, 2.165, 2.28, 2.485, 2.5851],
-                    # H_points (A/m)
-                    [0.0, 159.2, 318.3, 477.5, 636.6, 795.8, 1591.5, 3183.1, 4774.6, 
-                     6366.2, 7957.7, 15915.5, 31831.0, 47746.5, 63662.0, 79577.5, 
-                     159155.0, 318310.0, 397887.0]
-                ]
-            )"""
-
-    new_steel_block = """            SimpleNamespace(
-                name="steel_1008",
-                relative_permeability=1000.0,  
-                coercive=[0.0, 0.0],
-                bh_curve_data=[
-                    # B_points (Tesla) - Du lieu phi tuyen cao (mu_r_max = 6953.37 tai B = 0.9T)
-                    [0.0, 0.1, 0.5, 0.8, 0.9, 1.0, 1.3, 1.5, 1.9, 2.4],
-                    # H_points (A/m)
-                    [0.0, 34.8, 67.4, 91.8, 103.0, 119.0, 250.0, 1180.0, 25000.0, 229580.0]
-                ]
-            )"""
-
-    if old_steel_block in content:
-        content = content.replace(old_steel_block, new_steel_block)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"[✔] Đã cập nhật bảng B-H phi tuyến cho steel_1008 tại: {file_path}")
+        print(f"[✔] Đã sửa luồng truyền tham số cho fit_nu_network_step tại: {file_path}")
 
 def main():
     base_dir = get_base_dir()
-    print(f"[*] Đang thực thi sửa đổi hệ thống tại: {base_dir}\n")
+    print(f"[*] Đang thực thi sửa đổi logic (giữ nguyên material_data.py) tại: {base_dir}\n")
     
+    fix_evaluate_reluctivity(base_dir)
     fix_fit_nu_network_step(base_dir)
-    fix_interface_loss(base_dir)
-    update_material_data_bh_curve(base_dir)
     
-    print("\n[✔] TẤT CẢ CÁC LỖI KHẾN MU_R BỊ PHẲNG ĐÃ ĐƯỢC KHẮC PHỤC HOÀN TOÀN!")
+    print("\n[✔] HOÀN TẤT SỬA LỖI! Tuyệt đối không can thiệp vào material_data.py.")
 
 if __name__ == "__main__":
     main()
