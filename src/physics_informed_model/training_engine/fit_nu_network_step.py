@@ -42,7 +42,7 @@ def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=N
                 B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
                 
                 # 2. Đánh giá độ từ kháng phi tuyến thực tế từ đường cong B-H
-                nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
+                nu_BH_phys = domain.evaluate_reluctivity(pts_grad, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
                 nu_BH_star = nu_BH_phys / sim_domain.nu0
 
                 # 3. Lấy nu hiện tại từ Net_nu

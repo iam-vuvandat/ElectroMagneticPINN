@@ -107,7 +107,7 @@ class InterfaceLoss:
             nu_a_star = model.forward_nu_network(key_a, pts)
         else:
             B_mag_a_phys = torch.sqrt(Bx_a_star**2 + By_a_star**2 + 1e-12) * (self.H0 / self.nu0)
-            nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys) / self.nu0
+            nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys, is_nonlinear=True) / self.nu0
 
         hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
         hx_a_star = hx_a / self.H0
@@ -118,7 +118,7 @@ class InterfaceLoss:
                 nu_b_star = model.forward_nu_network(key_b, pts)
             else:
                 B_mag_b_phys = torch.sqrt(Bx_b_star**2 + By_b_star**2 + 1e-12) * (self.H0 / self.nu0)
-                nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys) / self.nu0
+                nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys, is_nonlinear=True) / self.nu0
             hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
             hx_b_star = hx_b / self.H0
             hy_b_star = hy_b / self.H0
