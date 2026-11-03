@@ -81,7 +81,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     ax_pts = axs[0, 0]
     ax_pts.set_title("Categorized Collocation Points")
     
-    # Bảng màu đậm (Dark/Deep palette) có tương phản mạnh
+    # Bảng màu đậm (Dark/Deep palette) có độ tương phản cao
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
     pair_colors = ['#800000', '#004080', '#004d40', '#4a148c', '#bf360c']
 
@@ -93,7 +93,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
         int_pts = d.get("interior_points")
         if int_pts is not None and int_pts.shape[0] > 0:
             pts_np = int_pts.detach().cpu().numpy()
-            # Dấu chấm cực mảnh (s=0.5, marker='o', không viền)
             ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=0.5, color=c_dom, marker='o', linewidths=0, alpha=0.55)
 
     for p_idx, (pair_key, pair_data) in enumerate(shared_dict.items()):
@@ -101,10 +100,9 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
         if if_pts is not None and if_pts.shape[0] > 0:
             pts_np = if_pts.detach().cpu().numpy()
             c_pair = pair_colors[p_idx % len(pair_colors)]
-            # Dấu chấm ranh giới mảnh (s=1.0, marker='o', không viền)
             ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=1.0, color=c_pair, marker='o', linewidths=0, alpha=0.95)
 
-    # Đã loại bỏ hoàn toàn ax_pts.legend()
+    # Đã loại bỏ ax_pts.legend()
     ax_pts.set_xlim(visualizer_instance.x_bounds)
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
