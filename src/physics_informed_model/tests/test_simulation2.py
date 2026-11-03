@@ -50,6 +50,12 @@ def run_high_precision_fpi_simulation_test():
     # =========================================================================
     # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN VÀ OPTIMIZER
     # =========================================================================
+    model.training_config.enable_dynamic_weighting = True
+    model.training_config.dynamic_weight_method = "grad_norm"
+    model.training_config.dynamic_weight_update_interval = 50
+    model.training_config.dynamic_weight_alpha = 0.1
+    model.training_config.max_interface_weight_clamp = 20.0
+
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
     model.training_config.enable_lbfgs_refinement_stage = True

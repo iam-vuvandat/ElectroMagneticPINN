@@ -39,7 +39,6 @@ class TrainingManager:
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
 
-        # Khởi tạo loss_weighter nếu chọn phương pháp Uncertainty
         if getattr(t_cfg, 'enable_dynamic_weighting', False) and getattr(t_cfg, 'dynamic_weight_method', '') == "uncertainty":
             self.loss_weighter = AutomaticLossWeighter(num_losses=2).to(self.electro_magnetic_pinn.computation_device)
             self.optimizer_adam = optim.Adam(
@@ -95,13 +94,12 @@ class TrainingManager:
         alpha = getattr(t_cfg, 'dynamic_weight_alpha', 0.1)
         max_clamp = getattr(t_cfg, 'max_interface_weight_clamp', 20.0)
 
-        # Lấy tham số của lớp cuối cùng trong mạng chính Net_Az
         last_param = None
         for p in model.networks.parameters():
             if p.requires_grad:
                 last_param = p
 
-        if last_param is None or last_param.grad is None:
+        if last_param is None:
             return
 
         grad_pde = torch.autograd.grad(self.last_unweighted_pde_tensor, last_param, retain_graph=True)[0]
@@ -112,7 +110,6 @@ class TrainingManager:
 
         w_target = norm_pde / (norm_if + 1e-8)
 
-        # Cập nhật mượt trọng số interface cho các domain
         for domain in self.electro_magnetic_pinn.simulation_domain_engine_instance.domains_list:
             if getattr(domain, 'domain_name', '') != 'background':
                 w_curr = float(getattr(domain.training_config, 'interface_weight', 1.0))

@@ -93,11 +93,9 @@ def compute_loss(training_manager_instance, domains_data):
             ht_if_sum += ht_l.item()
             weighted_if_sum += scaled_shared_loss.item()
 
-    # Lưu lại tensor loss phục vụ tính Grad-Norm
     training_manager_instance.last_unweighted_pde_tensor = unweighted_pde_tensor
     training_manager_instance.last_unweighted_if_tensor = unweighted_if_tensor
 
-    # Nếu dùng phương pháp Uncertainty
     if getattr(t_cfg, 'enable_dynamic_weighting', False) and training_manager_instance.loss_weighter is not None:
         total_loss = training_manager_instance.loss_weighter(unweighted_pde_tensor, unweighted_if_tensor)
 

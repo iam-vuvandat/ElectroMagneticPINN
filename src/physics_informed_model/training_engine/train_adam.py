@@ -29,13 +29,15 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
         if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
             domains_data = resample_fn()
 
-        # Tự động cập nhật trọng số động theo Grad-Norm Balancing theo chu kỳ
+        training_manager_instance.optimizer_adam.zero_grad(set_to_none=True)
+        
+        # 1. Forward pass tính loss trước
+        loss = training_manager_instance.compute_loss(domains_data)
+        
+        # 2. Cập nhật trọng số khi đồ thị lan truyền còn sống và chưa bị backward giải phóng
         if enable_dynamic and dynamic_method == "grad_norm" and epoch > 0 and epoch % dynamic_interval == 0:
             training_manager_instance.update_dynamic_loss_weights()
 
-        training_manager_instance.optimizer_adam.zero_grad(set_to_none=True)
-        loss = training_manager_instance.compute_loss(domains_data)
-        
         if not torch.isfinite(loss):
             non_finite_streak += 1
             if non_finite_streak >= max_non_finite_streak:
@@ -44,7 +46,9 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
             continue
         non_finite_streak = 0
             
+        # 3. Lan truyền ngược
         loss.backward()
+        
         if max_clip_norm > 0.0:
             torch.nn.utils.clip_grad_norm_(model.networks.parameters(), max_norm=max_clip_norm)
         training_manager_instance.optimizer_adam.step()

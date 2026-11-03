@@ -28,7 +28,7 @@ def update_electro_magnetic_pinn(base_dir):
     target_str = "self.training_config = SimpleNamespace("
     new_configs = """self.training_config = SimpleNamespace(
             enable_dynamic_weighting=True,
-            dynamic_weight_method="grad_norm", # "grad_norm" hoặc "uncertainty"
+            dynamic_weight_method="grad_norm",
             dynamic_weight_update_interval=50,
             dynamic_weight_alpha=0.1,
             max_interface_weight_clamp=20.0,
@@ -41,7 +41,7 @@ def update_electro_magnetic_pinn(base_dir):
         print(f"[✔] Đã cập nhật cấu hình trọng số động trong: {file_path}")
 
 def update_training_manager(base_dir):
-    """Bổ sung class AutomaticLossWeighter và hàm update_dynamic_loss_weights vào training_manager.py."""
+    """Cập nhật training_manager.py với class AutomaticLossWeighter và hàm update_dynamic_loss_weights chuẩn xác."""
     file_path = os.path.join(base_dir, "training_engine", "training_manager.py")
     if not os.path.exists(file_path):
         return
@@ -87,7 +87,6 @@ class TrainingManager:
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
 
-        # Khởi tạo loss_weighter nếu chọn phương pháp Uncertainty
         if getattr(t_cfg, 'enable_dynamic_weighting', False) and getattr(t_cfg, 'dynamic_weight_method', '') == "uncertainty":
             self.loss_weighter = AutomaticLossWeighter(num_losses=2).to(self.electro_magnetic_pinn.computation_device)
             self.optimizer_adam = optim.Adam(
@@ -143,13 +142,12 @@ class TrainingManager:
         alpha = getattr(t_cfg, 'dynamic_weight_alpha', 0.1)
         max_clamp = getattr(t_cfg, 'max_interface_weight_clamp', 20.0)
 
-        # Lấy tham số của lớp cuối cùng trong mạng chính Net_Az
         last_param = None
         for p in model.networks.parameters():
             if p.requires_grad:
                 last_param = p
 
-        if last_param is me None or last_param.grad is None:
+        if last_param is None:
             return
 
         grad_pde = torch.autograd.grad(self.last_unweighted_pde_tensor, last_param, retain_graph=True)[0]
@@ -160,7 +158,6 @@ class TrainingManager:
 
         w_target = norm_pde / (norm_if + 1e-8)
 
-        # Cập nhật mượt trọng số interface cho các domain
         for domain in self.electro_magnetic_pinn.simulation_domain_engine_instance.domains_list:
             if getattr(domain, 'domain_name', '') != 'background':
                 w_curr = float(getattr(domain.training_config, 'interface_weight', 1.0))
@@ -187,7 +184,7 @@ class TrainingManager:
     print(f"[✔] Đã cập nhật training_manager.py tại: {file_path}")
 
 def update_compute_loss(base_dir):
-    """Cập nhật compute_loss.py để lưu trữ tensor unweighted loss phục vụ tính grad_norm."""
+    """Cập nhật compute_loss.py lưu tensor unweighted loss."""
     file_path = os.path.join(base_dir, "training_engine", "compute_loss.py")
     if not os.path.exists(file_path):
         return
@@ -287,11 +284,9 @@ def compute_loss(training_manager_instance, domains_data):
             ht_if_sum += ht_l.item()
             weighted_if_sum += scaled_shared_loss.item()
 
-    # Lưu lại tensor loss phục vụ tính Grad-Norm
     training_manager_instance.last_unweighted_pde_tensor = unweighted_pde_tensor
     training_manager_instance.last_unweighted_if_tensor = unweighted_if_tensor
 
-    # Nếu dùng phương pháp Uncertainty
     if getattr(t_cfg, 'enable_dynamic_weighting', False) and training_manager_instance.loss_weighter is not None:
         total_loss = training_manager_instance.loss_weighter(unweighted_pde_tensor, unweighted_if_tensor)
 
@@ -311,7 +306,7 @@ def compute_loss(training_manager_instance, domains_data):
     print(f"[✔] Đã cập nhật compute_loss.py tại: {file_path}")
 
 def update_train_adam(base_dir):
-    """Bổ sung logic gọi update_dynamic_loss_weights theo chu kỳ epoch vào train_adam.py."""
+    """Cập nhật train_adam.py với thứ tự gọi update_dynamic_loss_weights chính xác."""
     file_path = os.path.join(base_dir, "training_engine", "train_adam.py")
     if not os.path.exists(file_path):
         return
@@ -347,13 +342,15 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
         if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
             domains_data = resample_fn()
 
-        # Tự động cập nhật trọng số động theo Grad-Norm Balancing theo chu kỳ
+        training_manager_instance.optimizer_adam.zero_grad(set_to_none=True)
+        
+        # 1. Forward pass tính loss trước
+        loss = training_manager_instance.compute_loss(domains_data)
+        
+        # 2. Cập nhật trọng số khi đồ thị lan truyền còn sống và chưa bị backward giải phóng
         if enable_dynamic and dynamic_method == "grad_norm" and epoch > 0 and epoch % dynamic_interval == 0:
             training_manager_instance.update_dynamic_loss_weights()
 
-        training_manager_instance.optimizer_adam.zero_grad(set_to_none=True)
-        loss = training_manager_instance.compute_loss(domains_data)
-        
         if not torch.isfinite(loss):
             non_finite_streak += 1
             if non_finite_streak >= max_non_finite_streak:
@@ -362,7 +359,9 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
             continue
         non_finite_streak = 0
             
+        # 3. Lan truyền ngược
         loss.backward()
+        
         if max_clip_norm > 0.0:
             torch.nn.utils.clip_grad_norm_(model.networks.parameters(), max_norm=max_clip_norm)
         training_manager_instance.optimizer_adam.step()
@@ -389,6 +388,31 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
         f.write(code_content)
     print(f"[✔] Đã cập nhật train_adam.py tại: {file_path}")
 
+def update_test_simulation(base_dir):
+    """Cập nhật file test bổ sung bộ config tự động điều chỉnh trọng số động."""
+    for filename in ["test_simulation.py", "test_simulation2.py"]:
+        file_path = os.path.join(base_dir, "tests", filename)
+        if not os.path.exists(file_path):
+            continue
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        target_str = "model.training_config.enable_linear_warmup_stage = True"
+        dynamic_cfg = """model.training_config.enable_dynamic_weighting = True
+    model.training_config.dynamic_weight_method = "grad_norm"
+    model.training_config.dynamic_weight_update_interval = 50
+    model.training_config.dynamic_weight_alpha = 0.1
+    model.training_config.max_interface_weight_clamp = 20.0
+
+    model.training_config.enable_linear_warmup_stage = True"""
+
+        if target_str in content and "enable_dynamic_weighting" not in content:
+            content = content.replace(target_str, dynamic_cfg, 1)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"[✔] Đã cập nhật file test {filename} tại: {file_path}")
+
 def main():
     base_dir = get_base_dir()
     print(f"[*] Tiến hành nâng cấp tính năng Self-Adaptive Loss Weighting tại: {base_dir}\n")
@@ -397,8 +421,9 @@ def main():
     update_training_manager(base_dir)
     update_compute_loss(base_dir)
     update_train_adam(base_dir)
+    update_test_simulation(base_dir)
     
-    print("\n[✔] HOÀN TẤT NÂNG CẤP MÃ NGUỒN! Bạn có thể khởi chạy huấn luyện thử nghiệm.")
+    print("\n[✔] HOÀN TẤT NÂNG CẤP MÃ NGUỒN VÀ KHẮC PHỤC TRIỆT ĐỂ LỖI BACKWARD GRAPH!")
 
 if __name__ == "__main__":
     main()
