@@ -34,7 +34,6 @@ def compute_loss(training_manager_instance, domains_data):
                 # Detach nu_star_pred để ngăn gradient PDE làm nhiễu Net_nu trong lúc luyện Net_Az
                 # Giữ nguyên đồ thị autograd để tính toán đạo hàm không gian 
 abla 
-u(x,y) trong Maxwell PDE
             nu_star_net = nu_star_pred if nu_star_pred is not None else None
             else:
                 nu_star_net = None
