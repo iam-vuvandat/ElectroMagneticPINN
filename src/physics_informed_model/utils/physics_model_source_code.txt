@@ -2618,13 +2618,13 @@ if torch.cuda.is_available():
 from electro_magnetic_pinn import ElectroMagneticPINN
 
 
-def run_fast_mur_simulation_test():
-    output_dir = "figure_fast_mur_simulation_test"
+def run_high_precision_simulation_test():
+    output_dir = "figure_high_precision_simulation_test"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG SIÊU TỐC ĐỘ (ƯU TIÊN QUAN SÁT TỪ THẨM TỐC ĐỘ CAO)...")
+    print("[*] KHỞI TẠO MÔ PHỎNG ĐỘ CHÍNH XÁC CAO (HIGH PRECISION PHYSICAL SIMULATION)...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -2642,61 +2642,61 @@ def run_fast_mur_simulation_test():
     # =========================================================================
     # 2. CẤU HÌNH LẤY MẪU ĐỘNG (COLLOCATION SAMPLER CONFIG)
     # =========================================================================
-    model.sampler_config.dynamic_resampling = False           # Tắt resampling để tăng tốc độ lấy mẫu
-    model.sampler_config.resample_interval = 200
-    model.sampler_config.resample_points_before_lbfgs_stage = False
+    model.sampler_config.dynamic_resampling = True           # Bật resampling để tập trung điểm vào vùng sai số lớn
+    model.sampler_config.resample_interval = 100
+    model.sampler_config.resample_points_before_lbfgs_stage = True
 
     # =========================================================================
-    # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN SIÊU TỐC (FAST & LIGHTWEIGHT)
+    # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN CHÍNH XÁC CAO
     # =========================================================================
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
-    model.training_config.enable_lbfgs_refinement_stage = False   # Tắt L-BFGS để quan sát nhanh FPI
+    model.training_config.enable_lbfgs_refinement_stage = True    # Bật L-BFGS tinh chỉnh tối ưu nghiệm cuối
 
-    epochs_warmup_target = 200
-    fpi_iterations = 6                                         # Giảm xuống 6 vòng FPI
-    epochs_per_fpi = 150                                       # 150 Adam epochs cho mỗi vòng FPI
+    epochs_warmup_target = 800
+    fpi_iterations = 12                                        # 12 vòng lặp FPI cho hội tụ phi tuyến bão hòa
+    epochs_per_fpi = 400                                       # 400 Adam epochs cho mỗi vòng FPI
     
     model.training_config.fpi_outer_iterations = fpi_iterations
-    model.training_config.fpi_alpha_damping = 1.0             # Giữ damping = 1.0 theo yêu cầu
-    model.training_config.fpi_tolerance = 1e-5
+    model.training_config.fpi_alpha_damping = 0.7             # Damping 0.7 chống dao động nghiệm từ trở
+    model.training_config.fpi_tolerance = 1e-6
 
     model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
-    model.training_config.adam_learning_rate = 2e-3
+    model.training_config.adam_learning_rate = 1e-3
     model.training_config.adam_log_interval = 50
 
-    # Cấu hình tinh gọn cho Net_nu (Huấn luyện cực nhanh)
-    model.training_config.pretrain_nu_epochs = 150             # Rút ngắn pre-train nu
-    model.training_config.pretrain_nu_lr = 1e-2
-    model.training_config.fit_nu_epochs = 100                  # Rút ngắn fit nu ở mỗi vòng FPI
-    model.training_config.fit_nu_lr = 5e-3
+    # Cấu hình mạng Net_nu (Mô hình hóa chính xác độ từ trở phi tuyến)
+    model.training_config.pretrain_nu_epochs = 400             # Pre-train kỹ cho Net_nu ban đầu
+    model.training_config.pretrain_nu_lr = 5e-3
+    model.training_config.fit_nu_epochs = 250                  # Fit nu kỹ ở từng vòng FPI
+    model.training_config.fit_nu_lr = 2e-3
 
-    model.training_config.number_of_lbfgs_iterations = 0
+    model.training_config.number_of_lbfgs_iterations = 800     # Tinh chỉnh L-BFGS sâu
 
     # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA (HIỂN THỊ THANG TUYẾN TÍNH LINEAR SCALE FOR MUR)
+    # 4. CẤU HÌNH TRỰC QUAN HÓA (THANG LOGARITHMIC DÙNG CHO MUR ĐẢM BẢO CHÍNH XÁC)
     # =========================================================================
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 50            # Cứ 50 epochs xuất 1 frame
+    model.visualization_config.update_interval = 100           # Cứ 100 epochs xuất 1 frame
     model.visualization_config.output_directory = output_dir
-    model.visualization_config.resolution = 90                 # Độ phân giải vừa phải để render ảnh nhanh
+    model.visualization_config.resolution = 160                # Độ phân giải cao cho ảnh công bố
     model.visualization_config.generate_gif_animation = True
-    model.visualization_config.gif_filename = "fast_mur_training_process.gif"
+    model.visualization_config.gif_filename = "high_precision_mur_training_process.gif"
     model.visualization_config.generate_mp4_video = False
-    model.visualization_config.animation_fps = 4.0
-    model.visualization_config.gif_fps = 4.0
-    model.visualization_config.contour_levels = 50
+    model.visualization_config.animation_fps = 5.0
+    model.visualization_config.gif_fps = 5.0
+    model.visualization_config.contour_levels = 80
 
-    # Cài đặt thang đo tuyến tính (Linear Scale) cho mur
-    model.visualization_config.mur_scale = "linear"
+    # Thang Logarithmic cho mur để bắt trọn dải mur từ 8.3 đến ~7000
+    model.visualization_config.mur_scale = "log"
     model.visualization_config.mur_vmin = 1.0
-    model.visualization_config.mur_vmax = 3000.0               # Thang đo từ 1.0 đến 3000.0
+    model.visualization_config.mur_vmax = 7000.0               
     model.visualization_config.mur_cmap = "turbo"
 
     # =========================================================================
-    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (TỐI ƯU HÓA SỐ LƯỢNG ĐIỂM & MẠNG NHỎ GỌN)
+    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU (MẬT ĐỘ ĐIỂM CAO & MẠNG MỞ RỘNG DUNG LƯỢNG)
     # =========================================================================
 
     # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
@@ -2710,20 +2710,20 @@ def run_fast_mur_simulation_test():
     iron_yoke.physics_config.current = 0.0
     iron_yoke.physics_config.is_nonlinear = True
 
-    iron_yoke.training_config.pde_weight = 3.0
-    iron_yoke.training_config.interface_weight = 1.0
-    iron_yoke.training_config.number_of_interior_points = 1200 # Giảm bớt số điểm để chạy siêu tốc
-    iron_yoke.training_config.number_of_surface_points = 600
+    iron_yoke.training_config.pde_weight = 4.0
+    iron_yoke.training_config.interface_weight = 5.0           # Tăng trọng số liên tục biên
+    iron_yoke.training_config.number_of_interior_points = 4000  # Mật độ điểm cao
+    iron_yoke.training_config.number_of_surface_points = 1500
 
-    iron_yoke.network_config.hidden_layers = 3                 # Giảm quy mô ẩn
-    iron_yoke.network_config.hidden_neurons = 48
+    iron_yoke.network_config.hidden_layers = 4                 # Mạng mở rộng dung lượng
+    iron_yoke.network_config.hidden_neurons = 96
     iron_yoke.network_config.activation_function = nn.SiLU()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.2
-    iron_yoke.network_config.fourier_mapping_size = 64
+    iron_yoke.network_config.fourier_sigma = 1.5
+    iron_yoke.network_config.fourier_mapping_size = 96
 
-    iron_yoke.nu_network_config.hidden_layers = 2
-    iron_yoke.nu_network_config.hidden_neurons = 32
+    iron_yoke.nu_network_config.hidden_layers = 3
+    iron_yoke.nu_network_config.hidden_neurons = 48
     iron_yoke.nu_network_config.activation_function = nn.SiLU()
     iron_yoke.nu_network_config.fourier_features = False
 
@@ -2740,15 +2740,15 @@ def run_fast_mur_simulation_test():
     magnet_left.physics_config.current = 0.0
     magnet_left.physics_config.is_nonlinear = False
 
-    magnet_left.training_config.number_of_interior_points = 600
-    magnet_left.training_config.number_of_surface_points = 300
+    magnet_left.training_config.number_of_interior_points = 1800
+    magnet_left.training_config.number_of_surface_points = 800
 
-    magnet_left.network_config.hidden_layers = 3
-    magnet_left.network_config.hidden_neurons = 32
+    magnet_left.network_config.hidden_layers = 4
+    magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.SiLU()
     magnet_left.network_config.fourier_features = True
-    magnet_left.network_config.fourier_sigma = 1.0
-    magnet_left.network_config.fourier_mapping_size = 32
+    magnet_left.network_config.fourier_sigma = 1.2
+    magnet_left.network_config.fourier_mapping_size = 64
 
     magnet_left.build_domain()
 
@@ -2763,32 +2763,32 @@ def run_fast_mur_simulation_test():
     magnet_right.physics_config.current = 0.0
     magnet_right.physics_config.is_nonlinear = False
 
-    magnet_right.training_config.number_of_interior_points = 600
-    magnet_right.training_config.number_of_surface_points = 300
+    magnet_right.training_config.number_of_interior_points = 1800
+    magnet_right.training_config.number_of_surface_points = 800
 
-    magnet_right.network_config.hidden_layers = 3
-    magnet_right.network_config.hidden_neurons = 32
+    magnet_right.network_config.hidden_layers = 4
+    magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.SiLU()
     magnet_right.network_config.fourier_features = True
-    magnet_right.network_config.fourier_sigma = 1.0
-    magnet_right.network_config.fourier_mapping_size = 32
+    magnet_right.network_config.fourier_sigma = 1.2
+    magnet_right.network_config.fourier_mapping_size = 64
 
     magnet_right.build_domain()
 
     # --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
     bg_training_cfg = SimpleNamespace(
-        pde_weight=1.0,
-        interface_weight=1.0,
-        number_of_interior_points=2000,
+        pde_weight=1.5,
+        interface_weight=3.0,
+        number_of_interior_points=7500,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
-        hidden_layers=3,
-        hidden_neurons=32,
+        hidden_layers=4,
+        hidden_neurons=64,
         activation_function=nn.SiLU(),
         fourier_features=True,
-        fourier_sigma=1.0,
-        fourier_mapping_size=32
+        fourier_sigma=1.2,
+        fourier_mapping_size=64
     )
     sim_domain.build_background_domain(
         domain_name="background",
@@ -2797,21 +2797,21 @@ def run_fast_mur_simulation_test():
     )
 
     # =========================================================================
-    # 6. THỰC THI HUẤN LUYỆN SIÊU TỐC VÀ TẠO ANIMATION
+    # 6. THỰC THI HUẤN LUYỆN ĐỘ CHÍNH XÁC CAO VÀ XUẤT KẾT QUẢ
     # =========================================================================
     model.update_electromagnetic_pinn()
 
-    print("[*] Bắt đầu tiến trình huấn luyện siêu tốc...")
+    print("[*] Bắt đầu tiến trình huấn luyện chính xác cao...")
     model.execute_training_process()
 
     print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
     model.plot_fields(
-        resolution=120,
-        save_path=f"{output_dir}/fast_mur_final_fields.png",
+        resolution=180,
+        save_path=f"{output_dir}/high_precision_final_fields.png",
         show=False,
-        figsize=(12, 10)
+        figsize=(14, 11)
     )
-    print(f"[✔] HOÀN THÀNH MÔ PHỎNG SIÊU TỐC! Kết quả xem tại: {output_dir}/")
+    print(f"[✔] HOÀN THÀNH MÔ PHỎNG VẬT LÝ CHÍNH XÁC CAO! Kết quả xem tại: {output_dir}/")
 
 
 
@@ -4040,9 +4040,58 @@ class TrainingVisualizer:
 --- FILE: utils\modify_project.py ---
 
 import os
+import sys
+
+def get_base_dir():
+    """
+    Xác định thư mục gốc 'physics_informed_model' một cách linh hoạt,
+    hoạt động chính xác dù modify_project.py được gọi từ root repository,
+    từ thư mục utils, hoặc từ thư mục làm việc hiện tại (cwd).
+    """
+    candidates = []
+    
+    # 1. Thử từ vị trí của file script (__file__)
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.extend([
+            script_dir,
+            os.path.abspath(os.path.join(script_dir, "..")),
+            os.path.join(script_dir, "src", "physics_informed_model"),
+            os.path.join(script_dir, "physics_informed_model"),
+        ])
+    except NameError:
+        pass
+
+    # 2. Thử từ thư mục làm việc hiện tại (cwd)
+    cwd = os.getcwd()
+    candidates.extend([
+        cwd,
+        os.path.join(cwd, "src", "physics_informed_model"),
+        os.path.join(cwd, "physics_informed_model"),
+    ])
+
+    # Kiểm tra candidate nào chứa thư mục training_visualizer hoặc là physics_informed_model
+    for cand in candidates:
+        if os.path.isdir(os.path.join(cand, "training_visualizer")) or os.path.basename(cand) == "physics_informed_model":
+            return cand
+
+    # Fallback: Tìm ngược lên các thư mục cha
+    for start_path in candidates[:2]:
+        curr = start_path
+        while curr and curr != os.path.dirname(curr):
+            target = os.path.join(curr, "src", "physics_informed_model")
+            if os.path.isdir(target):
+                return target
+            if os.path.isdir(os.path.join(curr, "training_visualizer")):
+                return curr
+            curr = os.path.dirname(curr)
+
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 def create_resolve_domain_net_key_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "resolve_domain_net_key.py")
     content = '''def resolve_domain_net_key(domain, arch_instance):
     """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
@@ -4076,6 +4125,7 @@ def create_resolve_domain_net_key_file(base_dir):
 
 def create_save_frame_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "save_frame.py")
     content = '''import os
 import torch
@@ -4305,6 +4355,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
 
 def create_generate_gif_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "generate_gif.py")
     content = '''import os
 import imageio
@@ -4327,6 +4378,7 @@ def generate_gif(visualizer_instance):
 
 def create_generate_mp4_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "generate_mp4.py")
     content = '''import os
 import imageio
@@ -4358,6 +4410,7 @@ def generate_mp4(visualizer_instance):
 
 def create_generate_animations_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "generate_animations.py")
     content = '''def generate_animations(visualizer_instance):
     cfg = visualizer_instance.electro_magnetic_pinn.visualization_config
@@ -4373,6 +4426,7 @@ def create_generate_animations_file(base_dir):
 
 def update_training_visualizer_class(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "training_visualizer.py")
     content = '''import os
 import torch
@@ -4432,6 +4486,7 @@ class TrainingVisualizer:
 
 def update_init_file(base_dir):
     vis_dir = os.path.join(base_dir, "training_visualizer")
+    os.makedirs(vis_dir, exist_ok=True)
     file_path = os.path.join(vis_dir, "__init__.py")
     content = '''from .training_visualizer import TrainingVisualizer
 from .resolve_domain_net_key import resolve_domain_net_key
@@ -4455,8 +4510,8 @@ __all__ = [
 
 
 def main():
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    print("[*] Đang tiến hành mô-đun hóa thư mục training_visualizer...")
+    base_dir = get_base_dir()
+    print(f"[*] Đang tiến hành mô-đun hóa thư mục training_visualizer tại: {base_dir}")
     
     create_resolve_domain_net_key_file(base_dir)
     create_save_frame_file(base_dir)
@@ -4467,7 +4522,6 @@ def main():
     update_init_file(base_dir)
     
     print("[✔] Hoàn tất quá trình tách file cho training_visualizer!")
-
 
 
 ========================================

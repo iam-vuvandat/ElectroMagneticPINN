@@ -28,8 +28,8 @@ class TrainingManager:
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         
         # Đưa cả tham số của Net_Az và Net_nu vào Adam để tối ưu thống nhất khi cần
-        all_params = list(model.networks.parameters()) + (list(model.nu_networks.parameters()) if hasattr(model, 'nu_networks') else [])
-        self.optimizer_adam = optim.Adam(all_params, lr=self.base_learning_rate_adam)
+        # Chỉ tối ưu hóa tham số của Net_Az trong Adam. Net_nu được cập nhật riêng qua bước FPI (fit_nu_network_step)
+        self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
             model.networks.parameters(),
