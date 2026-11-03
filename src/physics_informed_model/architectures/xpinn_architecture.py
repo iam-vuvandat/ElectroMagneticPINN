@@ -87,7 +87,7 @@ class XPINNArchitecture(nn.Module):
         for module in net:
             if isinstance(module, nn.Linear):
                 # Tăng gain khởi tạo lên 0.10 để không làm phẳng độ dốc không gian
-                nn.init.xavier_normal_(module.weight, gain=0.10)
+                nn.init.xavier_normal_(module.weight, gain=0.50)  # Tăng gain để học độ dốc không gian tốt hơn
                 nn.init.zeros_(module.bias)
                 
         last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
