@@ -11,6 +11,12 @@ physics_informed_model/
         forward_network.py
         initialize_weights.py
         xpinn_architecture.py
+    electro_magnetic_pinn_engine/
+        __init__.py
+        build_system.py
+        evaluate_fields.py
+        execute_training_process.py
+        plot_fields.py
     physics_domain/
         collocation_sampler.py
         physical_equations/
@@ -55,6 +61,12 @@ physics_informed_model/
         test_simulation_domain.py
     training_engine/
         __init__.py
+        compute_loss.py
+        fit_nu_network_step.py
+        pretrain_nu_networks.py
+        resolve_domain_net_key.py
+        train_adam.py
+        train_lbfgs.py
         training_manager.py
     utils/
         extract_project.py
@@ -73,42 +85,15 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm, Normalize
 
 from types import SimpleNamespace
-from architectures.xpinn_architecture import XPINNArchitecture
-from training_engine.training_manager import TrainingManager
-from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
-from physics_domain.physical_equations.interface_loss import InterfaceLoss
 from simulation_domain_engine.simulation_domain import SimulationDomain
-from physics_domain.collocation_sampler import CollocationSampler
-from utils.training_visualizer import TrainingVisualizer
-from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
 
-def resolve_domain_net_key(domain, arch_instance):
-    """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
-    d_name = getattr(domain, 'domain_name', '')
-    if d_name == 'background':
-        return 'background'
-
-    d_id = getattr(domain, 'domain_id', None)
-    candidates = []
-    if d_id is not None:
-        candidates.append(f'domain_{d_id}')
-    if d_name:
-        candidates.append(d_name)
-
-    if arch_instance is not None:
-        if hasattr(arch_instance, 'nu_networks'):
-            for k in candidates:
-                if k in arch_instance.nu_networks:
-                    return k
-        if hasattr(arch_instance, 'networks'):
-            for k in candidates:
-                if k in arch_instance.networks:
-                    return k
-
-    return candidates[0] if candidates else 'background'
+from electro_magnetic_pinn_engine.build_system import _build_system
+from electro_magnetic_pinn_engine.evaluate_fields import evaluate_fields
+from electro_magnetic_pinn_engine.plot_fields import plot_fields
+from electro_magnetic_pinn_engine.execute_training_process import execute_training_process
 
 
 class ElectroMagneticPINN:
@@ -226,248 +211,16 @@ class ElectroMagneticPINN:
         self._build_system()
 
     def _build_system(self):
-        self.simulation_domain_engine_instance.validate_non_overlapping_domains()
-        self.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[*] Hệ thống vật lý được khởi tạo trên: {self.computation_device}")
-        
-        self.collocation_sampler_instance = CollocationSampler(
-            electro_magnetic_pinn=self,
-            device=self.computation_device
-        )
-        
-        self.pinn_architecture_instance = XPINNArchitecture(
-            electro_magnetic_pinn=self
-        ).to(self.computation_device)
-        
-        self.maxwell_pde_loss_instance = MaxwellPDELoss(electro_magnetic_pinn=self)
-        self.interface_loss_instance = InterfaceLoss(electro_magnetic_pinn=self)
-        
-        self.visualizer_instance = None
-        if self.visualization_config.active:
-            self.visualizer_instance = TrainingVisualizer(electro_magnetic_pinn=self)
-            
-        self.training_manager_instance = TrainingManager(electro_magnetic_pinn=self)
-
-        domains_data = self.collocation_sampler_instance.generate_all_domain_points()
-        pre_ep = getattr(self.training_config, 'pretrain_nu_epochs', 300)
-        pre_lr = getattr(self.training_config, 'pretrain_nu_lr', 1e-2)
-        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
+        return _build_system(self)
 
     def evaluate_fields(self, points_tensor, return_numpy=False):
-        pinn_arch = self.pinn_architecture_instance
-        sim_domain = self.simulation_domain_engine_instance
-        device = points_tensor.device
-
-        phys_props = sim_domain.evaluate_global_physical_properties(points_tensor)
-        mat_id = phys_props["material_classification"]
-
-        A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
-        B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
-        B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
-
-        for domain in sim_domain.domains_list:
-            d_id = domain.domain_id
-            net_key = resolve_domain_net_key(domain, pinn_arch)
-            mask_bool = (mat_id == float(d_id))
-            
-            if mask_bool.any():
-                Az_star = pinn_arch.forward_network(net_key, points_tensor)
-                grad_star = torch.autograd.grad(
-                    outputs=Az_star, inputs=points_tensor,
-                    grad_outputs=torch.ones_like(Az_star), create_graph=False
-                )[0]
-
-                Az_phys = Az_star * self.A0
-                Bx_phys = grad_star[:, 1:2] * self.A0
-                By_phys = -grad_star[:, 0:1] * self.A0
-
-                A_z_phys = torch.where(mask_bool, Az_phys, A_z_phys)
-                B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
-                B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
-
-        if return_numpy:
-            return (
-                A_z_phys.detach().cpu().numpy(),
-                B_x_phys.detach().cpu().numpy(),
-                B_y_phys.detach().cpu().numpy()
-            )
-
-        return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
+        return evaluate_fields(self, points_tensor, return_numpy=return_numpy)
 
     def plot_fields(self, resolution=180, save_path=None, show=False, figsize=(12, 10)):
-        sim_domain = self.simulation_domain_engine_instance
-        vis_cfg = self.visualization_config
-        pinn_arch = self.pinn_architecture_instance
-
-        xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
-        x_coords = np.linspace(xb[0], xb[1], resolution)
-        y_coords = np.linspace(yb[0], yb[1], resolution)
-        X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-        
-        device = self.computation_device
-        eval_pts = torch.tensor(
-            np.column_stack((X_grid.ravel(), Y_grid.ravel())),
-            dtype=torch.float32, device=device
-        ).requires_grad_(True)
-        
-        A_z_np, B_x_np, B_y_np = self.evaluate_fields(eval_pts, return_numpy=True)
-
-        A_z_grid = A_z_np.reshape(resolution, resolution)
-        B_x_grid = B_x_np.reshape(resolution, resolution)
-        B_y_grid = B_y_np.reshape(resolution, resolution)
-        B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
-
-        props = sim_domain.evaluate_global_physical_properties(eval_pts)
-        mat_ids = props["material_classification"].squeeze()
-        
-        mu_r_tensor = torch.ones_like(mat_ids, device=device)
-        B_mag_pts = torch.tensor(B_mag_grid.ravel(), dtype=torch.float32, device=device).unsqueeze(1)
-
-        for domain in sim_domain.domains_list:
-            if getattr(domain, 'domain_name', '') != 'background':
-                d_id = domain.domain_id
-                net_key = resolve_domain_net_key(domain, pinn_arch)
-                mask = (mat_ids == float(d_id))
-                if mask.any():
-                    if getattr(domain.physics_config, 'is_nonlinear', False):
-                        if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
-                            with torch.no_grad():
-                                nu_star_pred = pinn_arch.forward_nu_network(net_key, eval_pts[mask])
-                                mu_r_vals = (1.0 / torch.clamp(nu_star_pred, min=1e-6)).view(-1)
-                                mu_r_tensor[mask] = mu_r_vals
-                        else:
-                            nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
-                            mu_r_vals = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys, min=1e-6)).view(-1)
-                            mu_r_tensor[mask] = mu_r_vals
-                    else:
-                        mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
-                        mu_r_tensor[mask] = mu_val
-
-        mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
-
-        fig, axs = plt.subplots(2, 2, figsize=figsize)
-        n_levels = getattr(vis_cfg, 'contour_levels', 60)
-        
-        # --- 1. A_z Plot ---
-        az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
-        az_vmax = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_grid))
-        levels_az = np.linspace(az_vmin, az_vmax, n_levels) if az_vmin != az_vmax else n_levels
-        c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=levels_az, cmap=vis_cfg.az_cmap)
-        fig.colorbar(c0, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
-        axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
-        axs[0, 0].set_aspect('equal')
-
-        # --- 2. |B| Magnitude Plot ---
-        b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-        b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
-        b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
-        levels_b = np.linspace(b_min, b_max, n_levels)
-        c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
-        fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
-        axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
-        axs[0, 1].set_aspect('equal')
-
-        # --- 3. Relative Permeability \mu_r Plot ---
-        v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
-        v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
-        mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
-        
-        if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
-            levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
-            norm_mur = LogNorm(vmin=max(v_min_mur, 1.0), vmax=v_max_mur)
-            lbl_mur = r"$\mu_r$ (Log Scale)"
-        else:
-            levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
-            norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
-            lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
-
-        c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
-        fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)
-        axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
-        axs[1, 0].set_aspect('equal')
-
-        # --- 4. B_y Component Plot ---
-        by_vmin = vis_cfg.by_vmin if vis_cfg.by_vmin is not None else float(np.min(B_y_grid))
-        by_vmax = vis_cfg.by_vmax if vis_cfg.by_vmax is not None else float(np.max(B_y_grid))
-        levels_by = np.linspace(by_vmin, by_vmax, n_levels) if by_vmin != by_vmax else n_levels
-        c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=levels_by, cmap=vis_cfg.by_cmap)
-        fig.colorbar(c3, ax=axs[1, 1], label=r"$B_y$ (T)")
-        axs[1, 1].set_title(r"Field Component ($B_y$)")
-        axs[1, 1].set_aspect('equal')
-
-        plt.tight_layout()
-        if save_path:
-            plt.savefig(save_path, dpi=150)
-            
-        if show:
-            plt.show()
-        else:
-            plt.close(fig)
-
-        return fig, axs
+        return plot_fields(self, resolution=resolution, save_path=save_path, show=show, figsize=figsize)
 
     def execute_training_process(self):
-        if self.pinn_architecture_instance is None:
-            self._build_system()
-
-        def resample_data_fn():
-            return self.collocation_sampler_instance.generate_all_domain_points()
-
-        domains_data = resample_data_fn()
-        t_cfg = self.training_config
-
-        pre_ep = getattr(t_cfg, 'pretrain_nu_epochs', 300)
-        pre_lr = getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
-        self.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
-
-        total_adam_epochs = t_cfg.number_of_adam_epochs
-        warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
-        epochs_warmup = int(total_adam_epochs * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
-        epochs_adaptation = (total_adam_epochs - epochs_warmup) if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) else 0
-
-        if getattr(t_cfg, 'enable_linear_warmup_stage', True) and epochs_warmup > 0:
-            print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
-            domains_data = self.training_manager_instance.train_adam(
-                epochs=epochs_warmup, domains_data=domains_data,
-                dynamic_resampling=self.sampler_config.dynamic_resampling,
-                resample_fn=resample_data_fn, resample_interval=self.sampler_config.resample_interval
-            )
-
-        if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
-            fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 10))
-            alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 1.0))
-            fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
-            epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
-
-            fit_ep = getattr(t_cfg, 'fit_nu_epochs', 250)
-            fit_lr = getattr(t_cfg, 'fit_nu_lr', 3e-3)
-
-            print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
-            for f_iter in range(fpi_iters):
-                print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters}] <<<")
-                domains_data = self.training_manager_instance.train_adam(
-                    epochs=epochs_per_fpi, domains_data=domains_data,
-                    dynamic_resampling=self.sampler_config.dynamic_resampling,
-                    resample_fn=resample_data_fn, resample_interval=self.sampler_config.resample_interval
-                )
-                max_diff = self.training_manager_instance.fit_nu_network_step(
-                    domains_data, alpha_damping=alpha_damp, epochs=fit_ep, lr=fit_lr
-                )
-                print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
-                if max_diff < fpi_tol:
-                    print(f"[✔] FPI Hội tụ sớm tại vòng {f_iter + 1}!")
-                    break
-
-        if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
-            if getattr(self.sampler_config, 'resample_points_before_lbfgs_stage', True):
-                domains_data = resample_data_fn()
-
-            lbfgs_iters = int(t_cfg.number_of_lbfgs_iterations)
-            print(f"\n--- [STAGE 2] L-BFGS Refinement ({lbfgs_iters} Iterations) ---")
-            self.training_manager_instance.train_lbfgs(max_iterations=lbfgs_iters, domains_data=domains_data)
-
-        if self.visualizer_instance:
-            self.visualizer_instance.generate_animations()
+        return execute_training_process(self)
 
 ========================================
 
@@ -740,6 +493,300 @@ class XPINNArchitecture(nn.Module):
                 
         last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
         nn.init.constant_(last_linear.bias, target_raw)
+
+========================================
+
+--- FILE: electro_magnetic_pinn_engine\__init__.py ---
+
+from .build_system import _build_system
+from .evaluate_fields import evaluate_fields
+from .plot_fields import plot_fields
+from .execute_training_process import execute_training_process
+
+__all__ = [
+    "_build_system",
+    "evaluate_fields",
+    "plot_fields",
+    "execute_training_process"
+]
+
+========================================
+
+--- FILE: electro_magnetic_pinn_engine\build_system.py ---
+
+import torch
+from architectures.xpinn_architecture import XPINNArchitecture
+from training_engine.training_manager import TrainingManager
+from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
+from physics_domain.physical_equations.interface_loss import InterfaceLoss
+from physics_domain.collocation_sampler import CollocationSampler
+from utils.training_visualizer import TrainingVisualizer
+
+def _build_system(pinn_instance):
+    pinn_instance.simulation_domain_engine_instance.validate_non_overlapping_domains()
+    pinn_instance.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[*] Hệ thống vật lý được khởi tạo trên: {pinn_instance.computation_device}")
+    
+    pinn_instance.collocation_sampler_instance = CollocationSampler(
+        electro_magnetic_pinn=pinn_instance,
+        device=pinn_instance.computation_device
+    )
+    
+    pinn_instance.pinn_architecture_instance = XPINNArchitecture(
+        electro_magnetic_pinn=pinn_instance
+    ).to(pinn_instance.computation_device)
+    
+    pinn_instance.maxwell_pde_loss_instance = MaxwellPDELoss(electro_magnetic_pinn=pinn_instance)
+    pinn_instance.interface_loss_instance = InterfaceLoss(electro_magnetic_pinn=pinn_instance)
+    
+    pinn_instance.visualizer_instance = None
+    if pinn_instance.visualization_config.active:
+        pinn_instance.visualizer_instance = TrainingVisualizer(electro_magnetic_pinn=pinn_instance)
+        
+    pinn_instance.training_manager_instance = TrainingManager(electro_magnetic_pinn=pinn_instance)
+
+    domains_data = pinn_instance.collocation_sampler_instance.generate_all_domain_points()
+    pre_ep = getattr(pinn_instance.training_config, 'pretrain_nu_epochs', 300)
+    pre_lr = getattr(pinn_instance.training_config, 'pretrain_nu_lr', 1e-2)
+    pinn_instance.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
+
+========================================
+
+--- FILE: electro_magnetic_pinn_engine\evaluate_fields.py ---
+
+import torch
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+def evaluate_fields(pinn_instance, points_tensor, return_numpy=False):
+    pinn_arch = pinn_instance.pinn_architecture_instance
+    sim_domain = pinn_instance.simulation_domain_engine_instance
+    device = points_tensor.device
+
+    phys_props = sim_domain.evaluate_global_physical_properties(points_tensor)
+    mat_id = phys_props["material_classification"]
+
+    A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+    B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+    B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+
+    for domain in sim_domain.domains_list:
+        d_id = domain.domain_id
+        net_key = resolve_domain_net_key(domain, pinn_arch)
+        mask_bool = (mat_id == float(d_id))
+        
+        if mask_bool.any():
+            Az_star = pinn_arch.forward_network(net_key, points_tensor)
+            grad_star = torch.autograd.grad(
+                outputs=Az_star, inputs=points_tensor,
+                grad_outputs=torch.ones_like(Az_star), create_graph=False
+            )[0]
+
+            Az_phys = Az_star * pinn_instance.A0
+            Bx_phys = grad_star[:, 1:2] * pinn_instance.A0
+            By_phys = -grad_star[:, 0:1] * pinn_instance.A0
+
+            A_z_phys = torch.where(mask_bool, Az_phys, A_z_phys)
+            B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
+            B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
+
+    if return_numpy:
+        return (
+            A_z_phys.detach().cpu().numpy(),
+            B_x_phys.detach().cpu().numpy(),
+            B_y_phys.detach().cpu().numpy()
+        )
+
+    return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
+
+========================================
+
+--- FILE: electro_magnetic_pinn_engine\execute_training_process.py ---
+
+def execute_training_process(pinn_instance):
+    if pinn_instance.pinn_architecture_instance is None:
+        pinn_instance._build_system()
+
+    def resample_data_fn():
+        return pinn_instance.collocation_sampler_instance.generate_all_domain_points()
+
+    domains_data = resample_data_fn()
+    t_cfg = pinn_instance.training_config
+
+    pre_ep = getattr(t_cfg, 'pretrain_nu_epochs', 300)
+    pre_lr = getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
+    pinn_instance.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
+
+    total_adam_epochs = t_cfg.number_of_adam_epochs
+    warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
+    epochs_warmup = int(total_adam_epochs * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
+    epochs_adaptation = (total_adam_epochs - epochs_warmup) if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) else 0
+
+    if getattr(t_cfg, 'enable_linear_warmup_stage', True) and epochs_warmup > 0:
+        print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
+        domains_data = pinn_instance.training_manager_instance.train_adam(
+            epochs=epochs_warmup, domains_data=domains_data,
+            dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
+            resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+        )
+
+    if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
+        fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 10))
+        alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 1.0))
+        fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
+        epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
+
+        fit_ep = getattr(t_cfg, 'fit_nu_epochs', 250)
+        fit_lr = getattr(t_cfg, 'fit_nu_lr', 3e-3)
+
+        print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
+        for f_iter in range(fpi_iters):
+            print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters}] <<<")
+            domains_data = pinn_instance.training_manager_instance.train_adam(
+                epochs=epochs_per_fpi, domains_data=domains_data,
+                dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
+                resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+            )
+            max_diff = pinn_instance.training_manager_instance.fit_nu_network_step(
+                domains_data, alpha_damping=alpha_damp, epochs=fit_ep, lr=fit_lr
+            )
+            print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+            if max_diff < fpi_tol:
+                print(f"[✔] FPI Hội tụ sớm tại vòng {f_iter + 1}!")
+                break
+
+    if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
+        if getattr(pinn_instance.sampler_config, 'resample_points_before_lbfgs_stage', True):
+            domains_data = resample_data_fn()
+
+        lbfgs_iters = int(t_cfg.number_of_lbfgs_iterations)
+        print(f"\n--- [STAGE 2] L-BFGS Refinement ({lbfgs_iters} Iterations) ---")
+        pinn_instance.training_manager_instance.train_lbfgs(max_iterations=lbfgs_iters, domains_data=domains_data)
+
+    if pinn_instance.visualizer_instance:
+        pinn_instance.visualizer_instance.generate_animations()
+
+========================================
+
+--- FILE: electro_magnetic_pinn_engine\plot_fields.py ---
+
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm, Normalize
+from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsize=(12, 10)):
+    sim_domain = pinn_instance.simulation_domain_engine_instance
+    vis_cfg = pinn_instance.visualization_config
+    pinn_arch = pinn_instance.pinn_architecture_instance
+
+    xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
+    x_coords = np.linspace(xb[0], xb[1], resolution)
+    y_coords = np.linspace(yb[0], yb[1], resolution)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    
+    device = pinn_instance.computation_device
+    eval_pts = torch.tensor(
+        np.column_stack((X_grid.ravel(), Y_grid.ravel())),
+        dtype=torch.float32, device=device
+    ).requires_grad_(True)
+    
+    A_z_np, B_x_np, B_y_np = pinn_instance.evaluate_fields(eval_pts, return_numpy=True)
+
+    A_z_grid = A_z_np.reshape(resolution, resolution)
+    B_x_grid = B_x_np.reshape(resolution, resolution)
+    B_y_grid = B_y_np.reshape(resolution, resolution)
+    B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
+
+    props = sim_domain.evaluate_global_physical_properties(eval_pts)
+    mat_ids = props["material_classification"].squeeze()
+    
+    mu_r_tensor = torch.ones_like(mat_ids, device=device)
+    B_mag_pts = torch.tensor(B_mag_grid.ravel(), dtype=torch.float32, device=device).unsqueeze(1)
+
+    for domain in sim_domain.domains_list:
+        if getattr(domain, 'domain_name', '') != 'background':
+            d_id = domain.domain_id
+            net_key = resolve_domain_net_key(domain, pinn_arch)
+            mask = (mat_ids == float(d_id))
+            if mask.any():
+                if getattr(domain.physics_config, 'is_nonlinear', False):
+                    if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
+                        with torch.no_grad():
+                            nu_star_pred = pinn_arch.forward_nu_network(net_key, eval_pts[mask])
+                            mu_r_vals = (1.0 / torch.clamp(nu_star_pred, min=1e-6)).view(-1)
+                            mu_r_tensor[mask] = mu_r_vals
+                    else:
+                        nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
+                        mu_r_vals = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys, min=1e-6)).view(-1)
+                        mu_r_tensor[mask] = mu_r_vals
+                else:
+                    mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
+                    mu_r_tensor[mask] = mu_val
+
+    mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
+
+    fig, axs = plt.subplots(2, 2, figsize=figsize)
+    n_levels = getattr(vis_cfg, 'contour_levels', 60)
+    
+    # --- 1. A_z Plot ---
+    az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
+    az_vmax = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_grid))
+    levels_az = np.linspace(az_vmin, az_vmax, n_levels) if az_vmin != az_vmax else n_levels
+    c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=levels_az, cmap=vis_cfg.az_cmap)
+    fig.colorbar(c0, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
+    axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
+    axs[0, 0].set_aspect('equal')
+
+    # --- 2. |B| Magnitude Plot ---
+    b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
+    b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+    b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
+    levels_b = np.linspace(b_min, b_max, n_levels)
+    c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+    fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
+    axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
+    axs[0, 1].set_aspect('equal')
+
+    # --- 3. Relative Permeability \mu_r Plot ---
+    v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+    v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+    mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
+    
+    if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
+        levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
+        norm_mur = LogNorm(vmin=max(v_min_mur, 1.0), vmax=v_max_mur)
+        lbl_mur = r"$\mu_r$ (Log Scale)"
+    else:
+        levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
+        norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
+        lbl_mur = r"$\mu_r$ (Linear Scale: 0 - 3000)"
+
+    c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
+    fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)
+    axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
+    axs[1, 0].set_aspect('equal')
+
+    # --- 4. B_y Component Plot ---
+    by_vmin = vis_cfg.by_vmin if vis_cfg.by_vmin is not None else float(np.min(B_y_grid))
+    by_vmax = vis_cfg.by_vmax if vis_cfg.by_vmax is not None else float(np.max(B_y_grid))
+    levels_by = np.linspace(by_vmin, by_vmax, n_levels) if by_vmin != by_vmax else n_levels
+    c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=levels_by, cmap=vis_cfg.by_cmap)
+    fig.colorbar(c3, ax=axs[1, 1], label=r"$B_y$ (T)")
+    axs[1, 1].set_title(r"Field Component ($B_y$)")
+    axs[1, 1].set_aspect('equal')
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+        
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, axs
 
 ========================================
 
@@ -2893,14 +2940,261 @@ def run_geometry_and_physics_tests():
 
 --- FILE: training_engine\__init__.py ---
 
+from .training_manager import TrainingManager
+from .resolve_domain_net_key import resolve_domain_net_key
+from .pretrain_nu_networks import pretrain_nu_networks
+from .fit_nu_network_step import fit_nu_network_step
+from .compute_loss import compute_loss
+from .train_adam import train_adam
+from .train_lbfgs import train_lbfgs
+
+__all__ = [
+    "TrainingManager",
+    "resolve_domain_net_key",
+    "pretrain_nu_networks",
+    "fit_nu_network_step",
+    "compute_loss",
+    "train_adam",
+    "train_lbfgs"
+]
 
 ========================================
 
---- FILE: training_engine\training_manager.py ---
+--- FILE: training_engine\compute_loss.py ---
 
-import time
+import torch
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+def compute_loss(training_manager_instance, domains_data):
+    model = training_manager_instance.model
+    device = next(model.parameters()).device
+    dummy_param = next(model.parameters())
+    total_loss = (dummy_param * 0.0).sum()
+
+    pde_loss_sum = 0.0
+    az_if_sum = 0.0
+    bn_if_sum = 0.0
+    ht_if_sum = 0.0
+    weighted_if_sum = 0.0
+
+    domains_dict = domains_data.get("domains", domains_data)
+    shared_dict = domains_data.get("shared_interfaces", {})
+    pinn = training_manager_instance.electro_magnetic_pinn
+    bg_domain = pinn.simulation_domain_engine_instance.background_domain
+
+    for key, data in domains_dict.items():
+        domain = data["domain_object"]
+        net_key = resolve_domain_net_key(domain, model)
+        pts = data["interior_points"].to(device)
+        
+        if pts.shape[0] > 0:
+            if not pts.requires_grad:
+                pts = pts.detach().clone().requires_grad_(True)
+                
+            A_z_star = model.forward_network(net_key, pts)
+            
+            if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
+                nu_star_pred = model.forward_nu_network(net_key, pts)
+                nu_star_net = nu_star_pred if nu_star_pred is not None else None
+            else:
+                nu_star_net = None
+
+            nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+            hx, hy = domain.evaluate_magnetization_vector(pts)
+            hx, hy = hx.to(device), hy.to(device)
+            jz = domain.evaluate_current_density(pts).to(device)
+            
+            res_pde = training_manager_instance.pde_evaluator.compute_linear_pde_residual(
+                xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_star_net=nu_star_net
+            )
+            fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
+            
+            loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
+            w_pde = float(domain.training_config.pde_weight)
+
+            scaled_pde_loss = w_pde * loss_pde_domain
+            total_loss = total_loss + scaled_pde_loss
+            pde_loss_sum += scaled_pde_loss.item()
+
+        outer_pts = data.get("outer_surface_points", data.get("surface_points", torch.empty((0, 2)))).to(device)
+        if outer_pts.shape[0] > 0 and net_key != 'background':
+            if not outer_pts.requires_grad:
+                outer_pts = outer_pts.detach().clone().requires_grad_(True)
+                
+            w_if_loss, val_l, bn_l, ht_l = training_manager_instance.interface_evaluator._compute_pair_components(
+                key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
+            )
+            scaled_if_loss = w_if_loss
+            total_loss = total_loss + scaled_if_loss
+
+            az_if_sum += val_l.item()
+            bn_if_sum += bn_l.item()
+            ht_if_sum += ht_l.item()
+            weighted_if_sum += scaled_if_loss.item()
+
+    for pair_key, pair_data in shared_dict.items():
+        pts = pair_data["interface_points"].to(device)
+        if pts.shape[0] > 0:
+            if not pts.requires_grad:
+                pts = pts.detach().clone().requires_grad_(True)
+
+            w_shared_loss, val_l, bn_l, ht_l = training_manager_instance.interface_evaluator._compute_pair_components(
+                key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
+                key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts
+            )
+            scaled_shared_loss = w_shared_loss
+            total_loss = total_loss + scaled_shared_loss
+
+            az_if_sum += val_l.item()
+            bn_if_sum += bn_l.item()
+            ht_if_sum += ht_l.item()
+            weighted_if_sum += scaled_shared_loss.item()
+
+    training_manager_instance.last_loss_breakdown = {
+        "pde_loss": pde_loss_sum,
+        "interface_Az": az_if_sum,
+        "interface_Bn": bn_if_sum,
+        "interface_Ht": ht_if_sum,
+        "weighted_interface": weighted_if_sum,
+        "total": total_loss.item()
+    }
+
+    return total_loss
+
+========================================
+
+--- FILE: training_engine\fit_nu_network_step.py ---
+
 import torch
 import torch.optim as optim
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=None, epochs=None, lr=None):
+    model = training_manager_instance.model
+    if not hasattr(model, 'nu_networks') or len(model.nu_networks) == 0:
+        return 0.0
+
+    pinn = training_manager_instance.electro_magnetic_pinn
+    t_cfg = getattr(pinn, 'training_config', None)
+    alpha_damping = alpha_damping if alpha_damping is not None else getattr(t_cfg, 'fpi_alpha_damping', 1.0)
+    epochs = epochs if epochs is not None else getattr(t_cfg, 'fit_nu_epochs', 400)
+    lr = lr if lr is not None else getattr(t_cfg, 'fit_nu_lr', 3e-3)
+
+    device = next(model.parameters()).device
+    sim_domain = pinn.simulation_domain_engine_instance
+    domains_dict = domains_data.get("domains", domains_data)
+    
+    targets_dict = {}
+    max_nu_diff = 0.0
+
+    for key, data in domains_dict.items():
+        domain = data["domain_object"]
+        net_key = resolve_domain_net_key(domain, model)
+        if net_key in model.nu_networks:
+            if not getattr(domain.physics_config, 'is_nonlinear', False):
+                continue
+
+            pts = data["interior_points"].to(device)
+            if pts.shape[0] > 0:
+                pts_grad = pts.detach().clone().requires_grad_(True)
+                
+                # 1. Tính từ thông B(x,y) thực tế từ Net_Az
+                Az_star = model.forward_network(net_key, pts_grad)
+                grad_Az = torch.autograd.grad(
+                    outputs=Az_star, inputs=pts_grad,
+                    grad_outputs=torch.ones_like(Az_star), create_graph=True
+                )[0]
+                Bx_star = grad_Az[:, 1:2] * sim_domain.L0
+                By_star = -grad_Az[:, 0:1] * sim_domain.L0
+                B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
+                
+                # 2. Đánh giá độ từ kháng phi tuyến thực tế từ đường cong B-H
+                nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
+                nu_BH_star = nu_BH_phys / sim_domain.nu0
+
+                # 3. Lấy nu hiện tại từ Net_nu
+                nu_old_star = model.forward_nu_network(net_key, pts)
+                
+                # 4. Giữ nguyên Đồ thị Đạo hàm (Graph) cho quá trình giảm chấn FPI
+                nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
+                
+                diff_val = torch.max(torch.abs(nu_target_star.detach() - nu_old_star.detach())).item()
+                max_nu_diff = max(max_nu_diff, diff_val)
+                targets_dict[net_key] = (pts, nu_target_star.detach())
+
+    if not targets_dict:
+        return 0.0
+
+    nu_params = []
+    for k in targets_dict.keys():
+        nu_params.extend(model.nu_networks[k].parameters())
+    opt_nu = optim.Adam(nu_params, lr=lr)
+
+    for _ in range(epochs):
+        opt_nu.zero_grad()
+        total_fit_loss = torch.tensor(0.0, device=device)
+        for k, (pts, nu_target_star) in targets_dict.items():
+            nu_pred_star = model.forward_nu_network(k, pts)
+            total_fit_loss = total_fit_loss + torch.mean((nu_pred_star - nu_target_star) ** 2)
+        total_fit_loss.backward()
+        opt_nu.step()
+
+    return max_nu_diff
+
+========================================
+
+--- FILE: training_engine\pretrain_nu_networks.py ---
+
+import torch
+import torch.optim as optim
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+def pretrain_nu_networks(training_manager_instance, domains_data, epochs=None, lr=None):
+    model = training_manager_instance.model
+    if not hasattr(model, 'nu_networks') or len(model.nu_networks) == 0:
+        return
+
+    pinn = training_manager_instance.electro_magnetic_pinn
+    t_cfg = getattr(pinn, 'training_config', None)
+    epochs = epochs if epochs is not None else getattr(t_cfg, 'pretrain_nu_epochs', 300)
+    lr = lr if lr is not None else getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
+
+    print(f"\n[*] Pre-training Mạng phụ Net_nu về hằng số ban đầu ({epochs} epochs, lr={lr})...")
+    device = next(model.parameters()).device
+    sim_domain = pinn.simulation_domain_engine_instance
+    
+    nu_params = []
+    for net in model.nu_networks.values():
+        nu_params.extend(net.parameters())
+        
+    opt_nu = optim.Adam(nu_params, lr=lr)
+    domains_dict = domains_data.get("domains", domains_data)
+    
+    for ep in range(epochs):
+        opt_nu.zero_grad()
+        loss_pre = torch.tensor(0.0, device=device)
+        
+        for key, data in domains_dict.items():
+            domain = data["domain_object"]
+            net_key = resolve_domain_net_key(domain, model)
+            if net_key in model.nu_networks:
+                pts = data["interior_points"].to(device)
+                
+                if pts.shape[0] > 0:
+                    nu_pred_star = model.forward_nu_network(net_key, pts)
+                    nu_target_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                    nu_target_star = nu_target_phys / sim_domain.nu0
+                    
+                    loss_domain = torch.mean((nu_pred_star - nu_target_star) ** 2)
+                    loss_pre = loss_pre + loss_domain
+                    
+        if loss_pre.requires_grad:
+            loss_pre.backward()
+            opt_nu.step()
+
+========================================
+
+--- FILE: training_engine\resolve_domain_net_key.py ---
 
 def resolve_domain_net_key(domain, arch_instance):
     """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
@@ -2926,6 +3220,135 @@ def resolve_domain_net_key(domain, arch_instance):
                     return k
 
     return candidates[0] if candidates else 'background'
+
+========================================
+
+--- FILE: training_engine\train_adam.py ---
+
+import torch
+import torch.optim as optim
+
+def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
+    model = training_manager_instance.model
+    model.train()
+    pinn = training_manager_instance.electro_magnetic_pinn
+    t_cfg = getattr(pinn, 'training_config', None)
+
+    eta_min = getattr(t_cfg, 'adam_eta_min', 1e-6)
+    max_clip_norm = getattr(t_cfg, 'grad_clip_max_norm', 1.0)
+    max_non_finite_streak = getattr(t_cfg, 'max_non_finite_streak', 5)
+    log_interval = getattr(t_cfg, 'adam_log_interval', 100)
+
+    for param_group in training_manager_instance.optimizer_adam.param_groups:
+        param_group['initial_lr'] = training_manager_instance.base_learning_rate_adam
+        param_group['lr'] = training_manager_instance.base_learning_rate_adam
+        
+    scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(training_manager_instance.optimizer_adam, T_max=max(epochs, 1), eta_min=eta_min)
+    stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
+    non_finite_streak = 0
+    training_manager_instance.completed_adam_epochs = 0
+    
+    for epoch in range(epochs):
+        if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
+            domains_data = resample_fn()
+
+        training_manager_instance.optimizer_adam.zero_grad(set_to_none=True)
+        loss = training_manager_instance.compute_loss(domains_data)
+        
+        if not torch.isfinite(loss):
+            non_finite_streak += 1
+            if non_finite_streak >= max_non_finite_streak:
+                stop_reason = f"Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp {max_non_finite_streak} lần."
+                break
+            continue
+        non_finite_streak = 0
+            
+        loss.backward()
+        if max_clip_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_(model.networks.parameters(), max_norm=max_clip_norm)
+        training_manager_instance.optimizer_adam.step()
+        scheduler_adam.step()
+        
+        training_manager_instance.completed_adam_epochs = epoch + 1
+        current_loss_value = loss.item()
+        
+        if (epoch + 1) == 1 or (epoch + 1) % log_interval == 0:
+            bd = training_manager_instance.last_loss_breakdown
+            print(
+                f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
+                f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
+                f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
+            )
+            
+        if training_manager_instance.visualizer and (epoch + 1) % training_manager_instance.visualizer_update_interval == 0:
+            training_manager_instance.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
+            
+    print(f"[*] KẾT THÚC ADAM. Lý do: {stop_reason}")
+    return domains_data
+
+========================================
+
+--- FILE: training_engine\train_lbfgs.py ---
+
+import torch
+import torch.optim as optim
+
+def train_lbfgs(training_manager_instance, max_iterations, domains_data):
+    if max_iterations <= 0:
+        return domains_data
+
+    model = training_manager_instance.model
+    model.train()
+    pinn = training_manager_instance.electro_magnetic_pinn
+    t_cfg = getattr(pinn, 'training_config', None)
+    log_interval = getattr(t_cfg, 'lbfgs_log_interval', 25)
+
+    training_manager_instance.optimizer_lbfgs = optim.LBFGS(
+        model.networks.parameters(),
+        lr=training_manager_instance.lbfgs_learning_rate,
+        max_iter=max_iterations,
+        max_eval=int(max_iterations * 1.25),
+        tolerance_grad=training_manager_instance.lbfgs_tolerance_gradient,
+        tolerance_change=training_manager_instance.lbfgs_tolerance_change,
+        history_size=training_manager_instance.lbfgs_history_size,
+        line_search_fn="strong_wolfe"
+    )
+
+    lbfgs_counter = [0]
+    
+    def closure():
+        training_manager_instance.optimizer_lbfgs.zero_grad(set_to_none=True)
+        loss = training_manager_instance.compute_loss(domains_data)
+        if not torch.isfinite(loss):
+            return loss
+        loss.backward()
+        
+        lbfgs_counter[0] += 1
+        if lbfgs_counter[0] == 1 or lbfgs_counter[0] % log_interval == 0:
+            bd = training_manager_instance.last_loss_breakdown
+            print(
+                f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
+                f"PDE = {bd.get('pde_loss', 0.0):.3e}"
+            )
+        return loss
+        
+    training_manager_instance.optimizer_lbfgs.step(closure)
+    return domains_data
+
+========================================
+
+--- FILE: training_engine\training_manager.py ---
+
+import time
+import torch
+import torch.optim as optim
+
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+from training_engine.pretrain_nu_networks import pretrain_nu_networks
+from training_engine.fit_nu_network_step import fit_nu_network_step
+from training_engine.compute_loss import compute_loss
+from training_engine.train_adam import train_adam
+from training_engine.train_lbfgs import train_lbfgs
 
 
 class TrainingManager:
@@ -2983,310 +3406,504 @@ class TrainingManager:
         return self.electro_magnetic_pinn.visualization_config.update_interval
 
     def pretrain_nu_networks(self, domains_data, epochs=None, lr=None):
-        if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
-            return
-
-        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
-        epochs = epochs if epochs is not None else getattr(t_cfg, 'pretrain_nu_epochs', 300)
-        lr = lr if lr is not None else getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
-
-        print(f"\n[*] Pre-training Mạng phụ Net_nu về hằng số ban đầu ({epochs} epochs, lr={lr})...")
-        device = next(self.model.parameters()).device
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        
-        nu_params = []
-        for net in self.model.nu_networks.values():
-            nu_params.extend(net.parameters())
-            
-        opt_nu = optim.Adam(nu_params, lr=lr)
-        domains_dict = domains_data.get("domains", domains_data)
-        
-        for ep in range(epochs):
-            opt_nu.zero_grad()
-            loss_pre = torch.tensor(0.0, device=device)
-            
-            for key, data in domains_dict.items():
-                domain = data["domain_object"]
-                net_key = resolve_domain_net_key(domain, self.model)
-                if net_key in self.model.nu_networks:
-                    pts = data["interior_points"].to(device)
-                    
-                    if pts.shape[0] > 0:
-                        nu_pred_star = self.model.forward_nu_network(net_key, pts)
-                        nu_target_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
-                        nu_target_star = nu_target_phys / sim_domain.nu0
-                        
-                        loss_domain = torch.mean((nu_pred_star - nu_target_star) ** 2)
-                        loss_pre = loss_pre + loss_domain
-                        
-            if loss_pre.requires_grad:
-                loss_pre.backward()
-                opt_nu.step()
+        return pretrain_nu_networks(self, domains_data, epochs=epochs, lr=lr)
 
     def fit_nu_network_step(self, domains_data, alpha_damping=None, epochs=None, lr=None):
-        if not hasattr(self.model, 'nu_networks') or len(self.model.nu_networks) == 0:
-            return 0.0
-
-        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
-        alpha_damping = alpha_damping if alpha_damping is not None else getattr(t_cfg, 'fpi_alpha_damping', 1.0)
-        epochs = epochs if epochs is not None else getattr(t_cfg, 'fit_nu_epochs', 400)
-        lr = lr if lr is not None else getattr(t_cfg, 'fit_nu_lr', 3e-3)
-
-        device = next(self.model.parameters()).device
-        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-        domains_dict = domains_data.get("domains", domains_data)
-        
-        targets_dict = {}
-        max_nu_diff = 0.0
-
-        for key, data in domains_dict.items():
-            domain = data["domain_object"]
-            net_key = resolve_domain_net_key(domain, self.model)
-            if net_key in self.model.nu_networks:
-                if not getattr(domain.physics_config, 'is_nonlinear', False):
-                    continue
-
-                pts = data["interior_points"].to(device)
-                if pts.shape[0] > 0:
-                    pts_grad = pts.detach().clone().requires_grad_(True)
-                    
-                    # 1. Tính toán từ thông B(x,y) thực tế từ Net_Az
-                    Az_star = self.model.forward_network(net_key, pts_grad)
-                    grad_Az = torch.autograd.grad(
-                        outputs=Az_star, inputs=pts_grad,
-                        grad_outputs=torch.ones_like(Az_star), create_graph=True
-                    )[0]
-                    Bx_star = grad_Az[:, 1:2] * sim_domain.L0
-                    By_star = -grad_Az[:, 0:1] * sim_domain.L0
-                    B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
-                    
-                    # 2. Đánh giá độ từ kháng phi tuyến thực tế từ đường cong B-H
-                    nu_BH_phys = domain.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
-                    nu_BH_star = nu_BH_phys / sim_domain.nu0
-
-                    # 3. Lấy nu hiện tại từ Net_nu
-                    nu_old_star = self.model.forward_nu_network(net_key, pts)
-                    
-                    # 4. Giữ nguyên Đồ thị Đạo hàm (Graph) cho quá trình giảm chấn FPI
-                    nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
-                    
-                    diff_val = torch.max(torch.abs(nu_target_star.detach() - nu_old_star.detach())).item()
-                    max_nu_diff = max(max_nu_diff, diff_val)
-                    targets_dict[net_key] = (pts, nu_target_star.detach())
-
-        if not targets_dict:
-            return 0.0
-
-        nu_params = []
-        for k in targets_dict.keys():
-            nu_params.extend(self.model.nu_networks[k].parameters())
-        opt_nu = optim.Adam(nu_params, lr=lr)
-
-        for _ in range(epochs):
-            opt_nu.zero_grad()
-            total_fit_loss = torch.tensor(0.0, device=device)
-            for k, (pts, nu_target_star) in targets_dict.items():
-                nu_pred_star = self.model.forward_nu_network(k, pts)
-                total_fit_loss = total_fit_loss + torch.mean((nu_pred_star - nu_target_star) ** 2)
-            total_fit_loss.backward()
-            opt_nu.step()
-
-        return max_nu_diff
+        return fit_nu_network_step(self, domains_data, alpha_damping=alpha_damping, epochs=epochs, lr=lr)
 
     def compute_loss(self, domains_data):
-        device = next(self.model.parameters()).device
-        dummy_param = next(self.model.parameters())
-        total_loss = (dummy_param * 0.0).sum()
-
-        pde_loss_sum = 0.0
-        az_if_sum = 0.0
-        bn_if_sum = 0.0
-        ht_if_sum = 0.0
-        weighted_if_sum = 0.0
-
-        domains_dict = domains_data.get("domains", domains_data)
-        shared_dict = domains_data.get("shared_interfaces", {})
-        bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
-
-        for key, data in domains_dict.items():
-            domain = data["domain_object"]
-            net_key = resolve_domain_net_key(domain, self.model)
-            pts = data["interior_points"].to(device)
-            
-            if pts.shape[0] > 0:
-                if not pts.requires_grad:
-                    pts = pts.detach().clone().requires_grad_(True)
-                    
-                A_z_star = self.model.forward_network(net_key, pts)
-                
-                # Giữ luồng đạo hàm không gian cho Net_nu
-                if hasattr(self.model, 'nu_networks') and net_key in self.model.nu_networks:
-                    nu_star_pred = self.model.forward_nu_network(net_key, pts)
-                    nu_star_net = nu_star_pred if nu_star_pred is not None else None
-                else:
-                    nu_star_net = None
-
-                nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
-                hx, hy = domain.evaluate_magnetization_vector(pts)
-                hx, hy = hx.to(device), hy.to(device)
-                jz = domain.evaluate_current_density(pts).to(device)
-                
-                res_pde = self.pde_evaluator.compute_linear_pde_residual(
-                    xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_star_net=nu_star_net
-                )
-                fading_w = self.pde_evaluator.compute_fading_weight(domain, pts)
-                
-                loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
-                w_pde = float(domain.training_config.pde_weight)
-
-                scaled_pde_loss = w_pde * loss_pde_domain
-                total_loss = total_loss + scaled_pde_loss
-                pde_loss_sum += scaled_pde_loss.item()
-
-            outer_pts = data.get("outer_surface_points", data.get("surface_points", torch.empty((0, 2)))).to(device)
-            if outer_pts.shape[0] > 0 and net_key != 'background':
-                if not outer_pts.requires_grad:
-                    outer_pts = outer_pts.detach().clone().requires_grad_(True)
-                    
-                w_if_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
-                    key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
-                )
-                scaled_if_loss = w_if_loss
-                total_loss = total_loss + scaled_if_loss
-
-                az_if_sum += val_l.item()
-                bn_if_sum += bn_l.item()
-                ht_if_sum += ht_l.item()
-                weighted_if_sum += scaled_if_loss.item()
-
-        for pair_key, pair_data in shared_dict.items():
-            pts = pair_data["interface_points"].to(device)
-            if pts.shape[0] > 0:
-                if not pts.requires_grad:
-                    pts = pts.detach().clone().requires_grad_(True)
-
-                w_shared_loss, val_l, bn_l, ht_l = self.interface_evaluator._compute_pair_components(
-                    key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
-                    key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts
-                )
-                scaled_shared_loss = w_shared_loss
-                total_loss = total_loss + scaled_shared_loss
-
-                az_if_sum += val_l.item()
-                bn_if_sum += bn_l.item()
-                ht_if_sum += ht_l.item()
-                weighted_if_sum += scaled_shared_loss.item()
-
-        self.last_loss_breakdown = {
-            "pde_loss": pde_loss_sum,
-            "interface_Az": az_if_sum,
-            "interface_Bn": bn_if_sum,
-            "interface_Ht": ht_if_sum,
-            "weighted_interface": weighted_if_sum,
-            "total": total_loss.item()
-        }
-
-        return total_loss
+        return compute_loss(self, domains_data)
 
     def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
-        self.model.train()
-        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
-
-        eta_min = getattr(t_cfg, 'adam_eta_min', 1e-6)
-        max_clip_norm = getattr(t_cfg, 'grad_clip_max_norm', 1.0)
-        max_non_finite_streak = getattr(t_cfg, 'max_non_finite_streak', 5)
-        log_interval = getattr(t_cfg, 'adam_log_interval', 100)
-
-        for param_group in self.optimizer_adam.param_groups:
-            param_group['initial_lr'] = self.base_learning_rate_adam
-            param_group['lr'] = self.base_learning_rate_adam
-            
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_adam, T_max=max(epochs, 1), eta_min=eta_min)
-        stop_reason = f"Hoàn thành toàn bộ {epochs} epochs."
-        non_finite_streak = 0
-        self.completed_adam_epochs = 0
-        
-        for epoch in range(epochs):
-            if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
-                domains_data = resample_fn()
-
-            self.optimizer_adam.zero_grad(set_to_none=True)
-            loss = self.compute_loss(domains_data)
-            
-            if not torch.isfinite(loss):
-                non_finite_streak += 1
-                if non_finite_streak >= max_non_finite_streak:
-                    stop_reason = f"Dừng sớm do Loss không hữu hạn (NaN/Inf) liên tiếp {max_non_finite_streak} lần."
-                    break
-                continue
-            non_finite_streak = 0
-                
-            loss.backward()
-            if max_clip_norm > 0.0:
-                torch.nn.utils.clip_grad_norm_(self.model.networks.parameters(), max_norm=max_clip_norm)
-            self.optimizer_adam.step()
-            scheduler_adam.step()
-            
-            self.completed_adam_epochs = epoch + 1
-            current_loss_value = loss.item()
-            
-            if (epoch + 1) == 1 or (epoch + 1) % log_interval == 0:
-                bd = self.last_loss_breakdown
-                print(
-                    f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
-                    f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
-                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
-                )
-                
-            if self.visualizer and (epoch + 1) % self.visualizer_update_interval == 0:
-                self.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)
-                
-        print(f"[*] KẾT THÚC ADAM. Lý do: {stop_reason}")
-        return domains_data
+        return train_adam(self, epochs, domains_data, dynamic_resampling=dynamic_resampling, resample_fn=resample_fn, resample_interval=resample_interval)
 
     def train_lbfgs(self, max_iterations, domains_data):
-        if max_iterations <= 0:
-            return domains_data
-
-        self.model.train()
-        t_cfg = getattr(self.electro_magnetic_pinn, 'training_config', None)
-        log_interval = getattr(t_cfg, 'lbfgs_log_interval', 25)
-
-        self.optimizer_lbfgs = optim.LBFGS(
-            self.model.networks.parameters(),
-            lr=self.lbfgs_learning_rate,
-            max_iter=max_iterations,
-            max_eval=int(max_iterations * 1.25),
-            tolerance_grad=self.lbfgs_tolerance_gradient,
-            tolerance_change=self.lbfgs_tolerance_change,
-            history_size=self.lbfgs_history_size,
-            line_search_fn="strong_wolfe"
-        )
-
-        lbfgs_counter = [0]
-        
-        def closure():
-            self.optimizer_lbfgs.zero_grad(set_to_none=True)
-            loss = self.compute_loss(domains_data)
-            if not torch.isfinite(loss):
-                return loss
-            loss.backward()
-            
-            lbfgs_counter[0] += 1
-            if lbfgs_counter[0] == 1 or lbfgs_counter[0] % log_interval == 0:
-                bd = self.last_loss_breakdown
-                print(
-                    f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
-                    f"PDE = {bd.get('pde_loss', 0.0):.3e}"
-                )
-            return loss
-            
-        self.optimizer_lbfgs.step(closure)
-        return domains_data
+        return train_lbfgs(self, max_iterations, domains_data)
 
 ========================================
 
 --- FILE: utils\modify_project.py ---
+
+import os
+
+def create_build_system_file(base_dir):
+    engine_dir = os.path.join(base_dir, "electro_magnetic_pinn_engine")
+    os.makedirs(engine_dir, exist_ok=True)
+    file_path = os.path.join(engine_dir, "build_system.py")
+    content = '''import torch
+from architectures.xpinn_architecture import XPINNArchitecture
+from training_engine.training_manager import TrainingManager
+from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
+from physics_domain.physical_equations.interface_loss import InterfaceLoss
+from physics_domain.collocation_sampler import CollocationSampler
+from utils.training_visualizer import TrainingVisualizer
+
+def _build_system(pinn_instance):
+    pinn_instance.simulation_domain_engine_instance.validate_non_overlapping_domains()
+    pinn_instance.computation_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[*] Hệ thống vật lý được khởi tạo trên: {pinn_instance.computation_device}")
+    
+    pinn_instance.collocation_sampler_instance = CollocationSampler(
+        electro_magnetic_pinn=pinn_instance,
+        device=pinn_instance.computation_device
+    )
+    
+    pinn_instance.pinn_architecture_instance = XPINNArchitecture(
+        electro_magnetic_pinn=pinn_instance
+    ).to(pinn_instance.computation_device)
+    
+    pinn_instance.maxwell_pde_loss_instance = MaxwellPDELoss(electro_magnetic_pinn=pinn_instance)
+    pinn_instance.interface_loss_instance = InterfaceLoss(electro_magnetic_pinn=pinn_instance)
+    
+    pinn_instance.visualizer_instance = None
+    if pinn_instance.visualization_config.active:
+        pinn_instance.visualizer_instance = TrainingVisualizer(electro_magnetic_pinn=pinn_instance)
+        
+    pinn_instance.training_manager_instance = TrainingManager(electro_magnetic_pinn=pinn_instance)
+
+    domains_data = pinn_instance.collocation_sampler_instance.generate_all_domain_points()
+    pre_ep = getattr(pinn_instance.training_config, 'pretrain_nu_epochs', 300)
+    pre_lr = getattr(pinn_instance.training_config, 'pretrain_nu_lr', 1e-2)
+    pinn_instance.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
+'''
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã tạo file: {file_path}")
+
+
+def create_evaluate_fields_file(base_dir):
+    engine_dir = os.path.join(base_dir, "electro_magnetic_pinn_engine")
+    file_path = os.path.join(engine_dir, "evaluate_fields.py")
+    content = '''import torch
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+def evaluate_fields(pinn_instance, points_tensor, return_numpy=False):
+    pinn_arch = pinn_instance.pinn_architecture_instance
+    sim_domain = pinn_instance.simulation_domain_engine_instance
+    device = points_tensor.device
+
+    phys_props = sim_domain.evaluate_global_physical_properties(points_tensor)
+    mat_id = phys_props["material_classification"]
+
+    A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+    B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+    B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+
+    for domain in sim_domain.domains_list:
+        d_id = domain.domain_id
+        net_key = resolve_domain_net_key(domain, pinn_arch)
+        mask_bool = (mat_id == float(d_id))
+        
+        if mask_bool.any():
+            Az_star = pinn_arch.forward_network(net_key, points_tensor)
+            grad_star = torch.autograd.grad(
+                outputs=Az_star, inputs=points_tensor,
+                grad_outputs=torch.ones_like(Az_star), create_graph=False
+            )[0]
+
+            Az_phys = Az_star * pinn_instance.A0
+            Bx_phys = grad_star[:, 1:2] * pinn_instance.A0
+            By_phys = -grad_star[:, 0:1] * pinn_instance.A0
+
+            A_z_phys = torch.where(mask_bool, Az_phys, A_z_phys)
+            B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
+            B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
+
+    if return_numpy:
+        return (
+            A_z_phys.detach().cpu().numpy(),
+            B_x_phys.detach().cpu().numpy(),
+            B_y_phys.detach().cpu().numpy()
+        )
+
+    return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
+'''
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã tạo file: {file_path}")
+
+
+def create_plot_fields_file(base_dir):
+    engine_dir = os.path.join(base_dir, "electro_magnetic_pinn_engine")
+    file_path = os.path.join(engine_dir, "plot_fields.py")
+    content = '''import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm, Normalize
+from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsize=(12, 10)):
+    sim_domain = pinn_instance.simulation_domain_engine_instance
+    vis_cfg = pinn_instance.visualization_config
+    pinn_arch = pinn_instance.pinn_architecture_instance
+
+    xb, yb = sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
+    x_coords = np.linspace(xb[0], xb[1], resolution)
+    y_coords = np.linspace(yb[0], yb[1], resolution)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    
+    device = pinn_instance.computation_device
+    eval_pts = torch.tensor(
+        np.column_stack((X_grid.ravel(), Y_grid.ravel())),
+        dtype=torch.float32, device=device
+    ).requires_grad_(True)
+    
+    A_z_np, B_x_np, B_y_np = pinn_instance.evaluate_fields(eval_pts, return_numpy=True)
+
+    A_z_grid = A_z_np.reshape(resolution, resolution)
+    B_x_grid = B_x_np.reshape(resolution, resolution)
+    B_y_grid = B_y_np.reshape(resolution, resolution)
+    B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
+
+    props = sim_domain.evaluate_global_physical_properties(eval_pts)
+    mat_ids = props["material_classification"].squeeze()
+    
+    mu_r_tensor = torch.ones_like(mat_ids, device=device)
+    B_mag_pts = torch.tensor(B_mag_grid.ravel(), dtype=torch.float32, device=device).unsqueeze(1)
+
+    for domain in sim_domain.domains_list:
+        if getattr(domain, 'domain_name', '') != 'background':
+            d_id = domain.domain_id
+            net_key = resolve_domain_net_key(domain, pinn_arch)
+            mask = (mat_ids == float(d_id))
+            if mask.any():
+                if getattr(domain.physics_config, 'is_nonlinear', False):
+                    if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
+                        with torch.no_grad():
+                            nu_star_pred = pinn_arch.forward_nu_network(net_key, eval_pts[mask])
+                            mu_r_vals = (1.0 / torch.clamp(nu_star_pred, min=1e-6)).view(-1)
+                            mu_r_tensor[mask] = mu_r_vals
+                    else:
+                        nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
+                        mu_r_vals = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys, min=1e-6)).view(-1)
+                        mu_r_tensor[mask] = mu_r_vals
+                else:
+                    mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
+                    mu_r_tensor[mask] = mu_val
+
+    mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
+
+    fig, axs = plt.subplots(2, 2, figsize=figsize)
+    n_levels = getattr(vis_cfg, 'contour_levels', 60)
+    
+    # --- 1. A_z Plot ---
+    az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
+    az_vmax = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_grid))
+    levels_az = np.linspace(az_vmin, az_vmax, n_levels) if az_vmin != az_vmax else n_levels
+    c0 = axs[0, 0].contourf(X_grid, Y_grid, A_z_grid, levels=levels_az, cmap=vis_cfg.az_cmap)
+    fig.colorbar(c0, ax=axs[0, 0], label=r"$A_z$ (Wb/m)")
+    axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
+    axs[0, 0].set_aspect('equal')
+
+    # --- 2. |B| Magnitude Plot ---
+    b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
+    b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+    b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
+    levels_b = np.linspace(b_min, b_max, n_levels)
+    c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
+    fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
+    axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
+    axs[0, 1].set_aspect('equal')
+
+    # --- 3. Relative Permeability \\mu_r Plot ---
+    v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
+    v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
+    mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
+    
+    if getattr(vis_cfg, 'mur_scale', 'linear') == 'log':
+        levels_mur = np.logspace(np.log10(max(v_min_mur, 1e-3)), np.log10(v_max_mur), n_levels)
+        norm_mur = LogNorm(vmin=max(v_min_mur, 1.0), vmax=v_max_mur)
+        lbl_mur = r"$\\mu_r$ (Log Scale)"
+    else:
+        levels_mur = np.linspace(v_min_mur, v_max_mur, n_levels)
+        norm_mur = Normalize(vmin=v_min_mur, vmax=v_max_mur)
+        lbl_mur = r"$\\mu_r$ (Linear Scale: 0 - 3000)"
+
+    c2 = axs[1, 0].contourf(X_grid, Y_grid, mu_r_clamped, levels=levels_mur, cmap=vis_cfg.mur_cmap, norm=norm_mur)
+    fig.colorbar(c2, ax=axs[1, 0], label=lbl_mur)
+    axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
+    axs[1, 0].set_aspect('equal')
+
+    # --- 4. B_y Component Plot ---
+    by_vmin = vis_cfg.by_vmin if vis_cfg.by_vmin is not None else float(np.min(B_y_grid))
+    by_vmax = vis_cfg.by_vmax if vis_cfg.by_vmax is not None else float(np.max(B_y_grid))
+    levels_by = np.linspace(by_vmin, by_vmax, n_levels) if by_vmin != by_vmax else n_levels
+    c3 = axs[1, 1].contourf(X_grid, Y_grid, B_y_grid, levels=levels_by, cmap=vis_cfg.by_cmap)
+    fig.colorbar(c3, ax=axs[1, 1], label=r"$B_y$ (T)")
+    axs[1, 1].set_title(r"Field Component ($B_y$)")
+    axs[1, 1].set_aspect('equal')
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+        
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, axs
+'''
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã tạo file: {file_path}")
+
+
+def create_execute_training_process_file(base_dir):
+    engine_dir = os.path.join(base_dir, "electro_magnetic_pinn_engine")
+    file_path = os.path.join(engine_dir, "execute_training_process.py")
+    content = '''def execute_training_process(pinn_instance):
+    if pinn_instance.pinn_architecture_instance is None:
+        pinn_instance._build_system()
+
+    def resample_data_fn():
+        return pinn_instance.collocation_sampler_instance.generate_all_domain_points()
+
+    domains_data = resample_data_fn()
+    t_cfg = pinn_instance.training_config
+
+    pre_ep = getattr(t_cfg, 'pretrain_nu_epochs', 300)
+    pre_lr = getattr(t_cfg, 'pretrain_nu_lr', 1e-2)
+    pinn_instance.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
+
+    total_adam_epochs = t_cfg.number_of_adam_epochs
+    warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
+    epochs_warmup = int(total_adam_epochs * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
+    epochs_adaptation = (total_adam_epochs - epochs_warmup) if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) else 0
+
+    if getattr(t_cfg, 'enable_linear_warmup_stage', True) and epochs_warmup > 0:
+        print(f"\\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
+        domains_data = pinn_instance.training_manager_instance.train_adam(
+            epochs=epochs_warmup, domains_data=domains_data,
+            dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
+            resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+        )
+
+    if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
+        fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 10))
+        alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 1.0))
+        fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
+        epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
+
+        fit_ep = getattr(t_cfg, 'fit_nu_epochs', 250)
+        fit_lr = getattr(t_cfg, 'fit_nu_lr', 3e-3)
+
+        print(f"\\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
+        for f_iter in range(fpi_iters):
+            print(f"\\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters}] <<<")
+            domains_data = pinn_instance.training_manager_instance.train_adam(
+                epochs=epochs_per_fpi, domains_data=domains_data,
+                dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
+                resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+            )
+            max_diff = pinn_instance.training_manager_instance.fit_nu_network_step(
+                domains_data, alpha_damping=alpha_damp, epochs=fit_ep, lr=fit_lr
+            )
+            print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+            if max_diff < fpi_tol:
+                print(f"[✔] FPI Hội tụ sớm tại vòng {f_iter + 1}!")
+                break
+
+    if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
+        if getattr(pinn_instance.sampler_config, 'resample_points_before_lbfgs_stage', True):
+            domains_data = resample_data_fn()
+
+        lbfgs_iters = int(t_cfg.number_of_lbfgs_iterations)
+        print(f"\\n--- [STAGE 2] L-BFGS Refinement ({lbfgs_iters} Iterations) ---")
+        pinn_instance.training_manager_instance.train_lbfgs(max_iterations=lbfgs_iters, domains_data=domains_data)
+
+    if pinn_instance.visualizer_instance:
+        pinn_instance.visualizer_instance.generate_animations()
+'''
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã tạo file: {file_path}")
+
+
+def create_engine_init_file(base_dir):
+    engine_dir = os.path.join(base_dir, "electro_magnetic_pinn_engine")
+    file_path = os.path.join(engine_dir, "__init__.py")
+    content = '''from .build_system import _build_system
+from .evaluate_fields import evaluate_fields
+from .plot_fields import plot_fields
+from .execute_training_process import execute_training_process
+
+__all__ = [
+    "_build_system",
+    "evaluate_fields",
+    "plot_fields",
+    "execute_training_process"
+]
+'''
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã tạo file: {file_path}")
+
+
+def update_electro_magnetic_pinn_class(base_dir):
+    file_path = os.path.join(base_dir, "electro_magnetic_pinn.py")
+    content = '''import torch
+import torch.nn as nn
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+from types import SimpleNamespace
+from simulation_domain_engine.simulation_domain import SimulationDomain
+from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+from electro_magnetic_pinn_engine.build_system import _build_system
+from electro_magnetic_pinn_engine.evaluate_fields import evaluate_fields
+from electro_magnetic_pinn_engine.plot_fields import plot_fields
+from electro_magnetic_pinn_engine.execute_training_process import execute_training_process
+
+
+class ElectroMagneticPINN:
+    def __init__(self):
+        self.sampler_config = SimpleNamespace(
+            dynamic_resampling=True,
+            resample_interval=100,
+            resample_points_before_lbfgs_stage=True
+        )
+        
+        self.training_config = SimpleNamespace(
+            enable_linear_warmup_stage=True,
+            enable_nonlinear_adaptation_stage=True,
+            enable_lbfgs_refinement_stage=True,
+            linear_warmup_epochs_ratio=0.3,
+
+            adam_learning_rate=1e-3,
+            number_of_adam_epochs=2500,
+            target_loss_threshold=1e-5,
+
+            fpi_outer_iterations=10,
+            fpi_alpha_damping=1.0,
+            fpi_tolerance=1e-5,
+
+            pretrain_nu_epochs=300,
+            pretrain_nu_lr=1e-2,
+            fit_nu_epochs=250,
+            fit_nu_lr=3e-3,
+
+            grad_clip_max_norm=1.0,
+            adam_eta_min=1e-6,
+            max_non_finite_streak=5,
+            adam_log_interval=100,
+            lbfgs_log_interval=25,
+
+            lbfgs_learning_rate=0.5,
+            number_of_lbfgs_iterations=1500,
+            lbfgs_maximum_evaluations=2500,
+            lbfgs_tolerance_gradient=1e-12,
+            lbfgs_tolerance_change=1e-12,
+            lbfgs_history_size=50
+        )
+        
+        self.visualization_config = SimpleNamespace(
+            active=False,
+            update_interval=200,
+            output_directory="animation_frames",
+            resolution=80,
+            generate_gif_animation=True,
+            gif_filename="training_process.gif",
+            generate_mp4_video=True,
+            mp4_filename="training_process.mp4",
+            animation_fps=5,
+            gif_fps=5,
+            mp4_codec="libx264",
+            mp4_quality=8,
+
+            contour_levels=60,
+
+            res_scale="log",          
+            res_vmin=1e-4,            
+            res_vmax=1e1,             
+            res_cmap="Reds",
+
+            mur_scale="linear",       
+            mur_vmin=0.0,             
+            mur_vmax=3000.0,          
+            mur_cmap="turbo",         
+
+            az_scale="linear",        
+            az_vmin=None,             
+            az_vmax=None,             
+            az_cmap="jet",
+
+            b_mag_scale="linear",     
+            b_mag_vmin=0.0,           
+            b_mag_vmax=1.8,           
+            b_mag_cmap="jet",
+
+            by_scale="linear",        
+            by_vmin=None,             
+            by_vmax=None,             
+            by_cmap="coolwarm"
+        )
+        
+        self.simulation_domain_engine_instance = SimulationDomain(electro_magnetic_pinn=self)
+        self.pinn_architecture_instance = None
+        self.training_manager_instance = None
+        self.maxwell_pde_loss_instance = None
+        self.interface_loss_instance = None
+        self.collocation_sampler_instance = None
+        self.visualizer_instance = None
+
+    @property
+    def physics_config(self):
+        return self.simulation_domain_engine_instance.physics_config
+
+    @property
+    def L0(self):
+        return self.simulation_domain_engine_instance.L0
+
+    @property
+    def H0(self):
+        return self.simulation_domain_engine_instance.H0
+
+    @property
+    def nu0(self):
+        return self.simulation_domain_engine_instance.nu0
+
+    @property
+    def A0(self):
+        return self.simulation_domain_engine_instance.A0
+
+    def update_electromagnetic_pinn(self):
+        self._build_system()
+
+    def _build_system(self):
+        return _build_system(self)
+
+    def evaluate_fields(self, points_tensor, return_numpy=False):
+        return evaluate_fields(self, points_tensor, return_numpy=return_numpy)
+
+    def plot_fields(self, resolution=180, save_path=None, show=False, figsize=(12, 10)):
+        return plot_fields(self, resolution=resolution, save_path=save_path, show=show, figsize=figsize)
+
+    def execute_training_process(self):
+        return execute_training_process(self)
+'''
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã tái cấu trúc lớp ElectroMagneticPINN trong: {file_path}")
+
+
+def main():
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    print("[*] Đang tiến hành tách mô-đun cho ElectroMagneticPINN...")
+    
+    create_build_system_file(base_dir)
+    create_evaluate_fields_file(base_dir)
+    create_plot_fields_file(base_dir)
+    create_execute_training_process_file(base_dir)
+    create_engine_init_file(base_dir)
+    update_electro_magnetic_pinn_class(base_dir)
+    
+    print("[✔] Hoàn tất quá trình tách file cho ElectroMagneticPINN!")
+
 
 
 ========================================

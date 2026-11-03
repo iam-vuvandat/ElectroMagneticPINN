@@ -4,7 +4,7 @@ from training_engine.training_manager import TrainingManager
 from physics_domain.physical_equations.maxwell_pde_loss import MaxwellPDELoss
 from physics_domain.physical_equations.interface_loss import InterfaceLoss
 from physics_domain.collocation_sampler import CollocationSampler
-from utils.training_visualizer import TrainingVisualizer
+from training_visualizer.training_visualizer import TrainingVisualizer
 
 def _build_system(pinn_instance):
     pinn_instance.simulation_domain_engine_instance.validate_non_overlapping_domains()
