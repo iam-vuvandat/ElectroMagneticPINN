@@ -54,7 +54,7 @@ model.training_config.enable_lbfgs_refinement_stage = True
 
 # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (1500 EPOCHS / BƯỚC) ---
 epochs_warmup_target = 1500
-fpi_iterations = 20
+fpi_iterations = 15
 epochs_per_fpi = 1500                     # Mỗi bước FPI chạy 1500 Adam epochs
 
 model.training_config.fpi_outer_iterations = fpi_iterations
