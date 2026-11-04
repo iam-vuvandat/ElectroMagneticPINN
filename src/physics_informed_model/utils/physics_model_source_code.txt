@@ -1293,9 +1293,10 @@ class MaxwellPDELoss:
         dHy_dx_star = grad_Hy[:, 0:1] * self.L0
         dHx_dy_star = grad_Hx[:, 1:2] * self.L0
 
+        # Trả về Residual vật lý chuẩn của Maxwell (KHÔNG CHIA nu_scale)
         res_pde = dHy_dx_star - dHx_dy_star - J_z_star
-        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
-        return res_pde / nu_scale
+        return res_pde
+
 
     def compute_fading_weight(self, domain, xy):
         beta = float(getattr(domain.training_config, 'pde_fading_beta', 80.0))
@@ -2596,12 +2597,12 @@ from electro_magnetic_pinn import ElectroMagneticPINN
 
 
 def run_high_precision_fpi_simulation_test():
-    output_dir = "figure_high_precision_simulation_test"
+    output_dir = "figure_high_precision_fpi_simulation_test"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (DÙNG MISH, LOGSCALE MUR & TINH CHỈNH CẤU TRÚC)...")
+    print("[*] KHỞI TẠO MÔ PHỎNG XPINN ĐỘ CHÍNH XÁC CAO (FPI EQUALIZED ADAM EPOCHS = 1500)...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
@@ -2624,7 +2625,7 @@ def run_high_precision_fpi_simulation_test():
     model.sampler_config.resample_points_before_lbfgs_stage = True
 
     # =========================================================================
-    # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN CHO ADAM HỘI TỤ SÂU
+    # 3. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN VÀ OPTIMIZER
     # =========================================================================
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
@@ -2632,11 +2633,11 @@ def run_high_precision_fpi_simulation_test():
 
     # --- CẤU HÌNH SỐ EPOCH VÀ FPI ĐỒNG ĐỀU (1500 EPOCHS / BƯỚC) ---
     epochs_warmup_target = 1500
-    fpi_iterations = 10
+    fpi_iterations = 20
     epochs_per_fpi = 1500                     # Mỗi bước FPI chạy 1500 Adam epochs
-
+    
     model.training_config.fpi_outer_iterations = fpi_iterations
-    model.training_config.fpi_alpha_damping = 1.0     # Damping 1.0 cho FPI
+    model.training_config.fpi_alpha_damping = 0.7     # Damping 0.7 giúp FPI hội tụ ổn định
     model.training_config.fpi_tolerance = 1e-6
 
     # Cấu hình tổng số Adam epochs trong training_config
@@ -2654,29 +2655,166 @@ def run_high_precision_fpi_simulation_test():
     # Cấu hình huấn luyện cho Mạng phụ Net_nu
     model.training_config.pretrain_nu_epochs = 1000  # Pre-train Net_nu 1000 epochs
     model.training_config.pretrain_nu_lr = 5e-3
-    model.training_config.fit_nu_epochs = 800        # Fit Net_nu 800 epochs ở mỗi bước FPI
-    model.training_config.fit_nu_lr = 3e-3
+    model.training_config.fit_nu_epochs = 1200       # Fit Net_nu 1200 epochs ở mỗi bước FPI
+    model.training_config.fit_nu_lr = 2e-3
 
     # Cấu hình L-BFGS Refinement tinh chỉnh sâu ở giai đoạn cuối
     model.training_config.number_of_lbfgs_iterations = 3000
     model.training_config.lbfgs_learning_rate = 0.5
 
     # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA (THANG LOGSCALE CHO MU_R TỪ 1.0 ĐẾN 7000.0)
+    # 4. CẤU HÌNH TRỰC QUAN HÓA (THANG LINEAR TRONG KHOẢNG [0.0 - 3000.0])
     # =========================================================================
     model.visualization_config.active = True
-    model.visualization_config.update_interval = 100
+    model.visualization_config.update_interval = 100          # Cứ 100 epochs xuất 1 frame
     model.visualization_config.output_directory = output_dir
     model.visualization_config.resolution = 160
     model.visualization_config.generate_gif_animation = True
-    model.visualization_config.gif_filename = "high_precision_mur_training_process.gif"
+    model.visualization_config.gif_filename = "training_process.gif"
     model.visualization_config.generate_mp4_video = True
-    model.visualization_config.mp4_filename = "high_precision_mur_training_process.mp4"
-    model.visualization_config.animation_fps = 5.0
-    model.visualization_config.gif_fps = 5.0
-    model.visualization_config.mp4_codec = "libx264"
-    model.visualization_config.mp4_quality = 8
+    model.visualization_config.mp4_filename = "training_process.mp4"
+    model.visualization_config.animation_fps = 3.0
+    model.visualization_config.gif_fps = 3.0
     model.visualization_config.contour_levels = 80
+
+    # Thiết lập độ từ thẩm theo thang tuyến tính (linear) giới hạn trong khoảng (0.0, 3000.0)
+    model.visualization_config.mur_scale = "linear"
+    model.visualization_config.mur_vmin = 0.0
+    model.visualization_config.mur_vmax = 3000.0
+    model.visualization_config.mur_cmap = "turbo"
+
+    # =========================================================================
+    # 5. KHAI BÁO CÁC MIỀN VẬT LIỆU
+    # =========================================================================
+
+    # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
+    iron_yoke = sim_domain.create_material_domain(
+        domain_name="iron_yoke",
+        material_name="steel_1008",
+        outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
+    )
+    iron_yoke.physics_config.relative_permeability = 1000.0
+    iron_yoke.physics_config.coercive = [0.0, 0.0]
+    iron_yoke.physics_config.current = 0.0
+    iron_yoke.physics_config.is_nonlinear = True
+
+    # Do đã tự động cân bằng theo độ từ thẩm (Domain-level Scaling), pde_weight đưa về 1.0
+    iron_yoke.training_config.pde_weight = 1.0
+    iron_yoke.training_config.pde_nonlinear_weight = 1.0
+    iron_yoke.training_config.interface_weight = 1.0
+    iron_yoke.training_config.interface_potential_weight = 1000.0
+    iron_yoke.training_config.interface_bn_weight = 1200.0
+    iron_yoke.training_config.interface_ht_weight = 1500.0
+    iron_yoke.training_config.pde_fading_beta = 80.0
+    iron_yoke.training_config.sampling_density_multiplier = 1.0
+    iron_yoke.training_config.number_of_interior_points = 8000
+    iron_yoke.training_config.number_of_surface_points = 4000
+
+    iron_yoke.network_config.hidden_layers = 5
+    iron_yoke.network_config.hidden_neurons = 128
+    iron_yoke.network_config.activation_function = nn.Mish()
+    iron_yoke.network_config.fourier_features = True
+    iron_yoke.network_config.fourier_sigma = 1.2
+    iron_yoke.network_config.fourier_mapping_size = 256
+
+    iron_yoke.nu_network_config.hidden_layers = 3
+    iron_yoke.nu_network_config.hidden_neurons = 64
+    iron_yoke.nu_network_config.activation_function = nn.Mish()
+    iron_yoke.nu_network_config.fourier_features = True
+    iron_yoke.nu_network_config.fourier_sigma = 1.0
+    iron_yoke.nu_network_config.fourier_mapping_size = 64
+
+    iron_yoke.build_domain()
+
+    # --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
+    magnet_left = sim_domain.create_material_domain(
+        domain_name="magnet_left",
+        material_name="N30UH",
+        outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
+        coercive_direction=(0, 1)
+    )
+    magnet_left.physics_config.relative_permeability = 1.05
+    magnet_left.physics_config.current = 0.0
+    magnet_left.physics_config.is_nonlinear = False
+
+    magnet_left.training_config.number_of_interior_points = 2500
+    magnet_left.training_config.number_of_surface_points = 1500
+
+    magnet_left.network_config.hidden_layers = 4
+    magnet_left.network_config.hidden_neurons = 64
+    magnet_left.network_config.activation_function = nn.Mish()
+    magnet_left.network_config.fourier_features = True
+    magnet_left.network_config.fourier_sigma = 1.0
+    magnet_left.network_config.fourier_mapping_size = 128
+
+    magnet_left.build_domain()
+
+    # --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
+    magnet_right = sim_domain.create_material_domain(
+        domain_name="magnet_right",
+        material_name="N30UH",
+        outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]],
+        coercive_direction=(0, -1)
+    )
+    magnet_right.physics_config.relative_permeability = 1.05
+    magnet_right.physics_config.current = 0.0
+    magnet_right.physics_config.is_nonlinear = False
+
+    magnet_right.training_config.number_of_interior_points = 2500
+    magnet_right.training_config.number_of_surface_points = 1500
+
+    magnet_right.network_config.hidden_layers = 4
+    magnet_right.network_config.hidden_neurons = 64
+    magnet_right.network_config.activation_function = nn.Mish()
+    magnet_right.network_config.fourier_features = True
+    magnet_right.network_config.fourier_sigma = 1.0
+    magnet_right.network_config.fourier_mapping_size = 128
+
+    magnet_right.build_domain()
+
+    # --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
+    bg_training_cfg = SimpleNamespace(
+        pde_weight=1.0,
+        interface_weight=1.0,
+        interface_potential_weight=800.0,
+        interface_bn_weight=1000.0,
+        interface_ht_weight=1200.0,
+        pde_fading_beta=80.0,
+        sampling_density_multiplier=1.0,
+        number_of_interior_points=8000,
+        number_of_surface_points=0
+    )
+    bg_network_cfg = SimpleNamespace(
+        hidden_layers=4,
+        hidden_neurons=64,
+        activation_function=nn.Mish(),
+        fourier_features=True,
+        fourier_sigma=1.0,
+        fourier_mapping_size=128
+    )
+    sim_domain.build_background_domain(
+        domain_name="background",
+        training_config=bg_training_cfg,
+        network_config=bg_network_cfg
+    )
+
+    # =========================================================================
+    # 6. THỰC THI HUẤN LUYỆN VÀ TẠO ANIMATION
+    # =========================================================================
+    model.update_electromagnetic_pinn()
+
+    print("[*] Bắt đầu tiến trình huấn luyện độ chính xác cao...")
+    model.execute_training_process()
+
+    print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
+    model.plot_fields(
+        resolution=200,
+        save_path=f"{output_dir}/fpi_final_fields.png",
+        show=False,
+        figsize=(12, 10)
+    )
+    print(f"[✔] HOÀN THÀNH! Kết quả và animation đã lưu tại: {output_dir}/")
+
 
 
 ========================================
@@ -2806,12 +2944,12 @@ def run_high_precision_fpi_simulation_test():
     iron_yoke.physics_config.current = 0.0
     iron_yoke.physics_config.is_nonlinear = True
 
-    iron_yoke.training_config.pde_weight = 5.0
+    iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.pde_nonlinear_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.0
     iron_yoke.training_config.interface_potential_weight = 800.0
-    iron_yoke.training_config.interface_bn_weight = 1000.0
-    iron_yoke.training_config.interface_ht_weight = 1200.0
+    iron_yoke.training_config.interface_bn_weight = 2000.0
+    iron_yoke.training_config.interface_ht_weight = 2000.0
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 6000
@@ -3056,6 +3194,7 @@ __all__ = [
 
 --- FILE: training_engine\compute_loss.py ---
 
+import numpy as np
 import torch
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
 
@@ -3089,10 +3228,12 @@ def compute_loss(training_manager_instance, domains_data):
             
             if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
                 nu_star_pred = model.forward_nu_network(net_key, pts)
-                # Giu nguyen do thi autograd de tinh dao ham grad(nu) trong Maxwell PDE
                 nu_star_net = nu_star_pred if nu_star_pred is not None else None
+                nu_effective = nu_star_pred
             else:
                 nu_star_net = None
+                nu_phys_eval = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                nu_effective = nu_phys_eval / pinn.simulation_domain_engine_instance.nu0
 
             nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
             hx, hy = domain.evaluate_magnetization_vector(pts)
@@ -3105,9 +3246,18 @@ def compute_loss(training_manager_instance, domains_data):
             fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
             
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
-            w_pde = float(domain.training_config.pde_weight)
+            
+            # CÂN BẰNG TỰ ĐỘNG DẠNG LOGARITHM MỀM (Soft Logarithmic Scaling)
+            with torch.no_grad():
+                mean_nu_star = torch.mean(nu_effective).item()
+                mean_mur = 1.0 / max(mean_nu_star, 1e-6)
+                # Tăng nhẹ theo log1p(mur), giới hạn trong khoảng [1.0, 10.0]
+                auto_domain_weight = float(min(max(1.0 + np.log1p(mean_mur), 1.0), 10.0))
 
-            scaled_pde_loss = w_pde * loss_pde_domain
+            user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
+            effective_pde_weight = user_base_weight * auto_domain_weight
+
+            scaled_pde_loss = effective_pde_weight * loss_pde_domain
             total_loss = total_loss + scaled_pde_loss
             pde_loss_sum += scaled_pde_loss.item()
 
@@ -3684,18 +3834,21 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
                     with torch.no_grad():
                         nu_star_pred = model.forward_nu_network(net_key, eval_points)
                         nu_dom = nu_star_pred * sim_domain.nu0
+                        nu_star_net_eval = nu_star_pred
                 else:
                     B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
                     nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
+                    nu_star_net_eval = None
             else:
                 nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
+                nu_star_net_eval = None
 
             hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
             hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
             jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
 
             res_pde = pde_evaluator.compute_linear_pde_residual(
-                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
+                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom, nu_star_net=nu_star_net_eval
             )
 
             A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
@@ -3931,9 +4084,9 @@ def get_base_dir():
             return cand
     return os.path.abspath(os.path.join(script_dir, ".."))
 
-def simplify_background_sampling(base_dir):
-    """1. Đơn giản hóa thuật toán lấy điểm không khí nền (bỏ đệm mật độ cao bọc quanh vật liệu)."""
-    file_path = os.path.join(base_dir, "physics_domain", "collocation_sampler.py")
+def update_maxwell_pde_loss(base_dir):
+    """1. Loại bỏ việc chia nu_scale trong maxwell_pde_loss.py để không làm bùng nổ Gradient trong lõi sắt."""
+    file_path = os.path.join(base_dir, "physics_domain", "physical_equations", "maxwell_pde_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
         return
@@ -3941,114 +4094,52 @@ def simplify_background_sampling(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    new_fn = '''    def sample_background_interior_points(self, simulation_domain_object, number_of_points):
-        if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+    new_fn = """    def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
+        if nu_star_net is not None:
+            nu_star = nu_star_net
+        else:
+            nu_star = nu_phys / self.nu0
 
-        x_min, x_max = simulation_domain_object.x_boundaries_tuple
-        y_min, y_max = simulation_domain_object.y_boundaries_tuple
-        if x_max <= x_min or y_max <= y_min:
-            raise ValueError("Lỗi lấy mẫu: Khung biên của SimulationDomain không hợp lệ.")
+        H_cx_star = H_cx / self.H0
+        H_cy_star = H_cy / self.H0
+        J_z_star = J_z / (self.H0 / self.L0)
 
-        # Lấy mẫu đồng đều (Sobol) toàn bộ miền không khí nền loại trừ phần thuộc vật liệu
-        return self._sample_air_box(simulation_domain_object, number_of_points, x_min, x_max, y_min, y_max)'''
+        # 1. Gradient của Az* -> B*
+        grad_A_star = torch.autograd.grad(
+            outputs=A_z_star,
+            inputs=xy,
+            grad_outputs=torch.ones_like(A_z_star),
+            create_graph=True
+        )[0]
 
-    pattern = r"    def sample_background_interior_points\(self, simulation_domain_object, number_of_points\):.*?(?=\n    def |\Z)"
+        dAz_dx_star = grad_A_star[:, 0:1] * self.L0
+        dAz_dy_star = grad_A_star[:, 1:2] * self.L0
+
+        # 2. H* = nu* * B* - Hc*
+        Hx_star = nu_star * dAz_dy_star - H_cx_star
+        Hy_star = -nu_star * dAz_dx_star - H_cy_star
+
+        # 3. curl(H*) = dHy*/dx* - dHx*/dy*
+        grad_Hx = torch.autograd.grad(outputs=Hx_star, inputs=xy, grad_outputs=torch.ones_like(Hx_star), create_graph=True)[0]
+        grad_Hy = torch.autograd.grad(outputs=Hy_star, inputs=xy, grad_outputs=torch.ones_like(Hy_star), create_graph=True)[0]
+
+        dHy_dx_star = grad_Hy[:, 0:1] * self.L0
+        dHx_dy_star = grad_Hx[:, 1:2] * self.L0
+
+        # Trả về Residual vật lý chuẩn của Maxwell (KHÔNG CHIA nu_scale)
+        res_pde = dHy_dx_star - dHx_dy_star - J_z_star
+        return res_pde"""
+
+    pattern = r"    def compute_linear_pde_residual\(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None\):.*?(?=\n    def |\Z)"
     if re.search(pattern, content, flags=re.DOTALL):
         updated = re.sub(pattern, new_fn + "\n\n", content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(updated)
-        print(f"[✔] Đã đơn giản hóa thuật toán lấy điểm không khí nền trong: {file_path}")
+        print(f"[✔] Đã cập nhật Maxwell PDE Residual (không chia nu_scale) trong: {file_path}")
 
-def update_visualizer_and_global_step(base_dir):
-    """2. Cập nhật giao diện Subplot 1, nhãn trục hoành đồ thị Loss và tracking global_step."""
-    # --- A. Cập nhật training_manager.py ---
-    tm_path = os.path.join(base_dir, "training_engine", "training_manager.py")
-    if os.path.exists(tm_path):
-        with open(tm_path, 'r', encoding='utf-8') as f:
-            tm_code = f.read()
-        if "self.global_step = 0" not in tm_code:
-            tm_code = tm_code.replace(
-                "self.completed_adam_epochs = 0",
-                "self.completed_adam_epochs = 0\n        self.global_step = 0"
-            )
-            with open(tm_path, 'w', encoding='utf-8') as f:
-                f.write(tm_code)
-            print(f"[✔] Đã bổ sung self.global_step vào: {tm_path}")
-
-    # --- B. Cập nhật train_adam.py ---
-    adam_path = os.path.join(base_dir, "training_engine", "train_adam.py")
-    if os.path.exists(adam_path):
-        with open(adam_path, 'r', encoding='utf-8') as f:
-            adam_code = f.read()
-
-        if "training_manager_instance.global_step += 1" not in adam_code:
-            adam_code = adam_code.replace(
-                "for epoch in range(epochs):",
-                "for epoch in range(epochs):\n        training_manager_instance.global_step += 1"
-            )
-
-        old_call = "training_manager_instance.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)"
-        new_call = "training_manager_instance.visualizer.save_frame(training_manager_instance.global_step, current_loss_value, domains_data)"
-        if old_call in adam_code:
-            adam_code = adam_code.replace(old_call, new_call)
-
-        with open(adam_path, 'w', encoding='utf-8') as f:
-            f.write(adam_code)
-        print(f"[✔] Đã cập nhật global_step trong: {adam_path}")
-
-    # --- C. Cập nhật save_frame.py ---
-    sf_path = os.path.join(base_dir, "training_visualizer", "save_frame.py")
-    if os.path.exists(sf_path):
-        with open(sf_path, 'r', encoding='utf-8') as f:
-            sf_code = f.read()
-
-        # Cập nhật Subplot 1 (Biểu diễn điểm lấy mẫu: bỏ legend, dùng dấu chấm mảnh, bảng màu đậm)
-        new_subplot1 = '''    # --- SUBPLOT 1: axs[0, 0] ---
-    ax_pts = axs[0, 0]
-    ax_pts.set_title("Categorized Collocation Points")
-    
-    # Bảng màu đậm (Dark/Deep palette) có độ tương phản cao
-    domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
-    pair_colors = ['#800000', '#004080', '#004d40', '#4a148c', '#bf360c']
-
-    domains_dict = domains_data.get("domains", domains_data)
-    shared_dict = domains_data.get("shared_interfaces", {})
-
-    for idx, (key, d) in enumerate(domains_dict.items()):
-        c_dom = domain_colors[idx % len(domain_colors)]
-        int_pts = d.get("interior_points")
-        if int_pts is not None and int_pts.shape[0] > 0:
-            pts_np = int_pts.detach().cpu().numpy()
-            ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=0.5, color=c_dom, marker='o', linewidths=0, alpha=0.55)
-
-    for p_idx, (pair_key, pair_data) in enumerate(shared_dict.items()):
-        if_pts = pair_data.get("interface_points")
-        if if_pts is not None and if_pts.shape[0] > 0:
-            pts_np = if_pts.detach().cpu().numpy()
-            c_pair = pair_colors[p_idx % len(pair_colors)]
-            ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=1.0, color=c_pair, marker='o', linewidths=0, alpha=0.95)
-
-    # Đã loại bỏ ax_pts.legend()
-    ax_pts.set_xlim(visualizer_instance.x_bounds)
-    ax_pts.set_ylim(visualizer_instance.y_bounds)
-    ax_pts.set_aspect('equal')'''
-
-        pattern_sp1 = r"    # --- SUBPLOT 1: axs\[0, 0\] ---.*?ax_pts\.set_aspect\('equal'\)"
-        if re.search(pattern_sp1, sf_code, flags=re.DOTALL):
-            sf_code = re.sub(pattern_sp1, new_subplot1, sf_code, flags=re.DOTALL)
-
-        # Cập nhật nhãn trục hoành của đồ thị Loss
-        sf_code = sf_code.replace('axs[0, 3].set_xlabel("Step / Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
-        sf_code = sf_code.replace('axs[0, 3].set_xlabel("Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
-
-        with open(sf_path, 'w', encoding='utf-8') as f:
-            f.write(sf_code)
-        print(f"[✔] Đã cập nhật Subplot 1 và nhãn Total Optimization Step trong: {sf_path}")
-
-def add_colab_gif_display(base_dir):
-    """3. Tự động hiển thị GIF tiến trình lên Colab sau khi huấn luyện xong."""
-    file_path = os.path.join(base_dir, "training_visualizer", "generate_gif.py")
+def update_compute_loss(base_dir):
+    """2. Dùng Soft Logarithmic Scaling trong compute_loss.py để điều hòa trọng số miền lõi sắt."""
+    file_path = os.path.join(base_dir, "training_engine", "compute_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
         return
@@ -4056,37 +4147,94 @@ def add_colab_gif_display(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    if "from IPython.display import Image, display" not in content:
-        content = "from IPython.display import Image, display\n" + content
+    if "import numpy as np" not in content:
+        content = "import numpy as np\n" + content
 
-    display_code = """
-    # Tự động hiển thị GIF trực tiếp trên Colab / Jupyter Cell Output
-    try:
-        if os.path.exists(full_gif_path):
-            print("[*] Tự động hiển thị GIF tiến trình huấn luyện...")
-            display(Image(filename=full_gif_path))
-    except Exception as e:
-        print(f"[!] Không thể hiển thị GIF trực tiếp: {e}")
-"""
+    new_loop = """    for key, data in domains_dict.items():
+        domain = data["domain_object"]
+        net_key = resolve_domain_net_key(domain, model)
+        pts = data["interior_points"].to(device)
+        
+        if pts.shape[0] > 0:
+            if not pts.requires_grad:
+                pts = pts.detach().clone().requires_grad_(True)
+                
+            A_z_star = model.forward_network(net_key, pts)
+            
+            if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
+                nu_star_pred = model.forward_nu_network(net_key, pts)
+                nu_star_net = nu_star_pred if nu_star_pred is not None else None
+                nu_effective = nu_star_pred
+            else:
+                nu_star_net = None
+                nu_phys_eval = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                nu_effective = nu_phys_eval / pinn.simulation_domain_engine_instance.nu0
 
-    if "display(Image(filename=full_gif_path))" not in content:
-        if "imageio.mimsave" in content:
-            pattern = r"(imageio\.mimsave\(.*?\))"
-            content = re.sub(pattern, r"\1" + display_code, content, count=1)
+            nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+            hx, hy = domain.evaluate_magnetization_vector(pts)
+            hx, hy = hx.to(device), hy.to(device)
+            jz = domain.evaluate_current_density(pts).to(device)
+            
+            res_pde = training_manager_instance.pde_evaluator.compute_linear_pde_residual(
+                xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_star_net=nu_star_net
+            )
+            fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
+            
+            loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
+            
+            # CÂN BẰNG TỰ ĐỘNG DẠNG LOGARITHM MỀM (Soft Logarithmic Scaling)
+            with torch.no_grad():
+                mean_nu_star = torch.mean(nu_effective).item()
+                mean_mur = 1.0 / max(mean_nu_star, 1e-6)
+                # Tăng nhẹ theo log1p(mur), giới hạn trong khoảng [1.0, 10.0]
+                auto_domain_weight = float(min(max(1.0 + np.log1p(mean_mur), 1.0), 10.0))
 
+            user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
+            effective_pde_weight = user_base_weight * auto_domain_weight
+
+            scaled_pde_loss = effective_pde_weight * loss_pde_domain
+            total_loss = total_loss + scaled_pde_loss
+            pde_loss_sum += scaled_pde_loss.item()"""
+
+    pattern = r"    for key, data in domains_dict\.items\(\):.*?pde_loss_sum \+= scaled_pde_loss\.item\(\)"
+    if re.search(pattern, content, flags=re.DOTALL):
+        updated = re.sub(pattern, new_loop, content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"[✔] Đã tích hợp tự động hiển thị GIF Colab vào: {file_path}")
+            f.write(updated)
+        print(f"[✔] Đã cập nhật Soft Logarithmic Scaling trong: {file_path}")
+
+def update_test_simulation(base_dir):
+    """3. Cập nhật test_simulation2.py tăng cường liên tục giao diện và giữ pde_weight = 1.0."""
+    file_path = os.path.join(base_dir, "tests", "test_simulation2.py")
+    if not os.path.exists(file_path):
+        alt_path = os.path.join(base_dir, "src", "physics_informed_model", "tests", "test_simulation2.py")
+        if os.path.exists(alt_path):
+            file_path = alt_path
+        else:
+            print(f"[!] Không tìm thấy file: {file_path}")
+            return
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # Cập nhật interface_bn_weight, interface_ht_weight và pde_weight
+    content = re.sub(r"iron_yoke\.training_config\.interface_bn_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_bn_weight = 2000.0", content)
+    content = re.sub(r"iron_yoke\.training_config\.interface_ht_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_ht_weight = 2000.0", content)
+    content = re.sub(r"iron_yoke\.training_config\.pde_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.pde_weight = 1.0", content)
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã cập nhật interface weights cho lõi sắt trong: {file_path}")
 
 def main():
     base_dir = get_base_dir()
-    print(f"[*] Thực thi sửa đổi cấu hình dự án tại: {base_dir}\n")
+    print(f"[*] Thực thi cập nhật và khắc phục lỗi Flux Exclusion tại: {base_dir}\n")
     
-    simplify_background_sampling(base_dir)
-    update_visualizer_and_global_step(base_dir)
-    add_colab_gif_display(base_dir)
+    update_maxwell_pde_loss(base_dir)
+    update_compute_loss(base_dir)
+    update_test_simulation(base_dir)
     
-    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI! (Tuyệt đối giữ nguyên material_data.py)")
+    print("\n[✔] HOÀN TẤT TẤT CẢ CÁC CẬP NHẬT! Bạn có thể chạy lại test_simulation2.py.")
 
 
 ========================================
