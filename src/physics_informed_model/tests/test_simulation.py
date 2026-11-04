@@ -153,7 +153,7 @@ magnet_right = sim_domain.create_material_domain(
     domain_name="magnet_right",
     material_name="N30UH",
     # Tọa độ hiện tại (bị trùng đỉnh [0.05, 0.018] nên tạo thành hình tam giác 3 đỉnh):
-    outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.05, 0.018]],
+    outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]],
     coercive_direction=(0, -1)
 )
 magnet_right.physics_config.relative_permeability = 1.05
