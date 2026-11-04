@@ -1,5 +1,3 @@
-# --- FILE: tests/test_simulation_3.py ---
-
 import os
 import sys
 import shutil
