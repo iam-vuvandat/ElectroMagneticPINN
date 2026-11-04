@@ -25,14 +25,11 @@ def run_high_precision_fpi_simulation_test():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    print("[*] KHỞI TẠO MÔ PHỎNG XPINN TỐI ƯU TỐC ĐỘ HỌC VÀ TĂNG CƯỜNG MẬT ĐỘ ĐIỂM LÕI SẮT...")
+    print("[*] KHỞI TẠO MÔ PHỎNG XPINN TỐI ƯU (3 BƯỚC FPI CHUYÊN SÂU - BẬT L-BFGS MỖI BƯỚC & THANG LINEAR MUR [0 - 3000])...")
 
     model = ElectroMagneticPINN()
     sim_domain = model.simulation_domain_engine_instance
 
-    # =========================================================================
-    # 1. KHUNG TỌA ĐỘ VÀ QUY MÔ VẬT LÝ TOÀN CỤC
-    # =========================================================================
     sim_domain.physics_config.scale_L0 = 0.12
     sim_domain.physics_config.scale_H0 = 960000.0
     sim_domain.physics_config.scale_nu0 = 795774.715459
@@ -40,34 +37,26 @@ def run_high_precision_fpi_simulation_test():
     sim_domain.x_boundaries_tuple = (-0.12, 0.12)
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
-    # =========================================================================
-    # 2. CẤU HÌNH LẤY MẪU ĐỘNG (COLLOCATION SAMPLER CONFIG)
-    # =========================================================================
     model.sampler_config.dynamic_resampling = True
     model.sampler_config.resample_interval = 100
     model.sampler_config.resample_points_before_lbfgs_stage = True
 
-    # =========================================================================
-    # 3. GIẢM SỐ EPOCH VÀ ITERATIONS ĐỂ TĂNG TỐC HUẤN LUYỆN
-    # =========================================================================
     model.training_config.enable_linear_warmup_stage = True
     model.training_config.enable_nonlinear_adaptation_stage = True
     model.training_config.enable_lbfgs_refinement_stage = True
+    model.training_config.enable_lbfgs_per_fpi_step = True
 
-    # --- ĐIỀU CHỈNH SỐ EPOCH & FPI (GIẢM TỪ 1500 VỀ 600 EPOCHS / FPI STEP) ---
-    epochs_warmup_target = 600
-    fpi_iterations = 5                        # Giảm số bước FPI từ 10-20 xuống 5
-    epochs_per_fpi = 600                      # Giảm số Adam epochs mỗi bước FPI xuống 600
+    epochs_warmup_target = 1000
+    fpi_iterations = 3
+    epochs_per_fpi = 1200
 
     model.training_config.fpi_outer_iterations = fpi_iterations
     model.training_config.fpi_alpha_damping = 0.8
     model.training_config.fpi_tolerance = 1e-6
 
-    # Cấu hình tổng số Adam epochs trong training_config
     model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
-    # Optimizer Adam
     model.training_config.adam_learning_rate = 1e-3
     model.training_config.target_loss_threshold = 1e-7
     model.training_config.adam_eta_min = 1e-6
@@ -75,19 +64,14 @@ def run_high_precision_fpi_simulation_test():
     model.training_config.max_non_finite_streak = 5
     model.training_config.adam_log_interval = 100
 
-    # Giảm số epochs pretrain & fit Net_nu để tăng tốc
-    model.training_config.pretrain_nu_epochs = 400   # Giảm từ 1000 -> 400 epochs
+    model.training_config.pretrain_nu_epochs = 800
     model.training_config.pretrain_nu_lr = 5e-3
-    model.training_config.fit_nu_epochs = 400        # Giảm từ 800/1200 -> 400 epochs
+    model.training_config.fit_nu_epochs = 600
     model.training_config.fit_nu_lr = 3e-3
 
-    # Giảm số iterations L-BFGS Refinement
-    model.training_config.number_of_lbfgs_iterations = 1000  # Giảm từ 3000 -> 1000
+    model.training_config.number_of_lbfgs_iterations = 1500
     model.training_config.lbfgs_learning_rate = 0.5
 
-    # =========================================================================
-    # 4. CẤU HÌNH TRỰC QUAN HÓA
-    # =========================================================================
     model.visualization_config.active = True
     model.visualization_config.update_interval = 100
     model.visualization_config.output_directory = output_dir
@@ -102,11 +86,11 @@ def run_high_precision_fpi_simulation_test():
     model.visualization_config.mp4_quality = 8
     model.visualization_config.contour_levels = 80
 
-    # =========================================================================
-    # 5. CẤU HÌNH MIỀN VẬT LIỆU: TĂNG MẠNH ĐIỂM LÕI SẮT & GIẢM KÍCH THƯỚC MẠNG
-    # =========================================================================
+    model.visualization_config.mur_scale = "linear"
+    model.visualization_config.mur_vmin = 0.0
+    model.visualization_config.mur_vmax = 3000.0
+    model.visualization_config.mur_cmap = "turbo"
 
-    # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke",
         material_name="steel_1008",
@@ -117,7 +101,6 @@ def run_high_precision_fpi_simulation_test():
     iron_yoke.physics_config.current = 0.0
     iron_yoke.physics_config.is_nonlinear = True
 
-    # Trọng số cân bằng tự nhiên
     iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.pde_nonlinear_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.0
@@ -127,20 +110,18 @@ def run_high_precision_fpi_simulation_test():
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 2.5
     
-    # TĂNG MẠNH SỐ ĐIỂM LẤY MẪU TRONG LÕI SẮT ĐỂ GIẢM MẠNH LOSS NỘI MIỀN
-    iron_yoke.training_config.number_of_interior_points = 25000  # Tăng mạnh từ 8,000 -> 25,000 điểm
-    iron_yoke.training_config.number_of_surface_points = 6000    # Tăng từ 4,000 -> 6,000 điểm biên
+    iron_yoke.training_config.number_of_interior_points = 25000
+    iron_yoke.training_config.number_of_surface_points = 6000
 
-    # GIẢM KÍCH THƯỚC MẠNG NƠ-RON (Gọn nhẹ hơn để tăng tốc độ tính toán)
-    iron_yoke.network_config.hidden_layers = 3                    # Giảm từ 5 -> 3 hidden layers
-    iron_yoke.network_config.hidden_neurons = 64                  # Giảm từ 128 -> 64 neurons
+    iron_yoke.network_config.hidden_layers = 3
+    iron_yoke.network_config.hidden_neurons = 64
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.5                  # Tăng sigma để giải quyết biến thiên độ dốc
-    iron_yoke.network_config.fourier_mapping_size = 128           # Giảm từ 256 -> 128
+    iron_yoke.network_config.fourier_sigma = 1.5
+    iron_yoke.network_config.fourier_mapping_size = 128
 
-    iron_yoke.nu_network_config.hidden_layers = 2                 # Giảm từ 3 -> 2 layers
-    iron_yoke.nu_network_config.hidden_neurons = 32               # Giảm từ 64 -> 32 neurons
+    iron_yoke.nu_network_config.hidden_layers = 2
+    iron_yoke.nu_network_config.hidden_neurons = 32
     iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
     iron_yoke.nu_network_config.fourier_sigma = 1.0
@@ -148,7 +129,6 @@ def run_high_precision_fpi_simulation_test():
 
     iron_yoke.build_domain()
 
-    # --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left",
         material_name="N30UH",
@@ -162,8 +142,8 @@ def run_high_precision_fpi_simulation_test():
     magnet_left.training_config.number_of_interior_points = 2000
     magnet_left.training_config.number_of_surface_points = 1000
 
-    magnet_left.network_config.hidden_layers = 3                  # Giảm từ 4 -> 3 layers
-    magnet_left.network_config.hidden_neurons = 48                # Giảm từ 64 -> 48 neurons
+    magnet_left.network_config.hidden_layers = 3
+    magnet_left.network_config.hidden_neurons = 48
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = True
     magnet_left.network_config.fourier_sigma = 1.0
@@ -171,7 +151,6 @@ def run_high_precision_fpi_simulation_test():
 
     magnet_left.build_domain()
 
-    # --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
     magnet_right = sim_domain.create_material_domain(
         domain_name="magnet_right",
         material_name="N30UH",
@@ -185,8 +164,8 @@ def run_high_precision_fpi_simulation_test():
     magnet_right.training_config.number_of_interior_points = 2000
     magnet_right.training_config.number_of_surface_points = 1000
 
-    magnet_right.network_config.hidden_layers = 3                  # Giảm từ 4 -> 3 layers
-    magnet_right.network_config.hidden_neurons = 48                # Giảm từ 64 -> 48 neurons
+    magnet_right.network_config.hidden_layers = 3
+    magnet_right.network_config.hidden_neurons = 48
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = True
     magnet_right.network_config.fourier_sigma = 1.0
@@ -194,7 +173,6 @@ def run_high_precision_fpi_simulation_test():
 
     magnet_right.build_domain()
 
-    # --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
     bg_training_cfg = SimpleNamespace(
         pde_weight=1.0,
         interface_weight=1.0,
@@ -203,12 +181,12 @@ def run_high_precision_fpi_simulation_test():
         interface_ht_weight=1.0,
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=5000,                            # Giảm nhẹ điểm nền từ 8,000 -> 5,000
+        number_of_interior_points=5000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
-        hidden_layers=3,                                           # Giảm từ 4 -> 3 layers
-        hidden_neurons=48,                                         # Giảm từ 64 -> 48 neurons
+        hidden_layers=3,
+        hidden_neurons=48,
         activation_function=nn.Mish(),
         fourier_features=True,
         fourier_sigma=1.0,
@@ -220,12 +198,9 @@ def run_high_precision_fpi_simulation_test():
         network_config=bg_network_cfg
     )
 
-    # =========================================================================
-    # 6. THỰC THI HUẤN LUYỆN VÀ TẠO ANIMATION
-    # =========================================================================
     model.update_electromagnetic_pinn()
 
-    print("[*] Bắt đầu tiến trình huấn luyện tối ưu tốc độ...")
+    print("[*] Bắt đầu tiến trình huấn luyện 3 bước FPI chuyên sâu...")
     model.execute_training_process()
 
     print("[*] Xuất biểu đồ trường kết quả cuối cùng...")

@@ -89,7 +89,6 @@ def update_visualizer_and_global_step(base_dir):
         with open(sf_path, 'r', encoding='utf-8') as f:
             sf_code = f.read()
 
-        # Cập nhật Subplot 1 (Biểu diễn điểm lấy mẫu: bỏ legend, dùng dấu chấm mảnh, bảng màu đậm)
         new_subplot1 = '''    # --- SUBPLOT 1: axs[0, 0] ---
     ax_pts = axs[0, 0]
     ax_pts.set_title("Categorized Collocation Points")
@@ -124,7 +123,6 @@ def update_visualizer_and_global_step(base_dir):
         if re.search(pattern_sp1, sf_code, flags=re.DOTALL):
             sf_code = re.sub(pattern_sp1, new_subplot1, sf_code, flags=re.DOTALL)
 
-        # Cập nhật nhãn trục hoành của đồ thị Loss
         sf_code = sf_code.replace('axs[0, 3].set_xlabel("Step / Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
         sf_code = sf_code.replace('axs[0, 3].set_xlabel("Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
 
@@ -164,6 +162,49 @@ def add_colab_gif_display(base_dir):
             f.write(content)
         print(f"[✔] Đã tích hợp tự động hiển thị GIF Colab vào: {file_path}")
 
+def add_lbfgs_per_fpi_step_config(base_dir):
+    """4. Bổ sung config enable_lbfgs_per_fpi_step vào electro_magnetic_pinn.py và logic xử lý trong execute_training_process.py."""
+    # A. Cập nhật electro_magnetic_pinn.py
+    pinn_path = os.path.join(base_dir, "electro_magnetic_pinn.py")
+    if os.path.exists(pinn_path):
+        with open(pinn_path, 'r', encoding='utf-8') as f:
+            code = f.read()
+            
+        if "enable_lbfgs_per_fpi_step" not in code:
+            old_str = "enable_lbfgs_refinement_stage=True,"
+            new_str = "enable_lbfgs_refinement_stage=True,\n            enable_lbfgs_per_fpi_step=False,"
+            if old_str in code:
+                code = code.replace(old_str, new_str)
+                with open(pinn_path, 'w', encoding='utf-8') as f:
+                    f.write(code)
+                print(f"[✔] Đã bổ sung 'enable_lbfgs_per_fpi_step' vào config: {pinn_path}")
+
+    # B. Cập nhật execute_training_process.py
+    exec_path = os.path.join(base_dir, "electro_magnetic_pinn_engine", "execute_training_process.py")
+    if os.path.exists(exec_path):
+        with open(exec_path, 'r', encoding='utf-8') as f:
+            exec_code = f.read()
+
+        if "enable_lbfgs_per_fpi_step" not in exec_code:
+            target_str = 'print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")'
+            lbfgs_block = '''            print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+
+            # Thực thi L-BFGS tinh chỉnh tại mỗi bước FPI nếu cấu hình bật
+            if getattr(t_cfg, 'enable_lbfgs_per_fpi_step', False):
+                lbfgs_iters_step = int(getattr(t_cfg, 'number_of_lbfgs_iterations', 1500))
+                if lbfgs_iters_step > 0:
+                    print(f"[*] [FPI Step {f_iter + 1}] Running L-BFGS Refinement ({lbfgs_iters_step} Iterations)...")
+                    if getattr(pinn_instance.sampler_config, 'resample_points_before_lbfgs_stage', True):
+                        domains_data = resample_data_fn()
+                    domains_data = pinn_instance.training_manager_instance.train_lbfgs(
+                        max_iterations=lbfgs_iters_step, domains_data=domains_data
+                    )'''
+            if target_str in exec_code:
+                exec_code = exec_code.replace(target_str, lbfgs_block)
+                with open(exec_path, 'w', encoding='utf-8') as f:
+                    f.write(exec_code)
+                print(f"[✔] Đã tích hợp L-BFGS per FPI step vào: {exec_path}")
+
 def main():
     base_dir = get_base_dir()
     print(f"[*] Thực thi sửa đổi cấu hình dự án tại: {base_dir}\n")
@@ -171,8 +212,9 @@ def main():
     simplify_background_sampling(base_dir)
     update_visualizer_and_global_step(base_dir)
     add_colab_gif_display(base_dir)
+    add_lbfgs_per_fpi_step_config(base_dir)
     
-    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI! (Tuyệt đối giữ nguyên material_data.py)")
+    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI!")
 
 if __name__ == "__main__":
     main()

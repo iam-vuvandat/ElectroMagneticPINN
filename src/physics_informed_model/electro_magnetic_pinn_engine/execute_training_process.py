@@ -45,7 +45,18 @@ def execute_training_process(pinn_instance):
             max_diff = pinn_instance.training_manager_instance.fit_nu_network_step(
                 domains_data, alpha_damping=alpha_damp, epochs=fit_ep, lr=fit_lr
             )
-            print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+                        print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+
+            # Thực thi L-BFGS tinh chỉnh tại mỗi bước FPI nếu cấu hình bật
+            if getattr(t_cfg, 'enable_lbfgs_per_fpi_step', False):
+                lbfgs_iters_step = int(getattr(t_cfg, 'number_of_lbfgs_iterations', 1500))
+                if lbfgs_iters_step > 0:
+                    print(f"[*] [FPI Step {f_iter + 1}] Running L-BFGS Refinement ({lbfgs_iters_step} Iterations)...")
+                    if getattr(pinn_instance.sampler_config, 'resample_points_before_lbfgs_stage', True):
+                        domains_data = resample_data_fn()
+                    domains_data = pinn_instance.training_manager_instance.train_lbfgs(
+                        max_iterations=lbfgs_iters_step, domains_data=domains_data
+                    )
             if max_diff < fpi_tol:
                 print(f"[✔] FPI Hội tụ sớm tại vòng {f_iter + 1}!")
                 break

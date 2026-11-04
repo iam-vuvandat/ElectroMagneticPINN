@@ -27,6 +27,7 @@ class ElectroMagneticPINN:
             enable_linear_warmup_stage=True,
             enable_nonlinear_adaptation_stage=True,
             enable_lbfgs_refinement_stage=True,
+            enable_lbfgs_per_fpi_step=False,
             linear_warmup_epochs_ratio=0.3,
 
             adam_learning_rate=1e-3,
