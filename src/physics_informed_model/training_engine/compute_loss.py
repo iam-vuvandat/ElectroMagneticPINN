@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
 
@@ -50,10 +51,11 @@ def compute_loss(training_manager_instance, domains_data):
             
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
             
-            # CÂN BẰNG TỰ ĐỘNG THEO ĐỘ TỪ THẨM TRUNG BÌNH MIỀN (Domain-level Scaling)
+            # CÂN BẰNG TỰ ĐỘNG THEO ĐỘ TỪ THẨM TRUNG BÌNH MIỀN (Dùng min/max thuần Python, tránh NameError)
             with torch.no_grad():
                 mean_nu_star = torch.mean(nu_effective).item()
-                auto_domain_weight = float(np.clip(1.0 / max(mean_nu_star, 1e-6), 1.0, 10000.0))
+                raw_auto_weight = 1.0 / max(mean_nu_star, 1e-6)
+                auto_domain_weight = float(min(max(raw_auto_weight, 1.0), 10000.0))
 
             user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
             effective_pde_weight = user_base_weight * auto_domain_weight

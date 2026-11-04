@@ -82,6 +82,10 @@ def update_compute_loss(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
+    # Đảm bảo import numpy as np ở đầu file compute_loss.py nếu cần
+    if "import numpy as np" not in content:
+        content = "import numpy as np\n" + content
+
     new_loop = """    for key, data in domains_dict.items():
         domain = data["domain_object"]
         net_key = resolve_domain_net_key(domain, model)
@@ -114,10 +118,11 @@ def update_compute_loss(base_dir):
             
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
             
-            # CÂN BẰNG TỰ ĐỘNG THEO ĐỘ TỪ THẨM TRUNG BÌNH MIỀN (Domain-level Scaling)
+            # CÂN BẰNG TỰ ĐỘNG THEO ĐỘ TỪ THẨM TRUNG BÌNH MIỀN (Dùng min/max thuần Python, tránh NameError)
             with torch.no_grad():
                 mean_nu_star = torch.mean(nu_effective).item()
-                auto_domain_weight = float(np.clip(1.0 / max(mean_nu_star, 1e-6), 1.0, 10000.0))
+                raw_auto_weight = 1.0 / max(mean_nu_star, 1e-6)
+                auto_domain_weight = float(min(max(raw_auto_weight, 1.0), 10000.0))
 
             user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
             effective_pde_weight = user_base_weight * auto_domain_weight
