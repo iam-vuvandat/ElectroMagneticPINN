@@ -31,10 +31,12 @@ def compute_loss(training_manager_instance, domains_data):
             
             if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
                 nu_star_pred = model.forward_nu_network(net_key, pts)
-                # Giu nguyen do thi autograd de tinh dao ham grad(nu) trong Maxwell PDE
                 nu_star_net = nu_star_pred if nu_star_pred is not None else None
+                nu_effective = nu_star_pred
             else:
                 nu_star_net = None
+                nu_phys_eval = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                nu_effective = nu_phys_eval / pinn.simulation_domain_engine_instance.nu0
 
             nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
             hx, hy = domain.evaluate_magnetization_vector(pts)
@@ -47,9 +49,16 @@ def compute_loss(training_manager_instance, domains_data):
             fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
             
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
-            w_pde = float(domain.training_config.pde_weight)
+            
+            # CÂN BẰNG TỰ ĐỘNG THEO ĐỘ TỪ THẨM TRUNG BÌNH MIỀN (Domain-level Scaling)
+            with torch.no_grad():
+                mean_nu_star = torch.mean(nu_effective).item()
+                auto_domain_weight = float(np.clip(1.0 / max(mean_nu_star, 1e-6), 1.0, 10000.0))
 
-            scaled_pde_loss = w_pde * loss_pde_domain
+            user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
+            effective_pde_weight = user_base_weight * auto_domain_weight
+
+            scaled_pde_loss = effective_pde_weight * loss_pde_domain
             total_loss = total_loss + scaled_pde_loss
             pde_loss_sum += scaled_pde_loss.item()
 

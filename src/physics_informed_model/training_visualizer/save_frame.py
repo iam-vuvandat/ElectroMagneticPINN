@@ -47,18 +47,21 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
                     with torch.no_grad():
                         nu_star_pred = model.forward_nu_network(net_key, eval_points)
                         nu_dom = nu_star_pred * sim_domain.nu0
+                        nu_star_net_eval = nu_star_pred
                 else:
                     B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
                     nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
+                    nu_star_net_eval = None
             else:
                 nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
+                nu_star_net_eval = None
 
             hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
             hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
             jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
 
             res_pde = pde_evaluator.compute_linear_pde_residual(
-                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
+                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom, nu_star_net=nu_star_net_eval
             )
 
             A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)

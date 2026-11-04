@@ -58,8 +58,11 @@ class MaxwellPDELoss:
         dHx_dy_star = grad_Hx[:, 1:2] * self.L0
 
         res_pde = dHy_dx_star - dHx_dy_star - J_z_star
+        
+        # CHUẨN HÓA CỤC BỘ TỪNG ĐIỂM: Chia cho nu_scale (nu_star.detach())
         nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
         return res_pde / nu_scale
+
 
     def compute_fading_weight(self, domain, xy):
         beta = float(getattr(domain.training_config, 'pde_fading_beta', 80.0))

@@ -17,9 +17,9 @@ def get_base_dir():
             return cand
     return os.path.abspath(os.path.join(script_dir, ".."))
 
-def simplify_background_sampling(base_dir):
-    """1. Đơn giản hóa thuật toán lấy điểm không khí nền (bỏ đệm mật độ cao bọc quanh vật liệu)."""
-    file_path = os.path.join(base_dir, "physics_domain", "collocation_sampler.py")
+def update_maxwell_pde_loss(base_dir):
+    """1. Chuẩn hóa residual điểm theo nu_star cục bộ trong maxwell_pde_loss.py."""
+    file_path = os.path.join(base_dir, "physics_domain", "physical_equations", "maxwell_pde_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
         return
@@ -27,114 +27,54 @@ def simplify_background_sampling(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    new_fn = '''    def sample_background_interior_points(self, simulation_domain_object, number_of_points):
-        if number_of_points <= 0:
-            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+    new_fn = """    def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
+        if nu_star_net is not None:
+            nu_star = nu_star_net
+        else:
+            nu_star = nu_phys / self.nu0
 
-        x_min, x_max = simulation_domain_object.x_boundaries_tuple
-        y_min, y_max = simulation_domain_object.y_boundaries_tuple
-        if x_max <= x_min or y_max <= y_min:
-            raise ValueError("Lỗi lấy mẫu: Khung biên của SimulationDomain không hợp lệ.")
+        H_cx_star = H_cx / self.H0
+        H_cy_star = H_cy / self.H0
+        J_z_star = J_z / (self.H0 / self.L0)
 
-        # Lấy mẫu đồng đều (Sobol) toàn bộ miền không khí nền loại trừ phần thuộc vật liệu
-        return self._sample_air_box(simulation_domain_object, number_of_points, x_min, x_max, y_min, y_max)'''
+        # 1. Gradient của Az* -> B*
+        grad_A_star = torch.autograd.grad(
+            outputs=A_z_star,
+            inputs=xy,
+            grad_outputs=torch.ones_like(A_z_star),
+            create_graph=True
+        )[0]
 
-    pattern = r"    def sample_background_interior_points\(self, simulation_domain_object, number_of_points\):.*?(?=\n    def |\Z)"
+        dAz_dx_star = grad_A_star[:, 0:1] * self.L0
+        dAz_dy_star = grad_A_star[:, 1:2] * self.L0
+
+        # 2. H* = nu* * B* - Hc*
+        Hx_star = nu_star * dAz_dy_star - H_cx_star
+        Hy_star = -nu_star * dAz_dx_star - H_cy_star
+
+        # 3. curl(H*) = dHy*/dx* - dHx*/dy*
+        grad_Hx = torch.autograd.grad(outputs=Hx_star, inputs=xy, grad_outputs=torch.ones_like(Hx_star), create_graph=True)[0]
+        grad_Hy = torch.autograd.grad(outputs=Hy_star, inputs=xy, grad_outputs=torch.ones_like(Hy_star), create_graph=True)[0]
+
+        dHy_dx_star = grad_Hy[:, 0:1] * self.L0
+        dHx_dy_star = grad_Hx[:, 1:2] * self.L0
+
+        res_pde = dHy_dx_star - dHx_dy_star - J_z_star
+        
+        # CHUẨN HÓA CỤC BỘ TỪNG ĐIỂM: Chia cho nu_scale (nu_star.detach())
+        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
+        return res_pde / nu_scale"""
+
+    pattern = r"    def compute_linear_pde_residual\(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None\):.*?(?=\n    def |\Z)"
     if re.search(pattern, content, flags=re.DOTALL):
         updated = re.sub(pattern, new_fn + "\n\n", content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(updated)
-        print(f"[✔] Đã đơn giản hóa thuật toán lấy điểm không khí nền trong: {file_path}")
+        print(f"[✔] Đã cập nhật chuẩn hóa điểm PDE residual trong: {file_path}")
 
-def update_visualizer_and_global_step(base_dir):
-    """2. Cập nhật giao diện Subplot 1, nhãn trục hoành đồ thị Loss và tracking global_step."""
-    # --- A. Cập nhật training_manager.py ---
-    tm_path = os.path.join(base_dir, "training_engine", "training_manager.py")
-    if os.path.exists(tm_path):
-        with open(tm_path, 'r', encoding='utf-8') as f:
-            tm_code = f.read()
-        if "self.global_step = 0" not in tm_code:
-            tm_code = tm_code.replace(
-                "self.completed_adam_epochs = 0",
-                "self.completed_adam_epochs = 0\n        self.global_step = 0"
-            )
-            with open(tm_path, 'w', encoding='utf-8') as f:
-                f.write(tm_code)
-            print(f"[✔] Đã bổ sung self.global_step vào: {tm_path}")
-
-    # --- B. Cập nhật train_adam.py ---
-    adam_path = os.path.join(base_dir, "training_engine", "train_adam.py")
-    if os.path.exists(adam_path):
-        with open(adam_path, 'r', encoding='utf-8') as f:
-            adam_code = f.read()
-
-        if "training_manager_instance.global_step += 1" not in adam_code:
-            adam_code = adam_code.replace(
-                "for epoch in range(epochs):",
-                "for epoch in range(epochs):\n        training_manager_instance.global_step += 1"
-            )
-
-        old_call = "training_manager_instance.visualizer.save_frame(epoch + 1, current_loss_value, domains_data)"
-        new_call = "training_manager_instance.visualizer.save_frame(training_manager_instance.global_step, current_loss_value, domains_data)"
-        if old_call in adam_code:
-            adam_code = adam_code.replace(old_call, new_call)
-
-        with open(adam_path, 'w', encoding='utf-8') as f:
-            f.write(adam_code)
-        print(f"[✔] Đã cập nhật global_step trong: {adam_path}")
-
-    # --- C. Cập nhật save_frame.py ---
-    sf_path = os.path.join(base_dir, "training_visualizer", "save_frame.py")
-    if os.path.exists(sf_path):
-        with open(sf_path, 'r', encoding='utf-8') as f:
-            sf_code = f.read()
-
-        # Cập nhật Subplot 1 (Biểu diễn điểm lấy mẫu: bỏ legend, dùng dấu chấm mảnh, bảng màu đậm)
-        new_subplot1 = '''    # --- SUBPLOT 1: axs[0, 0] ---
-    ax_pts = axs[0, 0]
-    ax_pts.set_title("Categorized Collocation Points")
-    
-    # Bảng màu đậm (Dark/Deep palette) có độ tương phản cao
-    domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
-    pair_colors = ['#800000', '#004080', '#004d40', '#4a148c', '#bf360c']
-
-    domains_dict = domains_data.get("domains", domains_data)
-    shared_dict = domains_data.get("shared_interfaces", {})
-
-    for idx, (key, d) in enumerate(domains_dict.items()):
-        c_dom = domain_colors[idx % len(domain_colors)]
-        int_pts = d.get("interior_points")
-        if int_pts is not None and int_pts.shape[0] > 0:
-            pts_np = int_pts.detach().cpu().numpy()
-            ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=0.5, color=c_dom, marker='o', linewidths=0, alpha=0.55)
-
-    for p_idx, (pair_key, pair_data) in enumerate(shared_dict.items()):
-        if_pts = pair_data.get("interface_points")
-        if if_pts is not None and if_pts.shape[0] > 0:
-            pts_np = if_pts.detach().cpu().numpy()
-            c_pair = pair_colors[p_idx % len(pair_colors)]
-            ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=1.0, color=c_pair, marker='o', linewidths=0, alpha=0.95)
-
-    # Đã loại bỏ ax_pts.legend()
-    ax_pts.set_xlim(visualizer_instance.x_bounds)
-    ax_pts.set_ylim(visualizer_instance.y_bounds)
-    ax_pts.set_aspect('equal')'''
-
-        pattern_sp1 = r"    # --- SUBPLOT 1: axs\[0, 0\] ---.*?ax_pts\.set_aspect\('equal'\)"
-        if re.search(pattern_sp1, sf_code, flags=re.DOTALL):
-            sf_code = re.sub(pattern_sp1, new_subplot1, sf_code, flags=re.DOTALL)
-
-        # Cập nhật nhãn trục hoành của đồ thị Loss
-        sf_code = sf_code.replace('axs[0, 3].set_xlabel("Step / Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
-        sf_code = sf_code.replace('axs[0, 3].set_xlabel("Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
-
-        with open(sf_path, 'w', encoding='utf-8') as f:
-            f.write(sf_code)
-        print(f"[✔] Đã cập nhật Subplot 1 và nhãn Total Optimization Step trong: {sf_path}")
-
-def add_colab_gif_display(base_dir):
-    """3. Tự động hiển thị GIF tiến trình lên Colab sau khi huấn luyện xong."""
-    file_path = os.path.join(base_dir, "training_visualizer", "generate_gif.py")
+def update_compute_loss(base_dir):
+    """2. Cân bằng tự động trọng số miền vật liệu (Domain-level Scaling) trong compute_loss.py."""
+    file_path = os.path.join(base_dir, "training_engine", "compute_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
         return
@@ -142,37 +82,105 @@ def add_colab_gif_display(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    if "from IPython.display import Image, display" not in content:
-        content = "from IPython.display import Image, display\n" + content
+    new_loop = """    for key, data in domains_dict.items():
+        domain = data["domain_object"]
+        net_key = resolve_domain_net_key(domain, model)
+        pts = data["interior_points"].to(device)
+        
+        if pts.shape[0] > 0:
+            if not pts.requires_grad:
+                pts = pts.detach().clone().requires_grad_(True)
+                
+            A_z_star = model.forward_network(net_key, pts)
+            
+            if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
+                nu_star_pred = model.forward_nu_network(net_key, pts)
+                nu_star_net = nu_star_pred if nu_star_pred is not None else None
+                nu_effective = nu_star_pred
+            else:
+                nu_star_net = None
+                nu_phys_eval = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                nu_effective = nu_phys_eval / pinn.simulation_domain_engine_instance.nu0
 
-    display_code = """
-    # Tự động hiển thị GIF trực tiếp trên Colab / Jupyter Cell Output
-    try:
-        if os.path.exists(full_gif_path):
-            print("[*] Tự động hiển thị GIF tiến trình huấn luyện...")
-            display(Image(filename=full_gif_path))
-    except Exception as e:
-        print(f"[!] Không thể hiển thị GIF trực tiếp: {e}")
-"""
+            nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+            hx, hy = domain.evaluate_magnetization_vector(pts)
+            hx, hy = hx.to(device), hy.to(device)
+            jz = domain.evaluate_current_density(pts).to(device)
+            
+            res_pde = training_manager_instance.pde_evaluator.compute_linear_pde_residual(
+                xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_star_net=nu_star_net
+            )
+            fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
+            
+            loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
+            
+            # CÂN BẰNG TỰ ĐỘNG THEO ĐỘ TỪ THẨM TRUNG BÌNH MIỀN (Domain-level Scaling)
+            with torch.no_grad():
+                mean_nu_star = torch.mean(nu_effective).item()
+                auto_domain_weight = float(np.clip(1.0 / max(mean_nu_star, 1e-6), 1.0, 10000.0))
 
-    if "display(Image(filename=full_gif_path))" not in content:
-        if "imageio.mimsave" in content:
-            pattern = r"(imageio\.mimsave\(.*?\))"
-            content = re.sub(pattern, r"\1" + display_code, content, count=1)
+            user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
+            effective_pde_weight = user_base_weight * auto_domain_weight
 
+            scaled_pde_loss = effective_pde_weight * loss_pde_domain
+            total_loss = total_loss + scaled_pde_loss
+            pde_loss_sum += scaled_pde_loss.item()"""
+
+    pattern = r"    for key, data in domains_dict\.items\(\):.*?pde_loss_sum \+= scaled_pde_loss\.item\(\)"
+    if re.search(pattern, content, flags=re.DOTALL):
+        updated = re.sub(pattern, new_loop, content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"[✔] Đã tích hợp tự động hiển thị GIF Colab vào: {file_path}")
+            f.write(updated)
+        print(f"[✔] Đã cập nhật Cân bằng trọng số miền tự động trong: {file_path}")
+
+def update_save_frame(base_dir):
+    """3. Cập nhật truyền nu_star_net trong save_frame.py để đồng nhất hiển thị PDE Residual Error."""
+    file_path = os.path.join(base_dir, "training_visualizer", "save_frame.py")
+    if not os.path.exists(file_path):
+        print(f"[!] Không tìm thấy file: {file_path}")
+        return
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    new_block = """            if getattr(domain.physics_config, 'is_nonlinear', False):
+                if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
+                    with torch.no_grad():
+                        nu_star_pred = model.forward_nu_network(net_key, eval_points)
+                        nu_dom = nu_star_pred * sim_domain.nu0
+                        nu_star_net_eval = nu_star_pred
+                else:
+                    B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
+                    nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
+                    nu_star_net_eval = None
+            else:
+                nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
+                nu_star_net_eval = None
+
+            hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
+            hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
+            jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
+
+            res_pde = pde_evaluator.compute_linear_pde_residual(
+                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom, nu_star_net=nu_star_net_eval
+            )"""
+
+    old_pattern = r"            if getattr\(domain\.physics_config, 'is_nonlinear', False\):.*?res_pde = pde_evaluator\.compute_linear_pde_residual\(\n                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom\n            \)"
+    if re.search(old_pattern, content, flags=re.DOTALL):
+        updated = re.sub(old_pattern, new_block, content, flags=re.DOTALL)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(updated)
+        print(f"[✔] Đã cập nhật truyền nu_star_net trong: {file_path}")
 
 def main():
     base_dir = get_base_dir()
     print(f"[*] Thực thi sửa đổi cấu hình dự án tại: {base_dir}\n")
     
-    simplify_background_sampling(base_dir)
-    update_visualizer_and_global_step(base_dir)
-    add_colab_gif_display(base_dir)
+    update_maxwell_pde_loss(base_dir)
+    update_compute_loss(base_dir)
+    update_save_frame(base_dir)
     
-    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI! (Tuyệt đối giữ nguyên material_data.py)")
+    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI! Tự động chuẩn hóa PDE Residual theo độ từ thẩm đã sẵn sàng.")
 
 if __name__ == "__main__":
     main()
