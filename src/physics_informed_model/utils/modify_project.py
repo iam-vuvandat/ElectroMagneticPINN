@@ -17,9 +17,13 @@ def get_base_dir():
             return cand
     return os.path.abspath(os.path.join(script_dir, ".."))
 
-def update_maxwell_pde_loss(base_dir):
-    """1. Loại bỏ việc chia nu_scale trong maxwell_pde_loss.py để không làm bùng nổ Gradient trong lõi sắt."""
-    file_path = os.path.join(base_dir, "physics_domain", "physical_equations", "maxwell_pde_loss.py")
+def update_interface_loss(base_dir):
+    """
+    1. Cập nhật physics_domain/physical_equations/interface_loss.py:
+       Tích hợp thuật toán Tự động Tính trọng số Giao diện theo Physical Impedance Ratio (Tỷ lệ bật nhảy từ thẩm jump ratio)
+       và Cân bằng thành phần Az, Bn, Ht tự động.
+    """
+    file_path = os.path.join(base_dir, "physics_domain", "physical_equations", "interface_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
         return
@@ -27,51 +31,117 @@ def update_maxwell_pde_loss(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    new_fn = """    def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
-        if nu_star_net is not None:
-            nu_star = nu_star_net
-        else:
-            nu_star = nu_phys / self.nu0
+    new_compute_pair = """    def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
+        if pts.shape[0] == 0:
+            zero = torch.tensor(0.0, device=pts.device)
+            return zero, zero, zero, zero
 
-        H_cx_star = H_cx / self.H0
-        H_cy_star = H_cy / self.H0
-        J_z_star = J_z / (self.H0 / self.L0)
+        model = self.electro_magnetic_pinn.pinn_architecture_instance
+        nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
 
-        # 1. Gradient của Az* -> B*
-        grad_A_star = torch.autograd.grad(
-            outputs=A_z_star,
-            inputs=xy,
-            grad_outputs=torch.ones_like(A_z_star),
+        if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
+            _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_outline(domain_b, pts)
+            corner_w = torch.minimum(corner_w, corner_w_b)
+
+        Az_a = model.forward_network(key_a, pts)
+        Az_b = model.forward_network(key_b, pts)
+
+        loss_val = torch.mean((Az_a - Az_b) ** 2)
+
+        grad_a = torch.autograd.grad(
+            outputs=Az_a,
+            inputs=pts,
+            grad_outputs=torch.ones_like(Az_a),
             create_graph=True
         )[0]
 
-        dAz_dx_star = grad_A_star[:, 0:1] * self.L0
-        dAz_dy_star = grad_A_star[:, 1:2] * self.L0
+        grad_b = torch.autograd.grad(
+            outputs=Az_b,
+            inputs=pts,
+            grad_outputs=torch.ones_like(Az_b),
+            create_graph=True
+        )[0]
 
-        # 2. H* = nu* * B* - Hc*
-        Hx_star = nu_star * dAz_dy_star - H_cx_star
-        Hy_star = -nu_star * dAz_dx_star - H_cy_star
+        Bx_a_star = grad_a[:, 1:2] * self.L0
+        By_a_star = -grad_a[:, 0:1] * self.L0
+        Bx_b_star = grad_b[:, 1:2] * self.L0
+        By_b_star = -grad_b[:, 0:1] * self.L0
 
-        # 3. curl(H*) = dHy*/dx* - dHx*/dy*
-        grad_Hx = torch.autograd.grad(outputs=Hx_star, inputs=xy, grad_outputs=torch.ones_like(Hx_star), create_graph=True)[0]
-        grad_Hy = torch.autograd.grad(outputs=Hy_star, inputs=xy, grad_outputs=torch.ones_like(Hy_star), create_graph=True)[0]
+        Bn_a_star = Bx_a_star * nx + By_a_star * ny
+        Bn_b_star = Bx_b_star * nx + By_b_star * ny
+        loss_Bn = torch.mean(corner_w * ((Bn_a_star - Bn_b_star) ** 2))
 
-        dHy_dx_star = grad_Hy[:, 0:1] * self.L0
-        dHx_dy_star = grad_Hx[:, 1:2] * self.L0
+        # Đánh giá nu* từ Net_nu hoặc vật liệu hiện hành
+        if hasattr(model, 'nu_networks') and key_a in model.nu_networks:
+            nu_a_star = model.forward_nu_network(key_a, pts)
+        else:
+            B_mag_a_phys = torch.sqrt(Bx_a_star**2 + By_a_star**2 + 1e-12) * (self.H0 / self.nu0)
+            nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys, is_nonlinear=True) / self.nu0
 
-        # Trả về Residual vật lý chuẩn của Maxwell (KHÔNG CHIA nu_scale)
-        res_pde = dHy_dx_star - dHx_dy_star - J_z_star
-        return res_pde"""
+        hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
+        hx_a_star = hx_a / self.H0
+        hy_a_star = hy_a / self.H0
 
-    pattern = r"    def compute_linear_pde_residual\(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None\):.*?(?=\n    def |\Z)"
+        if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
+            if hasattr(model, 'nu_networks') and key_b in model.nu_networks:
+                nu_b_star = model.forward_nu_network(key_b, pts)
+            else:
+                B_mag_b_phys = torch.sqrt(Bx_b_star**2 + By_b_star**2 + 1e-12) * (self.H0 / self.nu0)
+                nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys, is_nonlinear=True) / self.nu0
+            hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
+            hx_b_star = hx_b / self.H0
+            hy_b_star = hy_b / self.H0
+        else:
+            nu_b_star = torch.ones_like(nu_a_star)
+            hx_b_star = torch.zeros_like(hx_a_star)
+            hy_b_star = torch.zeros_like(hy_a_star)
+
+        Hx_a_star = nu_a_star * Bx_a_star - hx_a_star
+        Hy_a_star = nu_a_star * By_a_star - hy_a_star
+        Hx_b_star = nu_b_star * Bx_b_star - hx_b_star
+        Hy_b_star = nu_b_star * By_b_star - hy_b_star
+
+        Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
+        Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
+        nu_pair_scale = torch.clamp(torch.maximum(nu_a_star.detach(), nu_b_star.detach()), min=1e-6)
+        ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
+        loss_Ht = torch.mean(corner_w * (ht_diff_normalized ** 2))
+
+        # --- THUẬT TOÁN TÍNH TRỌNG SỐ GIAO DIỆN TỰ ĐỘNG THÔNG MINH (Physical Impedance & Jump Scaling) ---
+        with torch.no_grad():
+            mean_nu_a = torch.mean(nu_a_star).item()
+            mean_nu_b = torch.mean(nu_b_star).item()
+            mu_a = 1.0 / max(mean_nu_a, 1e-6)
+            mu_b = 1.0 / max(mean_nu_b, 1e-6)
+            
+            # Tỷ lệ bật nhảy từ thẩm (Physical Permeability Jump Ratio)
+            jump_ratio = float(max(mu_a / max(mu_b, 1e-6), mu_b / max(mu_a, 1e-6)))
+            auto_interface_scale = float(min(max(jump_ratio, 1.0), 2000.0))
+
+        user_w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1000.0))
+        user_w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 500.0))
+        user_w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 500.0))
+
+        # Nếu giữ cấu hình mặc định (hoặc đặt 1.0), hệ thống tự động kích hoạt auto_interface_scale
+        w_az = auto_interface_scale if user_w_az in [1000.0, 1.0] else user_w_az
+        w_bn = auto_interface_scale if user_w_bn in [500.0, 1.0] else user_w_bn
+        w_ht = auto_interface_scale if user_w_ht in [500.0, 1.0] else user_w_ht
+
+        weighted_interface = w_az * loss_val + w_bn * loss_Bn + w_ht * loss_Ht
+        return weighted_interface, loss_val, loss_Bn, loss_Ht"""
+
+    pattern = r"    def _compute_pair_components\(self, key_a, domain_a, key_b, domain_b, pts\):.*?(?=\n    def |\Z)"
     if re.search(pattern, content, flags=re.DOTALL):
-        updated = re.sub(pattern, new_fn + "\n\n", content, flags=re.DOTALL)
+        updated = re.sub(pattern, new_compute_pair + "\n\n", content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(updated)
-        print(f"[✔] Đã cập nhật Maxwell PDE Residual (không chia nu_scale) trong: {file_path}")
+        print(f"[✔] Đã cập nhật Thuật toán Trọng số Giao diện Tự động trong: {file_path}")
 
 def update_compute_loss(base_dir):
-    """2. Dùng Soft Logarithmic Scaling trong compute_loss.py để điều hòa trọng số miền lõi sắt."""
+    """
+    2. Cập nhật training_engine/compute_loss.py:
+       Tích hợp Co-Energy Variational Loss Scaling cho interior PDE.
+    """
     file_path = os.path.join(base_dir, "training_engine", "compute_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
@@ -115,12 +185,11 @@ def update_compute_loss(base_dir):
             
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
             
-            # CÂN BẰNG TỰ ĐỘNG DẠNG LOGARITHM MỀM (Soft Logarithmic Scaling)
+            # CHUẨN HÓA TRỌNG SỐ MIỀN THEO ĐỒNG NĂNG LƯỢNG TỪ (Co-Energy Scaling: W_domain = 1 / mean_nu_star = mean_mur)
             with torch.no_grad():
                 mean_nu_star = torch.mean(nu_effective).item()
-                mean_mur = 1.0 / max(mean_nu_star, 1e-6)
-                # Tăng nhẹ theo log1p(mur), giới hạn trong khoảng [1.0, 10.0]
-                auto_domain_weight = float(min(max(1.0 + np.log1p(mean_mur), 1.0), 10.0))
+                raw_auto_weight = 1.0 / max(mean_nu_star, 1e-4)
+                auto_domain_weight = float(min(max(raw_auto_weight, 1.0), 2000.0))
 
             user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
             effective_pde_weight = user_base_weight * auto_domain_weight
@@ -134,40 +203,41 @@ def update_compute_loss(base_dir):
         updated = re.sub(pattern, new_loop, content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(updated)
-        print(f"[✔] Đã cập nhật Soft Logarithmic Scaling trong: {file_path}")
+        print(f"[✔] Đã cập nhật Co-Energy Scaling trong: {file_path}")
 
-def update_test_simulation(base_dir):
-    """3. Cập nhật test_simulation2.py tăng cường liên tục giao diện và giữ pde_weight = 1.0."""
-    file_path = os.path.join(base_dir, "tests", "test_simulation2.py")
-    if not os.path.exists(file_path):
-        alt_path = os.path.join(base_dir, "src", "physics_informed_model", "tests", "test_simulation2.py")
-        if os.path.exists(alt_path):
-            file_path = alt_path
-        else:
-            print(f"[!] Không tìm thấy file: {file_path}")
-            return
+def update_test_simulations(base_dir):
+    """3. Cập nhật các file test_simulation.py và test_simulation2.py để kích hoạt cơ chế trọng số tự động (đặt pde_weight = 1.0, interface_weight = 1.0)."""
+    for fname in ["test_simulation.py", "test_simulation2.py"]:
+        file_path = os.path.join(base_dir, "tests", fname)
+        if not os.path.exists(file_path):
+            alt_path = os.path.join(base_dir, "src", "physics_informed_model", "tests", fname)
+            if os.path.exists(alt_path):
+                file_path = alt_path
+            else:
+                continue
 
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
 
-    # Cập nhật interface_bn_weight, interface_ht_weight và pde_weight
-    content = re.sub(r"iron_yoke\.training_config\.interface_bn_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_bn_weight = 2000.0", content)
-    content = re.sub(r"iron_yoke\.training_config\.interface_ht_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_ht_weight = 2000.0", content)
-    content = re.sub(r"iron_yoke\.training_config\.pde_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.pde_weight = 1.0", content)
+        # Đặt interface weights về 1.0 để tự động dùng Jump Ratio Scaling
+        content = re.sub(r"iron_yoke\.training_config\.interface_potential_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_potential_weight = 1.0", content)
+        content = re.sub(r"iron_yoke\.training_config\.interface_bn_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_bn_weight = 1.0", content)
+        content = re.sub(r"iron_yoke\.training_config\.interface_ht_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_ht_weight = 1.0", content)
+        content = re.sub(r"iron_yoke\.training_config\.pde_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.pde_weight = 1.0", content)
 
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print(f"[✔] Đã cập nhật interface weights cho lõi sắt trong: {file_path}")
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"[✔] Đã cập nhật trọng số tự động trong: {file_path}")
 
 def main():
     base_dir = get_base_dir()
-    print(f"[*] Thực thi cập nhật và khắc phục lỗi Flux Exclusion tại: {base_dir}\n")
+    print(f"[*] Thực thi cập nhật Thuật toán Trọng số Tự động cho PINN/XPINN tại: {base_dir}\n")
     
-    update_maxwell_pde_loss(base_dir)
+    update_interface_loss(base_dir)
     update_compute_loss(base_dir)
-    update_test_simulation(base_dir)
+    update_test_simulations(base_dir)
     
-    print("\n[✔] HOÀN TẤT TẤT CẢ CÁC CẬP NHẬT! Bạn có thể chạy lại test_simulation2.py.")
+    print("\n[✔] HOÀN TẤT! Thuật toán đặt trọng số thông minh đã được cập nhật vào dự án.")
 
 if __name__ == "__main__":
     main()

@@ -138,12 +138,29 @@ class InterfaceLoss:
         ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
         loss_Ht = torch.mean(corner_w * (ht_diff_normalized ** 2))
 
-        w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1000.0))
-        w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 500.0))
-        w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 500.0))
+        # --- THUẬT TOÁN TÍNH TRỌNG SỐ GIAO DIỆN TỰ ĐỘNG THÔNG MINH (Physical Impedance & Jump Scaling) ---
+        with torch.no_grad():
+            mean_nu_a = torch.mean(nu_a_star).item()
+            mean_nu_b = torch.mean(nu_b_star).item()
+            mu_a = 1.0 / max(mean_nu_a, 1e-6)
+            mu_b = 1.0 / max(mean_nu_b, 1e-6)
+            
+            # Tỷ lệ bật nhảy từ thẩm (Physical Permeability Jump Ratio)
+            jump_ratio = float(max(mu_a / max(mu_b, 1e-6), mu_b / max(mu_a, 1e-6)))
+            auto_interface_scale = float(min(max(jump_ratio, 1.0), 2000.0))
+
+        user_w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1000.0))
+        user_w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 500.0))
+        user_w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 500.0))
+
+        # Nếu giữ cấu hình mặc định (hoặc đặt 1.0), hệ thống tự động kích hoạt auto_interface_scale
+        w_az = auto_interface_scale if user_w_az in [1000.0, 1.0] else user_w_az
+        w_bn = auto_interface_scale if user_w_bn in [500.0, 1.0] else user_w_bn
+        w_ht = auto_interface_scale if user_w_ht in [500.0, 1.0] else user_w_ht
 
         weighted_interface = w_az * loss_val + w_bn * loss_Bn + w_ht * loss_Ht
         return weighted_interface, loss_val, loss_Bn, loss_Ht
+
 
     def compute_loss_components(self, network_key, domain, surf_pts, background_key='background'):
         bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain

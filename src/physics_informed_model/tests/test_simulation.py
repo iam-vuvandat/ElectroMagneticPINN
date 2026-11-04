@@ -125,9 +125,9 @@ def run_high_precision_fpi_simulation_test():
     iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.pde_nonlinear_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.0
-    iron_yoke.training_config.interface_potential_weight = 1000.0
-    iron_yoke.training_config.interface_bn_weight = 1200.0
-    iron_yoke.training_config.interface_ht_weight = 1500.0
+    iron_yoke.training_config.interface_potential_weight = 1.0
+    iron_yoke.training_config.interface_bn_weight = 1.0
+    iron_yoke.training_config.interface_ht_weight = 1.0
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 8000
