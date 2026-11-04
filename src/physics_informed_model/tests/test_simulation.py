@@ -104,4 +104,6 @@ def run_high_precision_fpi_simulation_test():
     model.visualization_config.mp4_quality = 8
     model.visualization_config.contour_levels = 80
 
-    # Hiển thị mu_r theo LogScale để quan sát từ dải bão hòa mu_r ~ 8 đến mu_r,max ~ 695
+if __name__ == "__main__":
+    run_high_precision_fpi_simulation_test()
+   
