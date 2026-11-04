@@ -45,7 +45,7 @@ def execute_training_process(pinn_instance):
             max_diff = pinn_instance.training_manager_instance.fit_nu_network_step(
                 domains_data, alpha_damping=alpha_damp, epochs=fit_ep, lr=fit_lr
             )
-                        print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+            print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
 
             # Thực thi L-BFGS tinh chỉnh tại mỗi bước FPI nếu cấu hình bật
             if getattr(t_cfg, 'enable_lbfgs_per_fpi_step', False):
