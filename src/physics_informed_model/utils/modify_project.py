@@ -18,7 +18,7 @@ def get_base_dir():
     return os.path.abspath(os.path.join(script_dir, ".."))
 
 def update_maxwell_pde_loss(base_dir):
-    """1. Chuẩn hóa residual điểm theo nu_star cục bộ trong maxwell_pde_loss.py."""
+    """1. Loại bỏ việc chia nu_scale trong maxwell_pde_loss.py để không làm bùng nổ Gradient trong lõi sắt."""
     file_path = os.path.join(base_dir, "physics_domain", "physical_equations", "maxwell_pde_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
@@ -59,21 +59,19 @@ def update_maxwell_pde_loss(base_dir):
         dHy_dx_star = grad_Hy[:, 0:1] * self.L0
         dHx_dy_star = grad_Hx[:, 1:2] * self.L0
 
+        # Trả về Residual vật lý chuẩn của Maxwell (KHÔNG CHIA nu_scale)
         res_pde = dHy_dx_star - dHx_dy_star - J_z_star
-        
-        # CHUẨN HÓA CỤC BỘ TỪNG ĐIỂM: Chia cho nu_scale (nu_star.detach())
-        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
-        return res_pde / nu_scale"""
+        return res_pde"""
 
     pattern = r"    def compute_linear_pde_residual\(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None\):.*?(?=\n    def |\Z)"
     if re.search(pattern, content, flags=re.DOTALL):
         updated = re.sub(pattern, new_fn + "\n\n", content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(updated)
-        print(f"[✔] Đã cập nhật chuẩn hóa điểm PDE residual trong: {file_path}")
+        print(f"[✔] Đã cập nhật Maxwell PDE Residual (không chia nu_scale) trong: {file_path}")
 
 def update_compute_loss(base_dir):
-    """2. Cân bằng tự động trọng số miền vật liệu (Domain-level Scaling) trong compute_loss.py."""
+    """2. Dùng Soft Logarithmic Scaling trong compute_loss.py để điều hòa trọng số miền lõi sắt."""
     file_path = os.path.join(base_dir, "training_engine", "compute_loss.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
@@ -82,7 +80,6 @@ def update_compute_loss(base_dir):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # Đảm bảo import numpy as np ở đầu file compute_loss.py nếu cần
     if "import numpy as np" not in content:
         content = "import numpy as np\n" + content
 
@@ -118,11 +115,12 @@ def update_compute_loss(base_dir):
             
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
             
-            # CÂN BẰNG TỰ ĐỘNG THEO ĐỘ TỪ THẨM TRUNG BÌNH MIỀN (Dùng min/max thuần Python, tránh NameError)
+            # CÂN BẰNG TỰ ĐỘNG DẠNG LOGARITHM MỀM (Soft Logarithmic Scaling)
             with torch.no_grad():
                 mean_nu_star = torch.mean(nu_effective).item()
-                raw_auto_weight = 1.0 / max(mean_nu_star, 1e-6)
-                auto_domain_weight = float(min(max(raw_auto_weight, 1.0), 10000.0))
+                mean_mur = 1.0 / max(mean_nu_star, 1e-6)
+                # Tăng nhẹ theo log1p(mur), giới hạn trong khoảng [1.0, 10.0]
+                auto_domain_weight = float(min(max(1.0 + np.log1p(mean_mur), 1.0), 10.0))
 
             user_base_weight = float(getattr(domain.training_config, 'pde_weight', 1.0))
             effective_pde_weight = user_base_weight * auto_domain_weight
@@ -136,56 +134,40 @@ def update_compute_loss(base_dir):
         updated = re.sub(pattern, new_loop, content, flags=re.DOTALL)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(updated)
-        print(f"[✔] Đã cập nhật Cân bằng trọng số miền tự động trong: {file_path}")
+        print(f"[✔] Đã cập nhật Soft Logarithmic Scaling trong: {file_path}")
 
-def update_save_frame(base_dir):
-    """3. Cập nhật truyền nu_star_net trong save_frame.py để đồng nhất hiển thị PDE Residual Error."""
-    file_path = os.path.join(base_dir, "training_visualizer", "save_frame.py")
+def update_test_simulation(base_dir):
+    """3. Cập nhật test_simulation2.py tăng cường liên tục giao diện và giữ pde_weight = 1.0."""
+    file_path = os.path.join(base_dir, "tests", "test_simulation2.py")
     if not os.path.exists(file_path):
-        print(f"[!] Không tìm thấy file: {file_path}")
-        return
+        alt_path = os.path.join(base_dir, "src", "physics_informed_model", "tests", "test_simulation2.py")
+        if os.path.exists(alt_path):
+            file_path = alt_path
+        else:
+            print(f"[!] Không tìm thấy file: {file_path}")
+            return
 
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    new_block = """            if getattr(domain.physics_config, 'is_nonlinear', False):
-                if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
-                    with torch.no_grad():
-                        nu_star_pred = model.forward_nu_network(net_key, eval_points)
-                        nu_dom = nu_star_pred * sim_domain.nu0
-                        nu_star_net_eval = nu_star_pred
-                else:
-                    B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
-                    nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
-                    nu_star_net_eval = None
-            else:
-                nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
-                nu_star_net_eval = None
+    # Cập nhật interface_bn_weight, interface_ht_weight và pde_weight
+    content = re.sub(r"iron_yoke\.training_config\.interface_bn_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_bn_weight = 2000.0", content)
+    content = re.sub(r"iron_yoke\.training_config\.interface_ht_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.interface_ht_weight = 2000.0", content)
+    content = re.sub(r"iron_yoke\.training_config\.pde_weight\s*=\s*[\d\.]+", "iron_yoke.training_config.pde_weight = 1.0", content)
 
-            hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
-            hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
-            jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
-
-            res_pde = pde_evaluator.compute_linear_pde_residual(
-                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom, nu_star_net=nu_star_net_eval
-            )"""
-
-    old_pattern = r"            if getattr\(domain\.physics_config, 'is_nonlinear', False\):.*?res_pde = pde_evaluator\.compute_linear_pde_residual\(\n                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom\n            \)"
-    if re.search(old_pattern, content, flags=re.DOTALL):
-        updated = re.sub(old_pattern, new_block, content, flags=re.DOTALL)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(updated)
-        print(f"[✔] Đã cập nhật truyền nu_star_net trong: {file_path}")
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[✔] Đã cập nhật interface weights cho lõi sắt trong: {file_path}")
 
 def main():
     base_dir = get_base_dir()
-    print(f"[*] Thực thi sửa đổi cấu hình dự án tại: {base_dir}\n")
+    print(f"[*] Thực thi cập nhật và khắc phục lỗi Flux Exclusion tại: {base_dir}\n")
     
     update_maxwell_pde_loss(base_dir)
     update_compute_loss(base_dir)
-    update_save_frame(base_dir)
+    update_test_simulation(base_dir)
     
-    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI! Tự động chuẩn hóa PDE Residual theo độ từ thẩm đã sẵn sàng.")
+    print("\n[✔] HOÀN TẤT TẤT CẢ CÁC CẬP NHẬT! Bạn có thể chạy lại test_simulation2.py.")
 
 if __name__ == "__main__":
     main()
