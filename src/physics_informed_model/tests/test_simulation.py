@@ -68,6 +68,7 @@ model.training_config.number_of_lbfgs_iterations = 1500
 model.training_config.lbfgs_learning_rate = 0.5
 
 model.visualization_config.active = True
+model.visualization_config.display_colab_frames = True
 model.visualization_config.update_interval = 10
 model.visualization_config.output_directory = output_dir
 model.visualization_config.resolution = 160
