@@ -18,7 +18,6 @@ if torch.cuda.is_available():
 
 from electro_magnetic_pinn import ElectroMagneticPINN
 
-
 output_dir = "figure_high_precision_simulation_test"
 if os.path.exists(output_dir):
     shutil.rmtree(output_dir)
@@ -42,9 +41,9 @@ model.training_config.enable_linear_warmup_stage = True
 model.training_config.enable_nonlinear_adaptation_stage = True
 model.training_config.enable_lbfgs_refinement_stage = True
 
-epochs_warmup_target = 3000
-fpi_iterations = 3
-epochs_per_fpi = 3000
+epochs_warmup_target = 1000
+fpi_iterations = 5
+epochs_per_fpi = 1000
 
 model.training_config.fpi_outer_iterations = fpi_iterations
 model.training_config.fpi_alpha_damping = 0.8
@@ -53,31 +52,32 @@ model.training_config.fpi_tolerance = 1e-6
 model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
 model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
-model.training_config.adam_learning_rate = 0.2 * 1e-3
+# Tăng gấp đôi Adam learning rate lên 2e-3
+model.training_config.adam_learning_rate = 2e-3
 model.training_config.target_loss_threshold = 1e-7
 model.training_config.adam_eta_min = 1e-6
 model.training_config.grad_clip_max_norm = 1.0
 model.training_config.max_non_finite_streak = 5
-model.training_config.adam_log_interval = 1
+model.training_config.adam_log_interval = 100
 
-model.training_config.pretrain_nu_epochs = 3000
+model.training_config.pretrain_nu_epochs = 600
 model.training_config.pretrain_nu_lr = 5e-3
-model.training_config.fit_nu_epochs = 3000
+model.training_config.fit_nu_epochs = 500
 model.training_config.fit_nu_lr = 3e-3
 
-model.training_config.number_of_lbfgs_iterations = 3000
+model.training_config.number_of_lbfgs_iterations = 1500
 model.training_config.lbfgs_learning_rate = 0.5
 
 model.visualization_config.active = True
-model.visualization_config.update_interval = 100
+model.visualization_config.update_interval = 10
 model.visualization_config.output_directory = output_dir
 model.visualization_config.resolution = 160
 model.visualization_config.generate_gif_animation = True
 model.visualization_config.gif_filename = "high_precision_mur_training_process.gif"
 model.visualization_config.generate_mp4_video = True
 model.visualization_config.mp4_filename = "high_precision_mur_training_process.mp4"
-model.visualization_config.animation_fps = 1.0
-model.visualization_config.gif_fps = 1.0
+model.visualization_config.animation_fps = 10.0
+model.visualization_config.gif_fps = 10.0
 model.visualization_config.mp4_codec = "libx264"
 model.visualization_config.mp4_quality = 8
 model.visualization_config.contour_levels = 80
@@ -95,28 +95,24 @@ iron_yoke.physics_config.is_nonlinear = True
 iron_yoke.training_config.pde_weight = 1.0
 iron_yoke.training_config.pde_nonlinear_weight = 1.0
 iron_yoke.training_config.interface_weight = 1.0
-iron_yoke.training_config.interface_potential_weight = 1.0
-iron_yoke.training_config.interface_bn_weight = 1.0
-iron_yoke.training_config.interface_ht_weight = 1.0
+iron_yoke.training_config.interface_potential_weight = 1200.0
+iron_yoke.training_config.interface_bn_weight = 1500.0
+iron_yoke.training_config.interface_ht_weight = 1500.0
 iron_yoke.training_config.pde_fading_beta = 80.0
 iron_yoke.training_config.sampling_density_multiplier = 1.0
 
-iron_yoke.training_config.number_of_interior_points = 6000
-iron_yoke.training_config.number_of_surface_points = 2000
+iron_yoke.training_config.number_of_interior_points = 8000
+iron_yoke.training_config.number_of_surface_points = 3000
 
 iron_yoke.network_config.hidden_layers = 4
 iron_yoke.network_config.hidden_neurons = 128
 iron_yoke.network_config.activation_function = nn.Mish()
 iron_yoke.network_config.fourier_features = False
-iron_yoke.network_config.fourier_sigma = 1.5
-iron_yoke.network_config.fourier_mapping_size = 128
 
 iron_yoke.nu_network_config.hidden_layers = 3
-iron_yoke.nu_network_config.hidden_neurons = 128
+iron_yoke.nu_network_config.hidden_neurons = 64
 iron_yoke.nu_network_config.activation_function = nn.Mish()
-iron_yoke.nu_network_config.fourier_features = True
-iron_yoke.nu_network_config.fourier_sigma = 1.0
-iron_yoke.nu_network_config.fourier_mapping_size = 32
+iron_yoke.nu_network_config.fourier_features = False
 
 iron_yoke.build_domain()
 
@@ -130,15 +126,13 @@ magnet_left.physics_config.relative_permeability = 1.05
 magnet_left.physics_config.current = 0.0
 magnet_left.physics_config.is_nonlinear = False
 
-magnet_left.training_config.number_of_interior_points = 800
-magnet_left.training_config.number_of_surface_points = 400
+magnet_left.training_config.number_of_interior_points = 1500
+magnet_left.training_config.number_of_surface_points = 800
 
 magnet_left.network_config.hidden_layers = 4
 magnet_left.network_config.hidden_neurons = 64
 magnet_left.network_config.activation_function = nn.Mish()
 magnet_left.network_config.fourier_features = False
-magnet_left.network_config.fourier_sigma = 1.0
-magnet_left.network_config.fourier_mapping_size = 64
 
 magnet_left.build_domain()
 
@@ -152,36 +146,32 @@ magnet_right.physics_config.relative_permeability = 1.05
 magnet_right.physics_config.current = 0.0
 magnet_right.physics_config.is_nonlinear = False
 
-magnet_right.training_config.number_of_interior_points = 800
-magnet_right.training_config.number_of_surface_points = 400
+magnet_right.training_config.number_of_interior_points = 1500
+magnet_right.training_config.number_of_surface_points = 800
 
 magnet_right.network_config.hidden_layers = 4
 magnet_right.network_config.hidden_neurons = 64
 magnet_right.network_config.activation_function = nn.Mish()
 magnet_right.network_config.fourier_features = False
-magnet_right.network_config.fourier_sigma = 1.0
-magnet_right.network_config.fourier_mapping_size = 64
 
 magnet_right.build_domain()
 
 bg_training_cfg = SimpleNamespace(
     pde_weight=1.0,
     interface_weight=1.0,
-    interface_potential_weight=1.0,
-    interface_bn_weight=1.0,
-    interface_ht_weight=1.0,
+    interface_potential_weight=1200.0,
+    interface_bn_weight=1500.0,
+    interface_ht_weight=1500.0,
     pde_fading_beta=80.0,
     sampling_density_multiplier=1.0,
-    number_of_interior_points=4000,
+    number_of_interior_points=6000,
     number_of_surface_points=0
 )
 bg_network_cfg = SimpleNamespace(
     hidden_layers=4,
-    hidden_neurons=128,
+    hidden_neurons=64,
     activation_function=nn.Mish(),
-    fourier_features=False,
-    fourier_sigma=1.0,
-    fourier_mapping_size=64
+    fourier_features=False
 )
 sim_domain.build_background_domain(
     domain_name="background",
@@ -191,7 +181,7 @@ sim_domain.build_background_domain(
 
 model.update_electromagnetic_pinn()
 
-print("[*] Bắt đầu tiến trình huấn luyện tối ưu tốc độ...")
+print("[*] Bắt đầu tiến trình huấn luyện...")
 model.execute_training_process()
 
 print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
