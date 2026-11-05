@@ -81,7 +81,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     ax_pts = axs[0, 0]
     ax_pts.set_title("Categorized Collocation Points")
     
-    # Bảng màu đậm (Dark/Deep palette) có độ tương phản cao
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
     pair_colors = ['#800000', '#004080', '#004d40', '#4a148c', '#bf360c']
 
@@ -102,7 +101,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
             c_pair = pair_colors[p_idx % len(pair_colors)]
             ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=1.0, color=c_pair, marker='o', linewidths=0, alpha=0.95)
 
-    # Đã loại bỏ ax_pts.legend()
     ax_pts.set_xlim(visualizer_instance.x_bounds)
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
@@ -215,3 +213,12 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     
     visualizer_instance.frame_paths.append(frame_name)
     model.train()
+
+    if getattr(vis_cfg, 'display_colab_frames', False):
+        try:
+            from IPython.display import Image, display, clear_output
+            clear_output(wait=True)
+            print(f"[*] Live Colab Frame at Step {epoch}: {frame_name}")
+            display(Image(filename=frame_name))
+        except Exception:
+            pass

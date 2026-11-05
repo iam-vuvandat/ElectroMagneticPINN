@@ -69,6 +69,7 @@ class ElectroMagneticPINN:
             gif_fps=5,
             mp4_codec="libx264",
             mp4_quality=8,
+            display_colab_frames=False,
 
             contour_levels=60,
 

@@ -52,7 +52,6 @@ model.training_config.fpi_tolerance = 1e-6
 model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
 model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
-# Tăng gấp đôi Adam learning rate lên 2e-3
 model.training_config.adam_learning_rate = 2e-3
 model.training_config.target_loss_threshold = 1e-7
 model.training_config.adam_eta_min = 1e-6
@@ -69,6 +68,7 @@ model.training_config.number_of_lbfgs_iterations = 1500
 model.training_config.lbfgs_learning_rate = 0.5
 
 model.visualization_config.active = True
+model.visualization_config.display_colab_frames = True
 model.visualization_config.update_interval = 10
 model.visualization_config.output_directory = output_dir
 model.visualization_config.resolution = 160
@@ -95,9 +95,9 @@ iron_yoke.physics_config.is_nonlinear = True
 iron_yoke.training_config.pde_weight = 1.0
 iron_yoke.training_config.pde_nonlinear_weight = 1.0
 iron_yoke.training_config.interface_weight = 1.0
-iron_yoke.training_config.interface_potential_weight = 1200.0
-iron_yoke.training_config.interface_bn_weight = 1500.0
-iron_yoke.training_config.interface_ht_weight = 1500.0
+iron_yoke.training_config.interface_potential_weight = 800.0
+iron_yoke.training_config.interface_bn_weight = 1000.0
+iron_yoke.training_config.interface_ht_weight = 1200.0
 iron_yoke.training_config.pde_fading_beta = 80.0
 iron_yoke.training_config.sampling_density_multiplier = 1.0
 
@@ -107,12 +107,16 @@ iron_yoke.training_config.number_of_surface_points = 3000
 iron_yoke.network_config.hidden_layers = 4
 iron_yoke.network_config.hidden_neurons = 128
 iron_yoke.network_config.activation_function = nn.Mish()
-iron_yoke.network_config.fourier_features = False
+iron_yoke.network_config.fourier_features = True
+iron_yoke.network_config.fourier_sigma = 1.2
+iron_yoke.network_config.fourier_mapping_size = 128
 
 iron_yoke.nu_network_config.hidden_layers = 3
 iron_yoke.nu_network_config.hidden_neurons = 64
 iron_yoke.nu_network_config.activation_function = nn.Mish()
-iron_yoke.nu_network_config.fourier_features = False
+iron_yoke.nu_network_config.fourier_features = True
+iron_yoke.nu_network_config.fourier_sigma = 1.0
+iron_yoke.nu_network_config.fourier_mapping_size = 32
 
 iron_yoke.build_domain()
 
@@ -132,7 +136,9 @@ magnet_left.training_config.number_of_surface_points = 800
 magnet_left.network_config.hidden_layers = 4
 magnet_left.network_config.hidden_neurons = 64
 magnet_left.network_config.activation_function = nn.Mish()
-magnet_left.network_config.fourier_features = False
+magnet_left.network_config.fourier_features = True
+magnet_left.network_config.fourier_sigma = 1.0
+magnet_left.network_config.fourier_mapping_size = 64
 
 magnet_left.build_domain()
 
@@ -152,16 +158,18 @@ magnet_right.training_config.number_of_surface_points = 800
 magnet_right.network_config.hidden_layers = 4
 magnet_right.network_config.hidden_neurons = 64
 magnet_right.network_config.activation_function = nn.Mish()
-magnet_right.network_config.fourier_features = False
+magnet_right.network_config.fourier_features = True
+magnet_right.network_config.fourier_sigma = 1.0
+magnet_right.network_config.fourier_mapping_size = 64
 
 magnet_right.build_domain()
 
 bg_training_cfg = SimpleNamespace(
     pde_weight=1.0,
     interface_weight=1.0,
-    interface_potential_weight=1200.0,
-    interface_bn_weight=1500.0,
-    interface_ht_weight=1500.0,
+    interface_potential_weight=800.0,
+    interface_bn_weight=1000.0,
+    interface_ht_weight=1200.0,
     pde_fading_beta=80.0,
     sampling_density_multiplier=1.0,
     number_of_interior_points=6000,
@@ -171,7 +179,9 @@ bg_network_cfg = SimpleNamespace(
     hidden_layers=4,
     hidden_neurons=64,
     activation_function=nn.Mish(),
-    fourier_features=False
+    fourier_features=True,
+    fourier_sigma=1.0,
+    fourier_mapping_size=64
 )
 sim_domain.build_background_domain(
     domain_name="background",

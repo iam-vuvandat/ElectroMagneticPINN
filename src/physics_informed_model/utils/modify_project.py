@@ -18,7 +18,7 @@ def get_base_dir():
     return os.path.abspath(os.path.join(script_dir, ".."))
 
 def simplify_background_sampling(base_dir):
-    """1. Đơn giản hóa thuật toán lấy điểm không khí nền (bỏ đệm mật độ cao bọc quanh vật liệu)."""
+    """1. Đơn giản hóa thuật toán lấy điểm không khí nền."""
     file_path = os.path.join(base_dir, "physics_domain", "collocation_sampler.py")
     if not os.path.exists(file_path):
         print(f"[!] Không tìm thấy file: {file_path}")
@@ -48,7 +48,6 @@ def simplify_background_sampling(base_dir):
 
 def update_visualizer_and_global_step(base_dir):
     """2. Cập nhật giao diện Subplot 1, nhãn trục hoành đồ thị Loss và tracking global_step."""
-    # --- A. Cập nhật training_manager.py ---
     tm_path = os.path.join(base_dir, "training_engine", "training_manager.py")
     if os.path.exists(tm_path):
         with open(tm_path, 'r', encoding='utf-8') as f:
@@ -62,7 +61,6 @@ def update_visualizer_and_global_step(base_dir):
                 f.write(tm_code)
             print(f"[✔] Đã bổ sung self.global_step vào: {tm_path}")
 
-    # --- B. Cập nhật train_adam.py ---
     adam_path = os.path.join(base_dir, "training_engine", "train_adam.py")
     if os.path.exists(adam_path):
         with open(adam_path, 'r', encoding='utf-8') as f:
@@ -83,18 +81,15 @@ def update_visualizer_and_global_step(base_dir):
             f.write(adam_code)
         print(f"[✔] Đã cập nhật global_step trong: {adam_path}")
 
-    # --- C. Cập nhật save_frame.py ---
     sf_path = os.path.join(base_dir, "training_visualizer", "save_frame.py")
     if os.path.exists(sf_path):
         with open(sf_path, 'r', encoding='utf-8') as f:
             sf_code = f.read()
 
-        # Cập nhật Subplot 1 (Biểu diễn điểm lấy mẫu: bỏ legend, dùng dấu chấm mảnh, bảng màu đậm)
         new_subplot1 = '''    # --- SUBPLOT 1: axs[0, 0] ---
     ax_pts = axs[0, 0]
     ax_pts.set_title("Categorized Collocation Points")
     
-    # Bảng màu đậm (Dark/Deep palette) có độ tương phản cao
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
     pair_colors = ['#800000', '#004080', '#004d40', '#4a148c', '#bf360c']
 
@@ -115,7 +110,6 @@ def update_visualizer_and_global_step(base_dir):
             c_pair = pair_colors[p_idx % len(pair_colors)]
             ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=1.0, color=c_pair, marker='o', linewidths=0, alpha=0.95)
 
-    # Đã loại bỏ ax_pts.legend()
     ax_pts.set_xlim(visualizer_instance.x_bounds)
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')'''
@@ -124,7 +118,6 @@ def update_visualizer_and_global_step(base_dir):
         if re.search(pattern_sp1, sf_code, flags=re.DOTALL):
             sf_code = re.sub(pattern_sp1, new_subplot1, sf_code, flags=re.DOTALL)
 
-        # Cập nhật nhãn trục hoành của đồ thị Loss
         sf_code = sf_code.replace('axs[0, 3].set_xlabel("Step / Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
         sf_code = sf_code.replace('axs[0, 3].set_xlabel("Epoch")', 'axs[0, 3].set_xlabel("Total Optimization Step")')
 
@@ -164,6 +157,45 @@ def add_colab_gif_display(base_dir):
             f.write(content)
         print(f"[✔] Đã tích hợp tự động hiển thị GIF Colab vào: {file_path}")
 
+def add_colab_frame_display_config(base_dir):
+    """4. Thêm config display_colab_frames và cập nhật save_frame để in frame thời gian thực lên Colab."""
+    # A. Cập nhật electro_magnetic_pinn.py
+    pinn_path = os.path.join(base_dir, "electro_magnetic_pinn.py")
+    if os.path.exists(pinn_path):
+        with open(pinn_path, 'r', encoding='utf-8') as f:
+            pinn_code = f.read()
+
+        if "display_colab_frames" not in pinn_code:
+            pinn_code = pinn_code.replace(
+                "mp4_quality=8,",
+                "mp4_quality=8,\n            display_colab_frames=False,"
+            )
+            with open(pinn_path, 'w', encoding='utf-8') as f:
+                f.write(pinn_code)
+            print(f"[✔] Đã thêm config display_colab_frames=False vào: {pinn_path}")
+
+    # B. Cập nhật save_frame.py
+    sf_path = os.path.join(base_dir, "training_visualizer", "save_frame.py")
+    if os.path.exists(sf_path):
+        with open(sf_path, 'r', encoding='utf-8') as f:
+            sf_code = f.read()
+
+        colab_live_snippet = """
+    if getattr(vis_cfg, 'display_colab_frames', False):
+        try:
+            from IPython.display import Image, display, clear_output
+            clear_output(wait=True)
+            print(f"[*] Live Colab Frame at Step {epoch}: {frame_name}")
+            display(Image(filename=frame_name))
+        except Exception:
+            pass
+"""
+        if "getattr(vis_cfg, 'display_colab_frames', False)" not in sf_code:
+            sf_code = sf_code.rstrip() + "\n" + colab_live_snippet
+            with open(sf_path, 'w', encoding='utf-8') as f:
+                f.write(sf_code)
+            print(f"[✔] Đã cập nhật tính năng hiển thị thời gian thực Colab trong: {sf_path}")
+
 def main():
     base_dir = get_base_dir()
     print(f"[*] Thực thi sửa đổi cấu hình dự án tại: {base_dir}\n")
@@ -171,8 +203,9 @@ def main():
     simplify_background_sampling(base_dir)
     update_visualizer_and_global_step(base_dir)
     add_colab_gif_display(base_dir)
+    add_colab_frame_display_config(base_dir)
     
-    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI! (Tuyệt đối giữ nguyên material_data.py)")
+    print("\n[✔] HOÀN TẤT TẤT CẢ SỬA ĐỔI!")
 
 if __name__ == "__main__":
     main()
