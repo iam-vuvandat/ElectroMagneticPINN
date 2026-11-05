@@ -38,39 +38,34 @@ model.sampler_config.dynamic_resampling = True
 model.sampler_config.resample_interval = 100
 model.sampler_config.resample_points_before_lbfgs_stage = True
 
-
 model.training_config.enable_linear_warmup_stage = True
 model.training_config.enable_nonlinear_adaptation_stage = True
 model.training_config.enable_lbfgs_refinement_stage = True
 
 epochs_warmup_target = 3000
-fpi_iterations = 3                        # Giảm số bước FPI từ 10-20 xuống 5
-epochs_per_fpi = 3000                      # Giảm số Adam epochs mỗi bước FPI xuống 600
+fpi_iterations = 3
+epochs_per_fpi = 3000
 
 model.training_config.fpi_outer_iterations = fpi_iterations
 model.training_config.fpi_alpha_damping = 0.8
 model.training_config.fpi_tolerance = 1e-6
 
-
 model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
 model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
 
-
-model.training_config.adam_learning_rate = 0.2*  1e-3
+model.training_config.adam_learning_rate = 0.2 * 1e-3
 model.training_config.target_loss_threshold = 1e-7
 model.training_config.adam_eta_min = 1e-6
 model.training_config.grad_clip_max_norm = 1.0
 model.training_config.max_non_finite_streak = 5
 model.training_config.adam_log_interval = 1
 
-
-model.training_config.pretrain_nu_epochs = 3000   
+model.training_config.pretrain_nu_epochs = 3000
 model.training_config.pretrain_nu_lr = 5e-3
-model.training_config.fit_nu_epochs = 3000        
+model.training_config.fit_nu_epochs = 3000
 model.training_config.fit_nu_lr = 3e-3
 
-
-model.training_config.number_of_lbfgs_iterations = 3000  
+model.training_config.number_of_lbfgs_iterations = 3000
 model.training_config.lbfgs_learning_rate = 0.5
 
 model.visualization_config.active = True
@@ -87,11 +82,6 @@ model.visualization_config.mp4_codec = "libx264"
 model.visualization_config.mp4_quality = 8
 model.visualization_config.contour_levels = 80
 
-# =========================================================================
-# 5. CẤU HÌNH MIỀN VẬT LIỆU: TĂNG MẠNH ĐIỂM LÕI SẮT & GIẢM KÍCH THƯỚC MẠNG
-# =========================================================================
-
-# --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
 iron_yoke = sim_domain.create_material_domain(
     domain_name="iron_yoke",
     material_name="steel_1008",
@@ -102,7 +92,6 @@ iron_yoke.physics_config.coercive = [0.0, 0.0]
 iron_yoke.physics_config.current = 0.0
 iron_yoke.physics_config.is_nonlinear = True
 
-# Trọng số cân bằng tự nhiên
 iron_yoke.training_config.pde_weight = 1.0
 iron_yoke.training_config.pde_nonlinear_weight = 1.0
 iron_yoke.training_config.interface_weight = 1.0
@@ -110,22 +99,20 @@ iron_yoke.training_config.interface_potential_weight = 1.0
 iron_yoke.training_config.interface_bn_weight = 1.0
 iron_yoke.training_config.interface_ht_weight = 1.0
 iron_yoke.training_config.pde_fading_beta = 80.0
-iron_yoke.training_config.sampling_density_multiplier = 2.5
+iron_yoke.training_config.sampling_density_multiplier = 1.0
 
-# TĂNG MẠNH SỐ ĐIỂM LẤY MẪU TRONG LÕI SẮT ĐỂ GIẢM MẠNH LOSS NỘI MIỀN
-iron_yoke.training_config.number_of_interior_points = 30000  # Tăng mạnh từ 8,000 -> 25,000 điểm
-iron_yoke.training_config.number_of_surface_points = 6000    # Tăng từ 4,000 -> 6,000 điểm biên
+iron_yoke.training_config.number_of_interior_points = 6000
+iron_yoke.training_config.number_of_surface_points = 2000
 
-# GIẢM KÍCH THƯỚC MẠNG NƠ-RON (Gọn nhẹ hơn để tăng tốc độ tính toán)
-iron_yoke.network_config.hidden_layers = 4                    # Giảm từ 5 -> 3 hidden layers
-iron_yoke.network_config.hidden_neurons = 128                  # Giảm từ 128 -> 64 neurons
+iron_yoke.network_config.hidden_layers = 4
+iron_yoke.network_config.hidden_neurons = 128
 iron_yoke.network_config.activation_function = nn.Mish()
 iron_yoke.network_config.fourier_features = False
-iron_yoke.network_config.fourier_sigma = 1.5                  # Tăng sigma để giải quyết biến thiên độ dốc
-iron_yoke.network_config.fourier_mapping_size = 128           # Giảm từ 256 -> 128
+iron_yoke.network_config.fourier_sigma = 1.5
+iron_yoke.network_config.fourier_mapping_size = 128
 
-iron_yoke.nu_network_config.hidden_layers = 3                 # Giảm từ 3 -> 2 layers
-iron_yoke.nu_network_config.hidden_neurons = 128               # Giảm từ 64 -> 32 neurons
+iron_yoke.nu_network_config.hidden_layers = 3
+iron_yoke.nu_network_config.hidden_neurons = 128
 iron_yoke.nu_network_config.activation_function = nn.Mish()
 iron_yoke.nu_network_config.fourier_features = True
 iron_yoke.nu_network_config.fourier_sigma = 1.0
@@ -133,7 +120,6 @@ iron_yoke.nu_network_config.fourier_mapping_size = 32
 
 iron_yoke.build_domain()
 
-# --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
 magnet_left = sim_domain.create_material_domain(
     domain_name="magnet_left",
     material_name="N30UH",
@@ -144,11 +130,11 @@ magnet_left.physics_config.relative_permeability = 1.05
 magnet_left.physics_config.current = 0.0
 magnet_left.physics_config.is_nonlinear = False
 
-magnet_left.training_config.number_of_interior_points = 2000
-magnet_left.training_config.number_of_surface_points = 1000
+magnet_left.training_config.number_of_interior_points = 800
+magnet_left.training_config.number_of_surface_points = 400
 
-magnet_left.network_config.hidden_layers = 4                 # Giảm từ 4 -> 3 layers
-magnet_left.network_config.hidden_neurons = 64                # Giảm từ 64 -> 48 neurons
+magnet_left.network_config.hidden_layers = 4
+magnet_left.network_config.hidden_neurons = 64
 magnet_left.network_config.activation_function = nn.Mish()
 magnet_left.network_config.fourier_features = False
 magnet_left.network_config.fourier_sigma = 1.0
@@ -156,7 +142,6 @@ magnet_left.network_config.fourier_mapping_size = 64
 
 magnet_left.build_domain()
 
-# --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
 magnet_right = sim_domain.create_material_domain(
     domain_name="magnet_right",
     material_name="N30UH",
@@ -167,11 +152,11 @@ magnet_right.physics_config.relative_permeability = 1.05
 magnet_right.physics_config.current = 0.0
 magnet_right.physics_config.is_nonlinear = False
 
-magnet_right.training_config.number_of_interior_points = 2000
-magnet_right.training_config.number_of_surface_points = 1000
+magnet_right.training_config.number_of_interior_points = 800
+magnet_right.training_config.number_of_surface_points = 400
 
-magnet_right.network_config.hidden_layers = 4                  # Giảm từ 4 -> 3 layers
-magnet_right.network_config.hidden_neurons = 64                # Giảm từ 64 -> 48 neurons
+magnet_right.network_config.hidden_layers = 4
+magnet_right.network_config.hidden_neurons = 64
 magnet_right.network_config.activation_function = nn.Mish()
 magnet_right.network_config.fourier_features = False
 magnet_right.network_config.fourier_sigma = 1.0
@@ -179,7 +164,6 @@ magnet_right.network_config.fourier_mapping_size = 64
 
 magnet_right.build_domain()
 
-# --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
 bg_training_cfg = SimpleNamespace(
     pde_weight=1.0,
     interface_weight=1.0,
@@ -188,12 +172,12 @@ bg_training_cfg = SimpleNamespace(
     interface_ht_weight=1.0,
     pde_fading_beta=80.0,
     sampling_density_multiplier=1.0,
-    number_of_interior_points=15000,                            # Giảm nhẹ điểm nền từ 8,000 -> 5,000
+    number_of_interior_points=4000,
     number_of_surface_points=0
 )
 bg_network_cfg = SimpleNamespace(
-    hidden_layers=4,                                           # Giảm từ 4 -> 3 layers
-    hidden_neurons=128,                                         # Giảm từ 64 -> 48 neurons
+    hidden_layers=4,
+    hidden_neurons=128,
     activation_function=nn.Mish(),
     fourier_features=False,
     fourier_sigma=1.0,
@@ -205,9 +189,6 @@ sim_domain.build_background_domain(
     network_config=bg_network_cfg
 )
 
-# =========================================================================
-# 6. THỰC THI HUẤN LUYỆN VÀ TẠO ANIMATION
-# =========================================================================
 model.update_electromagnetic_pinn()
 
 print("[*] Bắt đầu tiến trình huấn luyện tối ưu tốc độ...")
