@@ -68,7 +68,6 @@ model.training_config.number_of_lbfgs_iterations = 1500
 model.training_config.lbfgs_learning_rate = 0.5
 
 model.visualization_config.active = True
-model.visualization_config.display_colab_frames = True
 model.visualization_config.update_interval = 10
 model.visualization_config.output_directory = output_dir
 model.visualization_config.resolution = 160
@@ -82,6 +81,7 @@ model.visualization_config.mp4_codec = "libx264"
 model.visualization_config.mp4_quality = 8
 model.visualization_config.contour_levels = 80
 
+# --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
 iron_yoke = sim_domain.create_material_domain(
     domain_name="iron_yoke",
     material_name="steel_1008",
@@ -104,22 +104,25 @@ iron_yoke.training_config.sampling_density_multiplier = 1.0
 iron_yoke.training_config.number_of_interior_points = 8000
 iron_yoke.training_config.number_of_surface_points = 3000
 
+# TĂNG MẠNH TÁC ĐỘNG FOURIER FEATURES CHO MẠNG CHÍNH LÕI SẮT (Net_Az)
 iron_yoke.network_config.hidden_layers = 4
 iron_yoke.network_config.hidden_neurons = 128
 iron_yoke.network_config.activation_function = nn.Mish()
 iron_yoke.network_config.fourier_features = True
-iron_yoke.network_config.fourier_sigma = 1.2
-iron_yoke.network_config.fourier_mapping_size = 128
+iron_yoke.network_config.fourier_sigma = 2.5           # Tăng từ 1.2 lên 2.5
+iron_yoke.network_config.fourier_mapping_size = 256      # Tăng chiều nhúng từ 128 lên 256
 
+# TĂNG MẠNH FOURIER FEATURES CHO MẠNG PHỤ TÍNH RELUCTIVITY (Net_nu)
 iron_yoke.nu_network_config.hidden_layers = 3
 iron_yoke.nu_network_config.hidden_neurons = 64
 iron_yoke.nu_network_config.activation_function = nn.Mish()
 iron_yoke.nu_network_config.fourier_features = True
-iron_yoke.nu_network_config.fourier_sigma = 1.0
-iron_yoke.nu_network_config.fourier_mapping_size = 32
+iron_yoke.nu_network_config.fourier_sigma = 1.8        # Tăng từ 1.0 lên 1.8
+iron_yoke.nu_network_config.fourier_mapping_size = 64   # Tăng chiều nhúng từ 32 lên 64
 
 iron_yoke.build_domain()
 
+# --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
 magnet_left = sim_domain.create_material_domain(
     domain_name="magnet_left",
     material_name="N30UH",
@@ -142,6 +145,7 @@ magnet_left.network_config.fourier_mapping_size = 64
 
 magnet_left.build_domain()
 
+# --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
 magnet_right = sim_domain.create_material_domain(
     domain_name="magnet_right",
     material_name="N30UH",
@@ -164,6 +168,7 @@ magnet_right.network_config.fourier_mapping_size = 64
 
 magnet_right.build_domain()
 
+# --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
 bg_training_cfg = SimpleNamespace(
     pde_weight=1.0,
     interface_weight=1.0,
