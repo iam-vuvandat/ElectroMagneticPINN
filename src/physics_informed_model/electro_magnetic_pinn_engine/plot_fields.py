@@ -1,9 +1,18 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.colors import LogNorm, Normalize
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
+
+# 20 mã màu chuẩn FEM Ansys Maxwell
+ANSYS_FEM_HEX_COLORS = [
+    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
+    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
+    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00', 
+    '#FFD700', '#FFA100', '#FF6B00', '#FF3600', '#FF0000'
+]
 
 def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsize=(12, 10)):
     sim_domain = pinn_instance.simulation_domain_engine_instance
@@ -28,11 +37,19 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     B_y_grid = B_y_np.reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
 
+    # --- CHUYỂN ĐỔI ĐƠN VỊ CỦA B ---
+    b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
+    if b_unit == "mTesla":
+        B_mag_grid = B_mag_grid * 1000.0
+        unit_str = "mTesla"
+    else:
+        unit_str = "T"
+
     props = sim_domain.evaluate_global_physical_properties(eval_pts)
     mat_ids = props["material_classification"].squeeze()
     
     mu_r_tensor = torch.ones_like(mat_ids, device=device)
-    B_mag_pts = torch.tensor(B_mag_grid.ravel(), dtype=torch.float32, device=device).unsqueeze(1)
+    B_mag_pts = torch.tensor((B_mag_grid / (1000.0 if b_unit == "mTesla" else 1.0)).ravel(), dtype=torch.float32, device=device).unsqueeze(1)
 
     for domain in sim_domain.domains_list:
         if getattr(domain, 'domain_name', '') != 'background':
@@ -68,14 +85,30 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
     axs[0, 0].set_aspect('equal')
 
-    # --- 2. |B| Magnitude Plot ---
+    # --- 2. |B| Magnitude Plot (NỘI SUY MÃ MÀU FEM) ---
     b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-    b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
+    b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else (1800.0 if b_unit == "mTesla" else 1.8)
     b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
-    levels_b = np.linspace(b_min, b_max, n_levels)
-    c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max)
-    fig.colorbar(c1, ax=axs[0, 1], label=r"$|B|$ (T)")
-    axs[0, 1].set_title(r"Magnetic Flux Density Magnitude ($|B|$)")
+    
+    num_div = getattr(vis_cfg, 'b_mag_number_of_division', None)
+
+    if vis_cfg.b_mag_cmap == "ansys_fem":
+        if num_div is not None and num_div > 0:
+            cmap_b = mcolors.LinearSegmentedColormap.from_list("ansys_fem_interp", ANSYS_FEM_HEX_COLORS, N=num_div)
+            levels_b = np.linspace(b_min, b_max, num_div + 1)
+            norm_b = mcolors.BoundaryNorm(levels_b, ncolors=cmap_b.N, clip=True)
+        else:
+            cmap_b = mcolors.ListedColormap(ANSYS_FEM_HEX_COLORS)
+            levels_b = np.linspace(b_min, b_max, 21)
+            norm_b = mcolors.BoundaryNorm(levels_b, ncolors=cmap_b.N, clip=True)
+    else:
+        cmap_b = vis_cfg.b_mag_cmap
+        levels_b = np.linspace(b_min, b_max, n_levels)
+        norm_b = Normalize(vmin=b_min, vmax=b_max)
+
+    c1 = axs[0, 1].contourf(X_grid, Y_grid, b_mag_clamped, levels=levels_b, cmap=cmap_b, norm=norm_b)
+    fig.colorbar(c1, ax=axs[0, 1], label=f"$|B|$ ({unit_str})")
+    axs[0, 1].set_title(f"Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_aspect('equal')
 
     # --- 3. Relative Permeability \mu_r Plot ---

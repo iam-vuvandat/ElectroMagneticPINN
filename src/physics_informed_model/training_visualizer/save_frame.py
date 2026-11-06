@@ -2,9 +2,18 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.colors import LogNorm, Normalize
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from training_visualizer.resolve_domain_net_key import resolve_domain_net_key
+
+# 20 mã màu chuẩn FEM Ansys Maxwell
+ANSYS_FEM_HEX_COLORS = [
+    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
+    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
+    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00', 
+    '#FFD700', '#FFA100', '#FF6B00', '#FF3600', '#FF0000'
+]
 
 def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     visualizer_instance.loss_history.append(loss_value)
@@ -167,26 +176,45 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
     axs[1, 0].set_aspect('equal')
 
-    # --- SUBPLOT 6: axs[1, 1] ---
+    # --- SUBPLOT 6: axs[1, 1] (CẬP NHẬT FEM COLORMAP NỘI SUY) ---
+    b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
+    b_scale = 1000.0 if b_unit == "mTesla" else 1.0
+    B_mag_plot = B_mag_numpy * b_scale
+    unit_str = "mTesla" if b_unit == "mTesla" else "T"
+
     b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
-    b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else 1.8
-    b_mag_clamped = np.clip(B_mag_numpy, b_min, b_max)
-    levels_b = np.linspace(b_min, b_max, n_levels)
+    b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else (1800.0 if b_unit == "mTesla" else 1.8)
+    b_mag_clamped = np.clip(B_mag_plot, b_min, b_max)
+    num_div = getattr(vis_cfg, 'b_mag_number_of_division', None)
+
+    if getattr(vis_cfg, 'b_mag_cmap', 'jet') == "ansys_fem":
+        if num_div is not None and num_div > 0:
+            cmap_b = mcolors.LinearSegmentedColormap.from_list("ansys_fem_interp", ANSYS_FEM_HEX_COLORS, N=num_div)
+            levels_b = np.linspace(b_min, b_max, num_div + 1)
+            norm_b = mcolors.BoundaryNorm(levels_b, ncolors=cmap_b.N, clip=True)
+        else:
+            cmap_b = mcolors.ListedColormap(ANSYS_FEM_HEX_COLORS)
+            levels_b = np.linspace(b_min, b_max, 21)
+            norm_b = mcolors.BoundaryNorm(levels_b, ncolors=cmap_b.N, clip=True)
+    else:
+        cmap_b = vis_cfg.b_mag_cmap
+        levels_b = np.linspace(b_min, b_max, n_levels)
+        norm_b = Normalize(vmin=b_min, vmax=b_max)
 
     contour_b = axs[1, 1].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, b_mag_clamped, levels=levels_b,
-        cmap=vis_cfg.b_mag_cmap, vmin=b_min, vmax=b_max
+        cmap=cmap_b, norm=norm_b
     )
-    fig.colorbar(contour_b, ax=axs[1, 1], label="|B| (T)")
-    axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ fixed [{b_min}-{b_max}T])")
+    fig.colorbar(contour_b, ax=axs[1, 1], label=f"|B| ({unit_str})")
+    axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ [{b_min}-{b_max}{unit_str}])")
     axs[1, 1].set_aspect('equal')
 
     # --- SUBPLOT 7: axs[1, 2] ---
     contour_b_bg = axs[1, 2].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, b_mag_clamped, levels=levels_b,
-        cmap=vis_cfg.b_mag_cmap, alpha=0.3, vmin=b_min, vmax=b_max
+        cmap=cmap_b, norm=norm_b, alpha=0.3
     )
-    fig.colorbar(contour_b_bg, ax=axs[1, 2], label="|B| (T)")
+    fig.colorbar(contour_b_bg, ax=axs[1, 2], label=f"|B| ({unit_str})")
     step = max(1, visualizer_instance.resolution // 20)
     B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
     axs[1, 2].quiver(

@@ -88,10 +88,13 @@ class ElectroMagneticPINN:
             az_vmax=None,             
             az_cmap="jet",
 
+            # --- THUỘC TÍNH NÂNG CẤP MÃ MÀU FEM ---
             b_mag_scale="linear",     
             b_mag_vmin=0.0,           
             b_mag_vmax=1.8,           
-            b_mag_cmap="jet",
+            b_mag_cmap="ansys_fem",
+            b_mag_unit="Tesla",             # "Tesla" hoặc "mTesla"
+            b_mag_number_of_division=100,   # Số dải màu nội suy (None hoặc 20 cho 20 màu gốc)
 
             by_scale="linear",        
             by_vmin=None,             
