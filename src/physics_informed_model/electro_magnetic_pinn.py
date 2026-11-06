@@ -73,10 +73,12 @@ class ElectroMagneticPINN:
 
             contour_levels=60,
 
+            # --- BIỂU ĐỒ PDE RESIDUAL ERROR (DISCRETE LOG STEPS) ---
             res_scale="log",          
             res_vmin=1e-4,            
-            res_vmax=1e1,             
-            res_cmap="Reds",
+            res_vmax=10.0,             
+            res_cmap="inferno",                                   # Đổi sang "inferno" để tăng tương phản định lượng
+            res_discrete_levels=[1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0], # Mốc dải phân cách loga rời rạc
 
             mur_scale="linear",       
             mur_vmin=0.0,             
@@ -88,7 +90,7 @@ class ElectroMagneticPINN:
             az_vmax=None,             
             az_cmap="jet",
 
-            # --- THUỘC TÍNH NÂNG CẤP MÃ MÀU FEM ---
+            # --- MÃ MÀU ANSYS FEM NỘI SUY ---
             b_mag_scale="linear",     
             b_mag_vmin=0.0,           
             b_mag_vmax=1.8,           

@@ -114,24 +114,31 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
     
-    # --- SUBPLOT 2: axs[0, 1] ---
-    res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else float(np.min(residual_numpy))
-    res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else float(np.max(residual_numpy))
+    # --- SUBPLOT 2: axs[0, 1] (PDE Residual Error - Discrete Log Steps) ---
+    res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else 1e-4
+    res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else 10.0
+    res_abs = np.clip(np.abs(residual_numpy), res_min, res_max)
 
-    if getattr(vis_cfg, 'res_scale', 'log') == 'log':
-        res_min_clean = max(res_min, 1e-6)
-        res_max_clean = max(res_max, res_min_clean * 10.0)
-        res_abs = np.clip(np.abs(residual_numpy), res_min_clean, res_max_clean)
-        norm_res = LogNorm(vmin=res_min_clean, vmax=res_max_clean)
-        levels_res = np.logspace(np.log10(res_min_clean), np.log10(res_max_clean), n_levels)
+    disc_levels = getattr(vis_cfg, 'res_discrete_levels', [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0])
+
+    if getattr(vis_cfg, 'res_scale', 'log') == 'log' and disc_levels is not None:
+        base_cmap = plt.cm.get_cmap(vis_cfg.res_cmap, len(disc_levels) - 1)
+        norm_res = mcolors.BoundaryNorm(disc_levels, ncolors=base_cmap.N, clip=True)
+        levels_res = disc_levels
     else:
-        res_abs = residual_numpy
-        norm_res = Normalize(vmin=res_min, vmax=res_max)
+        base_cmap = vis_cfg.res_cmap
         levels_res = np.linspace(res_min, res_max, n_levels)
+        norm_res = Normalize(vmin=res_min, vmax=res_max)
 
-    contour_res = axs[0, 1].contourf(visualizer_instance.X_grid, visualizer_instance.Y_grid, res_abs, levels=levels_res, cmap=vis_cfg.res_cmap, norm=norm_res)
-    fig.colorbar(contour_res, ax=axs[0, 1])
-    axs[0, 1].set_title("PDE Residual Error")
+    contour_res = axs[0, 1].contourf(
+        visualizer_instance.X_grid, visualizer_instance.Y_grid, res_abs,
+        levels=levels_res, cmap=base_cmap, norm=norm_res
+    )
+    cbar_res = fig.colorbar(contour_res, ax=axs[0, 1], ticks=disc_levels if getattr(vis_cfg, 'res_scale', 'log') == 'log' else None)
+    if getattr(vis_cfg, 'res_scale', 'log') == 'log':
+        cbar_res.ax.set_yscale('log')
+    cbar_res.set_label("Residual Magnitude", fontsize=9)
+    axs[0, 1].set_title("PDE Residual Error (Discrete Log)")
     axs[0, 1].set_aspect('equal')
 
     # --- SUBPLOT 3: axs[0, 2] ---
@@ -176,7 +183,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
     axs[1, 0].set_aspect('equal')
 
-    # --- SUBPLOT 6: axs[1, 1] (CẬP NHẬT FEM COLORMAP NỘI SUY) ---
+    # --- SUBPLOT 6: axs[1, 1] (FEM COLORMAP NỘI SUY) ---
     b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
     b_scale = 1000.0 if b_unit == "mTesla" else 1.0
     B_mag_plot = B_mag_numpy * b_scale

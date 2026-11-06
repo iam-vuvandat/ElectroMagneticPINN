@@ -18,7 +18,7 @@ if torch.cuda.is_available():
 
 from electro_magnetic_pinn import ElectroMagneticPINN
 
-output_dir = "figure_test_simulation2_fem_color"
+output_dir = "figure_high_precision_simulation_test"
 if os.path.exists(output_dir):
     shutil.rmtree(output_dir)
 os.makedirs(output_dir)
@@ -27,17 +27,17 @@ model = ElectroMagneticPINN()
 sim_domain = model.simulation_domain_engine_instance
 
 # =========================================================================
-# 1. QUY MÔ VẬT LÝ VÀ KHUNG TỌA ĐỘ GỐC TỪ TEST_SIMULATION2.PY (MET)
+# 1. QUY MÔ VẬT LÝ VÀ KHUNG TỌA ĐỘ (MET)
 # =========================================================================
-sim_domain.physics_config.scale_L0 = 0.12            # Scale 120 mm
-sim_domain.physics_config.scale_H0 = 960000.0         # 960 kA/m
-sim_domain.physics_config.scale_nu0 = 795774.715459
+sim_domain.physics_config.scale_L0 = 0.12            # Scale chiều dài 120 mm
+sim_domain.physics_config.scale_H0 = 960000.0         # Scale cường độ từ trường 960 kA/m
+sim_domain.physics_config.scale_nu0 = 795774.715459   # Độ từ kháng chân không nu0
 sim_domain.physics_config.allow_overlapping_domains = False
-sim_domain.x_boundaries_tuple = (-0.12, 0.12)         # X: [-120mm, +120mm]
-sim_domain.y_boundaries_tuple = (-0.12, 0.12)         # Y: [-120mm, +120mm]
+sim_domain.x_boundaries_tuple = (-0.12, 0.12)         # Khung biên X: [-120mm, +120mm]
+sim_domain.y_boundaries_tuple = (-0.12, 0.12)         # Khung biên Y: [-120mm, +120mm]
 
 # =========================================================================
-# 2. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN & FPI
+# 2. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN & VÒNG LẶP FPI
 # =========================================================================
 model.sampler_config.dynamic_resampling = True
 model.sampler_config.resample_interval = 100
@@ -52,7 +52,7 @@ fpi_iterations = 5
 epochs_per_fpi = 1000
 
 model.training_config.fpi_outer_iterations = fpi_iterations
-model.training_config.fpi_alpha_damping = 0.5            # Giảm damping từ 0.8 -> 0.5 giúp FPI mượt hơn
+model.training_config.fpi_alpha_damping = 0.5            # Damping mượt cho FPI
 model.training_config.fpi_tolerance = 1e-6
 
 model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
@@ -74,32 +74,61 @@ model.training_config.number_of_lbfgs_iterations = 1500
 model.training_config.lbfgs_learning_rate = 0.5
 
 # =========================================================================
-# 3. CẤU HÌNH TRỰC QUAN HÓA (MÃ MÀU ANSYS FEM NỘI SUY & ĐƠN VỊ mTESLA)
+# 3. CẤU HÌNH TRỰC QUAN HÓA ĐẦY ĐỦ (VISUALIZATION CONFIG)
 # =========================================================================
-model.visualization_config.active = True
-model.visualization_config.display_colab_frames = True
-model.visualization_config.update_interval = 10
-model.visualization_config.output_directory = output_dir
-model.visualization_config.resolution = 160
-model.visualization_config.generate_gif_animation = True
-model.visualization_config.gif_filename = "test_simulation2_fem_training.gif"
-model.visualization_config.generate_mp4_video = True
-model.visualization_config.mp4_filename = "test_simulation2_fem_training.mp4"
-model.visualization_config.animation_fps = 10.0
-model.visualization_config.gif_fps = 10.0
-model.visualization_config.mp4_codec = "libx264"
-model.visualization_config.mp4_quality = 8
-model.visualization_config.contour_levels = 80
+vis_cfg = model.visualization_config
+vis_cfg.active = True
+vis_cfg.display_colab_frames = True
+vis_cfg.update_interval = 10
+vis_cfg.output_directory = output_dir
+vis_cfg.resolution = 160
 
-# Cấu hình màu Ansys FEM chuẩn và đơn vị mTesla
-model.visualization_config.b_mag_cmap = "ansys_fem"          # Bảng màu Ansys FEM chuẩn
-model.visualization_config.b_mag_unit = "mTesla"             # Đơn vị mTesla
-model.visualization_config.b_mag_vmin = 0.0                 # 0 mT
-model.visualization_config.b_mag_vmax = 1800.0              # 1800 mT (1.8 T)
-model.visualization_config.b_mag_number_of_division = 100   # Nội suy mượt 100 dải màu từ 20 màu gốc
+# --- TÙY CHỌN XUẤT ANIMATION ---
+vis_cfg.generate_gif_animation = True
+vis_cfg.gif_filename = "ansys_fem_training_process.gif"
+vis_cfg.generate_mp4_video = True
+vis_cfg.mp4_filename = "ansys_fem_training_process.mp4"
+vis_cfg.animation_fps = 10.0
+vis_cfg.gif_fps = 10.0
+vis_cfg.mp4_codec = "libx264"
+vis_cfg.mp4_quality = 8
+vis_cfg.contour_levels = 80
+
+# --- A. CẤU HÌNH BIỂU ĐỒ TRƯỜNG TỪ THÔNG |B| (ANSYS FEM COLORMAP) ---
+vis_cfg.b_mag_scale = "linear"
+vis_cfg.b_mag_cmap = "ansys_fem"          # Mã màu chuẩn Ansys FEM (hoặc 'jet', 'turbo', 'viridis')
+vis_cfg.b_mag_unit = "mTesla"             # Đơn vị hiển thị: "mTesla" hoặc "Tesla"
+vis_cfg.b_mag_vmin = 0.0                 # Giá trị cực tiểu (0 mT)
+vis_cfg.b_mag_vmax = 1800.0              # Giá trị cực đại (1800 mT = 1.8 T)
+vis_cfg.b_mag_number_of_division = 100   # Số dải màu nội suy mượt (None hoặc 20 cho 20 màu gốc)
+
+# --- B. CẤU HÌNH BIỂU ĐỒ SAI SỐ PDE RESIDUAL ERROR (DISCRETE LOG STEPS) ---
+vis_cfg.res_scale = "log"
+vis_cfg.res_vmin = 1e-4
+vis_cfg.res_vmax = 10.0
+vis_cfg.res_cmap = "inferno"              # Bảng màu tương phản cao ('inferno', 'magma', 'Reds')
+vis_cfg.res_discrete_levels = [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]  # Các mốc dải chia loga đồng mức
+
+# --- C. CẤU HÌNH BIỂU ĐỒ ĐỘ TỪ THẤM TƯƠNG ĐỐI \mu_r ---
+vis_cfg.mur_scale = "linear"
+vis_cfg.mur_vmin = 0.0
+vis_cfg.mur_vmax = 3000.0
+vis_cfg.mur_cmap = "turbo"
+
+# --- D. CẤU HÌNH BIỂU ĐỒ THẾ VECTƠ TỪ A_z ---
+vis_cfg.az_scale = "linear"
+vis_cfg.az_vmin = None                   # Tự động lấy Min
+vis_cfg.az_vmax = None                   # Tự động lấy Max
+vis_cfg.az_cmap = "jet"
+
+# --- E. CẤU HÌNH BIỂU ĐỒ THÀNH PHẦN B_y ---
+vis_cfg.by_scale = "linear"
+vis_cfg.by_vmin = None
+vis_cfg.by_vmax = None
+vis_cfg.by_cmap = "coolwarm"
 
 # =========================================================================
-# 4. KHAI BÁO CÁC MIỀN HÌNH HỌC TỪ TEST_SIMULATION2.PY
+# 4. KHAI BÁO CÁC MIỀN HÌNH HỌC TỪ ANSYS MAXWELL
 # =========================================================================
 
 # --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
@@ -113,8 +142,7 @@ iron_yoke.physics_config.coercive = [0.0, 0.0]
 iron_yoke.physics_config.current = 0.0
 iron_yoke.physics_config.is_nonlinear = True
 
-# Điều chỉnh pde_weight và mật độ điểm để giảm sâu PDE loss nội miền sắt
-iron_yoke.training_config.pde_weight = 8.0                   # Tăng trọng số PDE nội miền từ 1.0 -> 8.0
+iron_yoke.training_config.pde_weight = 8.0                   # Trọng số PDE nội miền
 iron_yoke.training_config.pde_nonlinear_weight = 2.0
 iron_yoke.training_config.interface_weight = 1.0
 iron_yoke.training_config.interface_potential_weight = 800.0
@@ -123,10 +151,9 @@ iron_yoke.training_config.interface_ht_weight = 1200.0
 iron_yoke.training_config.pde_fading_beta = 80.0
 iron_yoke.training_config.sampling_density_multiplier = 1.0
 
-iron_yoke.training_config.number_of_interior_points = 15000  # Tăng lên 15,000 điểm lấy mẫu
+iron_yoke.training_config.number_of_interior_points = 15000
 iron_yoke.training_config.number_of_surface_points = 4000
 
-# Hạ fourier_sigma về 1.3 để không sinh ra các dải sóng nhiễu tần số cao
 iron_yoke.network_config.hidden_layers = 4
 iron_yoke.network_config.hidden_neurons = 128
 iron_yoke.network_config.activation_function = nn.Mish()
@@ -220,14 +247,14 @@ sim_domain.build_background_domain(
 # =========================================================================
 model.update_electromagnetic_pinn()
 
-print("[*] Bắt đầu huấn luyện với Geometry gốc test_simulation2.py & Cấu hình Ansys FEM Colormap...")
+print("[*] Bắt đầu huấn luyện mô hình PINN với cấu hình Ansys FEM Colormap & Discrete Log Residual...")
 model.execute_training_process()
 
-print("[*] Xuất biểu đồ trường kết quả...")
+print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
 model.plot_fields(
     resolution=200,
     save_path=f"{output_dir}/fpi_final_fields.png",
     show=False,
     figsize=(12, 10)
 )
-print(f"[✔] HOÀN THÀNH! Kết quả đã lưu tại: {output_dir}/")
+print(f"[✔] HOÀN THÀNH! Kết quả đã được lưu tại: {output_dir}/")
