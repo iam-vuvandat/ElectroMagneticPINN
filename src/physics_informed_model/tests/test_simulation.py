@@ -18,7 +18,7 @@ if torch.cuda.is_available():
 
 from electro_magnetic_pinn import ElectroMagneticPINN
 
-output_dir = "figure_ansys_fem_color_simulation_test"
+output_dir = "figure_test_simulation2_fem_color"
 if os.path.exists(output_dir):
     shutil.rmtree(output_dir)
 os.makedirs(output_dir)
@@ -27,19 +27,17 @@ model = ElectroMagneticPINN()
 sim_domain = model.simulation_domain_engine_instance
 
 # =========================================================================
-# 1. QUY MÔ VẬT LÝ VÀ KHUNG TỌA ĐỘ CHUẨN ANSYS MAXWELL 2D (ĐƠN VỊ MET)
+# 1. QUY MÔ VẬT LÝ VÀ KHUNG TỌA ĐỘ GỐC TỪ TEST_SIMULATION2.PY (MET)
 # =========================================================================
-sim_domain.physics_config.scale_L0 = 0.0012        # Scale 1.2 mm
-sim_domain.physics_config.scale_H0 = 838000.0       # 838 kA/m (NdFe30)
+sim_domain.physics_config.scale_L0 = 0.12            # Scale 120 mm
+sim_domain.physics_config.scale_H0 = 960000.0         # 960 kA/m
 sim_domain.physics_config.scale_nu0 = 795774.715459
 sim_domain.physics_config.allow_overlapping_domains = False
-
-# Boundary mở rộng theo đúng Rectangle4 (X: [-1.0mm, 1.2mm], Y: [-0.6mm, 0.4mm])
-sim_domain.x_boundaries_tuple = (-0.0010, 0.0012)
-sim_domain.y_boundaries_tuple = (-0.0006, 0.0004)
+sim_domain.x_boundaries_tuple = (-0.12, 0.12)         # X: [-120mm, +120mm]
+sim_domain.y_boundaries_tuple = (-0.12, 0.12)         # Y: [-120mm, +120mm]
 
 # =========================================================================
-# 2. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN (TRAINING CONFIG)
+# 2. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN & FPI
 # =========================================================================
 model.sampler_config.dynamic_resampling = True
 model.sampler_config.resample_interval = 100
@@ -54,7 +52,7 @@ fpi_iterations = 5
 epochs_per_fpi = 1000
 
 model.training_config.fpi_outer_iterations = fpi_iterations
-model.training_config.fpi_alpha_damping = 0.5            # FPI Damping mượt
+model.training_config.fpi_alpha_damping = 0.5            # Giảm damping từ 0.8 -> 0.5 giúp FPI mượt hơn
 model.training_config.fpi_tolerance = 1e-6
 
 model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
@@ -76,7 +74,7 @@ model.training_config.number_of_lbfgs_iterations = 1500
 model.training_config.lbfgs_learning_rate = 0.5
 
 # =========================================================================
-# 3. CẤU HÌNH TRỰC QUAN HÓA (MÃ MÀU FEM NỘI SUY & ĐƠN VỊ mT)
+# 3. CẤU HÌNH TRỰC QUAN HÓA (MÃ MÀU ANSYS FEM NỘI SUY & ĐƠN VỊ mTESLA)
 # =========================================================================
 model.visualization_config.active = True
 model.visualization_config.display_colab_frames = True
@@ -84,39 +82,39 @@ model.visualization_config.update_interval = 10
 model.visualization_config.output_directory = output_dir
 model.visualization_config.resolution = 160
 model.visualization_config.generate_gif_animation = True
-model.visualization_config.gif_filename = "ansys_fem_training_process.gif"
+model.visualization_config.gif_filename = "test_simulation2_fem_training.gif"
 model.visualization_config.generate_mp4_video = True
-model.visualization_config.mp4_filename = "ansys_fem_training_process.mp4"
+model.visualization_config.mp4_filename = "test_simulation2_fem_training.mp4"
 model.visualization_config.animation_fps = 10.0
 model.visualization_config.gif_fps = 10.0
 model.visualization_config.mp4_codec = "libx264"
 model.visualization_config.mp4_quality = 8
 model.visualization_config.contour_levels = 80
 
-# --- NÂNG CẤP MÃ MÀU CHUẨN FEM VÀ ĐƠN VỊ mTESLA ---
+# Cấu hình màu Ansys FEM chuẩn và đơn vị mTesla
 model.visualization_config.b_mag_cmap = "ansys_fem"          # Bảng màu Ansys FEM chuẩn
 model.visualization_config.b_mag_unit = "mTesla"             # Đơn vị mTesla
-model.visualization_config.b_mag_vmin = 0.0                 # Minimum 0 mT
-model.visualization_config.b_mag_vmax = 1800.0              # Maximum 1800 mT (1.8 T)
+model.visualization_config.b_mag_vmin = 0.0                 # 0 mT
+model.visualization_config.b_mag_vmax = 1800.0              # 1800 mT (1.8 T)
 model.visualization_config.b_mag_number_of_division = 100   # Nội suy mượt 100 dải màu từ 20 màu gốc
 
 # =========================================================================
-# 4. THIẾT LẬP HÌNH HỌC TỪ ANSYS MAXWELL 2D (record1.py)
+# 4. KHAI BÁO CÁC MIỀN HÌNH HỌC TỪ TEST_SIMULATION2.PY
 # =========================================================================
 
-# --- RECTANGLE 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
+# --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
 iron_yoke = sim_domain.create_material_domain(
     domain_name="iron_yoke",
     material_name="steel_1008",
-    outline=[[-0.0006, -0.0002], [0.0006, -0.0002], [0.0006, 0.0], [-0.0006, 0.0]]
+    outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
 )
 iron_yoke.physics_config.relative_permeability = 1000.0
 iron_yoke.physics_config.coercive = [0.0, 0.0]
 iron_yoke.physics_config.current = 0.0
 iron_yoke.physics_config.is_nonlinear = True
 
-# Điều chỉnh trọng số ép bám physics nội miền
-iron_yoke.training_config.pde_weight = 8.0                   # Tăng từ 1.0 -> 8.0 để giảm loss nội miền
+# Điều chỉnh pde_weight và mật độ điểm để giảm sâu PDE loss nội miền sắt
+iron_yoke.training_config.pde_weight = 8.0                   # Tăng trọng số PDE nội miền từ 1.0 -> 8.0
 iron_yoke.training_config.pde_nonlinear_weight = 2.0
 iron_yoke.training_config.interface_weight = 1.0
 iron_yoke.training_config.interface_potential_weight = 800.0
@@ -125,15 +123,15 @@ iron_yoke.training_config.interface_ht_weight = 1200.0
 iron_yoke.training_config.pde_fading_beta = 80.0
 iron_yoke.training_config.sampling_density_multiplier = 1.0
 
-iron_yoke.training_config.number_of_interior_points = 15000  # Mật độ lấy mẫu cao
+iron_yoke.training_config.number_of_interior_points = 15000  # Tăng lên 15,000 điểm lấy mẫu
 iron_yoke.training_config.number_of_surface_points = 4000
 
-# Fourier Features cân bằng triệt tiêu nhiễu cao tần
+# Hạ fourier_sigma về 1.3 để không sinh ra các dải sóng nhiễu tần số cao
 iron_yoke.network_config.hidden_layers = 4
 iron_yoke.network_config.hidden_neurons = 128
 iron_yoke.network_config.activation_function = nn.Mish()
 iron_yoke.network_config.fourier_features = True
-iron_yoke.network_config.fourier_sigma = 1.3               # Hạ về 1.3 để không nhiễu residual
+iron_yoke.network_config.fourier_sigma = 1.3
 iron_yoke.network_config.fourier_mapping_size = 128
 
 iron_yoke.nu_network_config.hidden_layers = 3
@@ -145,19 +143,19 @@ iron_yoke.nu_network_config.fourier_mapping_size = 32
 
 iron_yoke.build_domain()
 
-# --- RECTANGLE 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
+# --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
 magnet_left = sim_domain.create_material_domain(
     domain_name="magnet_left",
-    material_name="NdFe30",
-    outline=[[-0.0006, 0.0], [-0.0002, 0.0], [-0.0002, 0.0002], [-0.0006, 0.0002]],
+    material_name="N30UH",
+    outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
     coercive_direction=(0, 1)
 )
-magnet_left.physics_config.relative_permeability = 1.044573
+magnet_left.physics_config.relative_permeability = 1.05
 magnet_left.physics_config.current = 0.0
 magnet_left.physics_config.is_nonlinear = False
 
-magnet_left.training_config.number_of_interior_points = 2000
-magnet_left.training_config.number_of_surface_points = 1000
+magnet_left.training_config.number_of_interior_points = 1500
+magnet_left.training_config.number_of_surface_points = 800
 
 magnet_left.network_config.hidden_layers = 4
 magnet_left.network_config.hidden_neurons = 64
@@ -168,19 +166,19 @@ magnet_left.network_config.fourier_mapping_size = 64
 
 magnet_left.build_domain()
 
-# --- RECTANGLE 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
+# --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
 magnet_right = sim_domain.create_material_domain(
     domain_name="magnet_right",
-    material_name="NdFe30",
-    outline=[[0.0002, 0.0], [0.0006, 0.0], [0.0006, 0.0002], [0.0002, 0.0002]],
+    material_name="N30UH",
+    outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]],
     coercive_direction=(0, -1)
 )
-magnet_right.physics_config.relative_permeability = 1.044573
+magnet_right.physics_config.relative_permeability = 1.05
 magnet_right.physics_config.current = 0.0
 magnet_right.physics_config.is_nonlinear = False
 
-magnet_right.training_config.number_of_interior_points = 2000
-magnet_right.training_config.number_of_surface_points = 1000
+magnet_right.training_config.number_of_interior_points = 1500
+magnet_right.training_config.number_of_surface_points = 800
 
 magnet_right.network_config.hidden_layers = 4
 magnet_right.network_config.hidden_neurons = 64
@@ -191,7 +189,7 @@ magnet_right.network_config.fourier_mapping_size = 64
 
 magnet_right.build_domain()
 
-# --- RECTANGLE 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
+# --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
 bg_training_cfg = SimpleNamespace(
     pde_weight=1.0,
     interface_weight=1.0,
@@ -200,7 +198,7 @@ bg_training_cfg = SimpleNamespace(
     interface_ht_weight=1200.0,
     pde_fading_beta=80.0,
     sampling_density_multiplier=1.0,
-    number_of_interior_points=8000,
+    number_of_interior_points=6000,
     number_of_surface_points=0
 )
 bg_network_cfg = SimpleNamespace(
@@ -222,14 +220,14 @@ sim_domain.build_background_domain(
 # =========================================================================
 model.update_electromagnetic_pinn()
 
-print("[*] Bắt đầu tiến trình huấn luyện mô hình PINN theo cấu hình màu Ansys FEM...")
+print("[*] Bắt đầu huấn luyện với Geometry gốc test_simulation2.py & Cấu hình Ansys FEM Colormap...")
 model.execute_training_process()
 
-print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
+print("[*] Xuất biểu đồ trường kết quả...")
 model.plot_fields(
     resolution=200,
-    save_path=f"{output_dir}/ansys_fem_final_fields.png",
+    save_path=f"{output_dir}/fpi_final_fields.png",
     show=False,
     figsize=(12, 10)
 )
-print(f"[✔] HOÀN THÀNH! Kết quả và animation được lưu tại: {output_dir}/")
+print(f"[✔] HOÀN THÀNH! Kết quả đã lưu tại: {output_dir}/")
