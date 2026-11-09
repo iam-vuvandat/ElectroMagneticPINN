@@ -7,8 +7,11 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
+pinn_module_path = os.path.join(parent_directory, 'src', 'physics_informed_model')
 if parent_directory not in sys.path:
     sys.path.insert(0, parent_directory)
+if pinn_module_path not in sys.path:
+    sys.path.insert(0, pinn_module_path)
 
 import torch
 import torch.nn as nn
