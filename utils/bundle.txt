@@ -1,18 +1,110 @@
-================================================================================
-          MODULE BUNDLE SOURCE: ELECTROMAGNETICPINN
-================================================================================
+MODULE BUNDLE SOURCE: ELECTROMAGNETICPINN
 
-#==============================================================================
-# FILE: README.md
-#==============================================================================
+DIRECTORY STRUCTURE:
+ElectroMagneticPINN/
+├── README.md
+├── requirements.txt
+├── scenarios
+│   ├── excute1.py
+│   └── test_simulation.py
+└── src
+    ├── ansys_aedt
+    │   ├── maxwell_2d
+    │   │   └── toy_model_1
+    │   │       ├── configuration.py
+    │   │       ├── create_model.py
+    │   │       ├── export_flux_density.py
+    │   │       ├── plot_flux_density.py
+    │   │       ├── reset_ansys_environment.py
+    │   │       ├── run_simulation.py
+    │   │       └── toy_model_1.py
+    │   └── rmxprt
+    │       └── reluctane_synchronous_motor
+    │           ├── configuration.py
+    │           ├── create_model.py
+    │           ├── reluctance_synchronous_motor.py
+    │           └── reset_ansys_environment.py
+    └── physics_informed_model
+        ├── architectures
+        │   ├── __init__.py
+        │   ├── boundary_factor.py
+        │   ├── build_single_network.py
+        │   ├── forward.py
+        │   ├── forward_network.py
+        │   ├── initialize_weights.py
+        │   └── xpinn_architecture.py
+        ├── checkpoint_engine
+        │   ├── __init__.py
+        │   ├── load_checkpoint.py
+        │   └── save_checkpoint.py
+        ├── electro_magnetic_pinn.py
+        ├── electro_magnetic_pinn_engine
+        │   ├── __init__.py
+        │   ├── build_system.py
+        │   ├── evaluate_fields.py
+        │   ├── execute_training_process.py
+        │   └── plot_fields.py
+        ├── physics_domain
+        │   ├── collocation_sampler.py
+        │   └── physical_equations
+        │       ├── interface_loss.py
+        │       └── maxwell_pde_loss.py
+        ├── simulation_domain_engine
+        │   ├── add_material_domain_method.py
+        │   ├── boundary
+        │   │   ├── __init__.py
+        │   │   ├── boundary.py
+        │   │   ├── build_boundary.py
+        │   │   └── compute_boundary_factor.py
+        │   ├── build_background_domain.py
+        │   ├── create_material_domain.py
+        │   ├── display_methods.py
+        │   ├── domain_visualizer.py
+        │   ├── get_domain_count.py
+        │   ├── global_physical_properties_evaluation.py
+        │   ├── global_signed_distance_field.py
+        │   ├── material_domain
+        │   │   ├── __init__.py
+        │   │   ├── assign_coercive_direction.py
+        │   │   ├── assign_material.py
+        │   │   ├── build_domain.py
+        │   │   ├── compute_constant_bh_curve.py
+        │   │   ├── compute_current_density.py
+        │   │   ├── compute_section_area.py
+        │   │   ├── evaluate_current_density.py
+        │   │   ├── evaluate_magnetization_vector.py
+        │   │   ├── evaluate_reluctivity.py
+        │   │   ├── material_domain.py
+        │   │   └── polygon_signed_distance_field.py
+        │   ├── material_library
+        │   │   ├── __init__.py
+        │   │   └── material_data.py
+        │   ├── set_boundary.py
+        │   ├── simulation_domain.py
+        │   └── validate_non_overlapping_domains.py
+        ├── training_engine
+        │   ├── __init__.py
+        │   ├── compute_loss.py
+        │   ├── fit_nu_network_step.py
+        │   ├── pretrain_nu_networks.py
+        │   ├── resolve_domain_net_key.py
+        │   ├── train_adam.py
+        │   ├── train_lbfgs.py
+        │   └── training_manager.py
+        └── training_visualizer
+            ├── __init__.py
+            ├── generate_animations.py
+            ├── generate_gif.py
+            ├── generate_mp4.py
+            ├── resolve_domain_net_key.py
+            ├── save_frame.py
+            └── training_visualizer.py
+
+FILE: README.md
 
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: requirements.txt
-#==============================================================================
+FILE: requirements.txt
 
 torch==2.1.0
 numpy==1.26.2
@@ -23,11 +115,7 @@ pyaedt[all]==0.25.1
 imageio==2.33.1
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: scenarios\excute1.py
-#==============================================================================
+FILE: scenarios\excute1.py
 
 from pathlib import Path
 import sys
@@ -42,10 +130,12 @@ def main():
     toy_model = ToyModel1()
     config = toy_model.configuration
 
+    # --- CẤU HÌNH THÔNG TIN CHUNG ---
     config.name = "toy_model_1"
     config.version = "2025.2"
     config.solution_type = "Magnetostatic"
 
+    # --- CẤU HÌNH HÌNH HỌC (GEOMETRY) ---
     config.geometry.yoke.x_start = "-60mm"
     config.geometry.yoke.y_start = "-30mm"
     config.geometry.yoke.width = "120mm"
@@ -68,18 +158,20 @@ def main():
     config.geometry.region.width = "240mm"
     config.geometry.region.height = "240mm"
 
+    # --- CẤU HÌNH VẬT LIỆU (MATERIALS) ---
     config.materials.yoke_material = "steel_1008"
     config.materials.magnet_material_left = "NdFe30 - Copy"
     config.materials.magnet_material_right = "NdFe30 - Copy (2)"
     config.materials.region_material = "vacuum"
     config.materials.hc_magnitude = 838000.0
 
+    # --- CẤU HÌNH PHÂN TÍCH & TRÍCH XUẤT LƯỚI (ANALYSIS) ---
     config.analysis.setup_name = "Setup1"
     config.analysis.max_passes = 10
     config.analysis.min_passes = 2
     config.analysis.percent_error = 1.0
     config.analysis.max_element_length = "0.25mm"
-
+    config.analysis.b_fld_path = str(Path(project_root) / "src" / "ansys_aedt" / "maxwell_2d" / "toy_model_1" / "flux_density.fld")
     config.analysis.grid_min = ["-120mm", "-120mm", "0mm"]
     config.analysis.grid_max = ["120mm", "120mm", "0mm"]
     config.analysis.grid_step = ["1mm", "1mm", "0mm"]
@@ -93,21 +185,284 @@ def main():
     print("[3/4] Trích xuất & Parse dữ liệu vào toy_model.record.flux_density_field...")
     fld_output_path = toy_model.export_flux_density()
 
-    print("[4/4] Vẽ heatmap mật độ từ thông trực tiếp từ toy_model.record...")
+    print("[4/4] Vẽ heatmap mật độ từ thông trực tiếp (Kế thừa 20 màu ANSYS FEM từ PINN)...")
     toy_model.plot_flux_density(
         target_resolution=1500,
-        sigma_smooth=1.2
+        sigma_smooth=0.0,
+        vmin=0.0,
+        vmax=2.0,
+        cmap="ansys_fem",
+        figsize=(6.4, 4.8),
+        dpi=100
     )
 
 if __name__ == "__main__":
     main()
 
+FILE: scenarios\test_simulation.py
 
---------------------------------------------------------------------------------
+import os
+import sys
+import shutil
+from types import SimpleNamespace
 
-#==============================================================================
-# FILE: src\ansys_aedt\maxwell_2d\toy_model_1\configuration.py
-#==============================================================================
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+current_directory = os.path.dirname(os.path.abspath(__file__))
+parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
+if parent_directory not in sys.path:
+    sys.path.insert(0, parent_directory)
+
+import torch
+import torch.nn as nn
+
+if torch.cuda.is_available():
+    torch.set_float32_matmul_precision("high")
+
+from electro_magnetic_pinn import ElectroMagneticPINN
+
+output_dir = "figure_high_precision_simulation_test"
+if os.path.exists(output_dir):
+    shutil.rmtree(output_dir)
+os.makedirs(output_dir)
+
+model = ElectroMagneticPINN()
+sim_domain = model.simulation_domain_engine_instance
+
+# =========================================================================
+# 1. QUY MÔ VẬT LÝ VÀ KHUNG TỌA ĐỘ (MET)
+# =========================================================================
+sim_domain.physics_config.scale_L0 = 0.12            # Scale chiều dài 120 mm
+sim_domain.physics_config.scale_H0 = 960000.0         # Scale cường độ từ trường 960 kA/m
+sim_domain.physics_config.scale_nu0 = 795774.715459   # Độ từ kháng chân không nu0
+sim_domain.physics_config.allow_overlapping_domains = False
+sim_domain.x_boundaries_tuple = (-0.12, 0.12)         # Khung biên X: [-120mm, +120mm]
+sim_domain.y_boundaries_tuple = (-0.12, 0.12)         # Khung biên Y: [-120mm, +120mm]
+
+# =========================================================================
+# 2. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN & VÒNG LẶP FPI
+# =========================================================================
+model.sampler_config.dynamic_resampling = True
+model.sampler_config.resample_interval = 100
+model.sampler_config.resample_points_before_lbfgs_stage = True
+
+model.training_config.enable_linear_warmup_stage = True
+model.training_config.enable_nonlinear_adaptation_stage = True
+model.training_config.enable_lbfgs_refinement_stage = True
+
+epochs_warmup_target = 1000
+fpi_iterations = 5
+epochs_per_fpi = 1000
+
+model.training_config.fpi_outer_iterations = fpi_iterations
+model.training_config.fpi_alpha_damping = 0.5            # Damping mượt cho FPI
+model.training_config.fpi_tolerance = 1e-6
+
+model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
+model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
+
+model.training_config.adam_learning_rate = 2e-3
+model.training_config.target_loss_threshold = 1e-7
+model.training_config.adam_eta_min = 1e-6
+model.training_config.grad_clip_max_norm = 1.0
+model.training_config.max_non_finite_streak = 5
+model.training_config.adam_log_interval = 100
+
+model.training_config.pretrain_nu_epochs = 600
+model.training_config.pretrain_nu_lr = 5e-3
+model.training_config.fit_nu_epochs = 500
+model.training_config.fit_nu_lr = 3e-3
+
+model.training_config.number_of_lbfgs_iterations = 1500
+model.training_config.lbfgs_learning_rate = 0.5
+
+# =========================================================================
+# 3. CẤU HÌNH TRỰC QUAN HÓA ĐẦY ĐỦ (VISUALIZATION CONFIG)
+# =========================================================================
+vis_cfg = model.visualization_config
+vis_cfg.active = True
+vis_cfg.display_colab_frames = True
+vis_cfg.update_interval = 10
+vis_cfg.output_directory = output_dir
+vis_cfg.resolution = 160
+
+# --- TÙY CHỌN XUẤT ANIMATION ---
+vis_cfg.generate_gif_animation = True
+vis_cfg.gif_filename = "ansys_fem_training_process.gif"
+vis_cfg.generate_mp4_video = True
+vis_cfg.mp4_filename = "ansys_fem_training_process.mp4"
+vis_cfg.animation_fps = 10.0
+vis_cfg.gif_fps = 10.0
+vis_cfg.mp4_codec = "libx264"
+vis_cfg.mp4_quality = 8
+vis_cfg.contour_levels = 80
+
+# --- A. CẤU HÌNH BIỂU ĐỒ TRƯỜNG TỪ THÔNG |B| (ANSYS FEM COLORMAP) ---
+vis_cfg.b_mag_scale = "linear"
+vis_cfg.b_mag_cmap = "ansys_fem"          # Mã màu chuẩn Ansys FEM (hoặc 'jet', 'turbo', 'viridis')
+vis_cfg.b_mag_unit = "mTesla"             # Đơn vị hiển thị: "mTesla" hoặc "Tesla"
+vis_cfg.b_mag_vmin = 0.0                 # Giá trị cực tiểu (0 mT)
+vis_cfg.b_mag_vmax = 1800.0              # Giá trị cực đại (1800 mT = 1.8 T)
+vis_cfg.b_mag_number_of_division = 100   # Số dải màu nội suy mượt (None hoặc 20 cho 20 màu gốc)
+
+# --- B. CẤU HÌNH BIỂU ĐỒ SAI SỐ PDE RESIDUAL ERROR (DISCRETE LOG STEPS) ---
+vis_cfg.res_scale = "log"
+vis_cfg.res_vmin = 1e-4
+vis_cfg.res_vmax = 10.0
+vis_cfg.res_cmap = "inferno"              # Bảng màu tương phản cao ('inferno', 'magma', 'Reds')
+vis_cfg.res_discrete_levels = [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]  # Các mốc dải chia loga đồng mức
+
+# --- C. CẤU HÌNH BIỂU ĐỒ ĐỘ TỪ THẤM TƯƠNG ĐỐI \mu_r ---
+vis_cfg.mur_scale = "linear"
+vis_cfg.mur_vmin = 0.0
+vis_cfg.mur_vmax = 3000.0
+vis_cfg.mur_cmap = "turbo"
+
+# --- D. CẤU HÌNH BIỂU ĐỒ THẾ VECTƠ TỪ A_z ---
+vis_cfg.az_scale = "linear"
+vis_cfg.az_vmin = None                   # Tự động lấy Min
+vis_cfg.az_vmax = None                   # Tự động lấy Max
+vis_cfg.az_cmap = "jet"
+
+# --- E. CẤU HÌNH BIỂU ĐỒ THÀNH PHẦN B_y ---
+vis_cfg.by_scale = "linear"
+vis_cfg.by_vmin = None
+vis_cfg.by_vmax = None
+vis_cfg.by_cmap = "coolwarm"
+
+# =========================================================================
+# 4. KHAI BÁO CÁC MIỀN HÌNH HỌC TỪ ANSYS MAXWELL
+# =========================================================================
+
+# --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
+iron_yoke = sim_domain.create_material_domain(
+    domain_name="iron_yoke",
+    material_name="steel_1008",
+    outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
+)
+iron_yoke.physics_config.relative_permeability = 1000.0
+iron_yoke.physics_config.coercive = [0.0, 0.0]
+iron_yoke.physics_config.current = 0.0
+iron_yoke.physics_config.is_nonlinear = True
+
+iron_yoke.training_config.pde_weight = 8.0                   # Trọng số PDE nội miền
+iron_yoke.training_config.pde_nonlinear_weight = 2.0
+iron_yoke.training_config.interface_weight = 1.0
+iron_yoke.training_config.interface_potential_weight = 800.0
+iron_yoke.training_config.interface_bn_weight = 1000.0
+iron_yoke.training_config.interface_ht_weight = 1200.0
+iron_yoke.training_config.pde_fading_beta = 80.0
+iron_yoke.training_config.sampling_density_multiplier = 1.0
+
+iron_yoke.training_config.number_of_interior_points = 15000
+iron_yoke.training_config.number_of_surface_points = 4000
+
+iron_yoke.network_config.hidden_layers = 4
+iron_yoke.network_config.hidden_neurons = 128
+iron_yoke.network_config.activation_function = nn.Mish()
+iron_yoke.network_config.fourier_features = True
+iron_yoke.network_config.fourier_sigma = 1.3
+iron_yoke.network_config.fourier_mapping_size = 128
+
+iron_yoke.nu_network_config.hidden_layers = 3
+iron_yoke.nu_network_config.hidden_neurons = 64
+iron_yoke.nu_network_config.activation_function = nn.Mish()
+iron_yoke.nu_network_config.fourier_features = True
+iron_yoke.nu_network_config.fourier_sigma = 1.0
+iron_yoke.nu_network_config.fourier_mapping_size = 32
+
+iron_yoke.build_domain()
+
+# --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
+magnet_left = sim_domain.create_material_domain(
+    domain_name="magnet_left",
+    material_name="N30UH",
+    outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
+    coercive_direction=(0, 1)
+)
+magnet_left.physics_config.relative_permeability = 1.05
+magnet_left.physics_config.current = 0.0
+magnet_left.physics_config.is_nonlinear = False
+
+magnet_left.training_config.number_of_interior_points = 1500
+magnet_left.training_config.number_of_surface_points = 800
+
+magnet_left.network_config.hidden_layers = 4
+magnet_left.network_config.hidden_neurons = 64
+magnet_left.network_config.activation_function = nn.Mish()
+magnet_left.network_config.fourier_features = True
+magnet_left.network_config.fourier_sigma = 1.0
+magnet_left.network_config.fourier_mapping_size = 64
+
+magnet_left.build_domain()
+
+# --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
+magnet_right = sim_domain.create_material_domain(
+    domain_name="magnet_right",
+    material_name="N30UH",
+    outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]],
+    coercive_direction=(0, -1)
+)
+magnet_right.physics_config.relative_permeability = 1.05
+magnet_right.physics_config.current = 0.0
+magnet_right.physics_config.is_nonlinear = False
+
+magnet_right.training_config.number_of_interior_points = 1500
+magnet_right.training_config.number_of_surface_points = 800
+
+magnet_right.network_config.hidden_layers = 4
+magnet_right.network_config.hidden_neurons = 64
+magnet_right.network_config.activation_function = nn.Mish()
+magnet_right.network_config.fourier_features = True
+magnet_right.network_config.fourier_sigma = 1.0
+magnet_right.network_config.fourier_mapping_size = 64
+
+magnet_right.build_domain()
+
+# --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
+bg_training_cfg = SimpleNamespace(
+    pde_weight=1.0,
+    interface_weight=1.0,
+    interface_potential_weight=800.0,
+    interface_bn_weight=1000.0,
+    interface_ht_weight=1200.0,
+    pde_fading_beta=80.0,
+    sampling_density_multiplier=1.0,
+    number_of_interior_points=6000,
+    number_of_surface_points=0
+)
+bg_network_cfg = SimpleNamespace(
+    hidden_layers=4,
+    hidden_neurons=64,
+    activation_function=nn.Mish(),
+    fourier_features=True,
+    fourier_sigma=1.0,
+    fourier_mapping_size=64
+)
+sim_domain.build_background_domain(
+    domain_name="background",
+    training_config=bg_training_cfg,
+    network_config=bg_network_cfg
+)
+
+# =========================================================================
+# 5. CẬP NHẬT MÔ HÌNH VÀ THỰC THI HUẤN LUYỆN
+# =========================================================================
+model.update_electromagnetic_pinn()
+
+print("[*] Bắt đầu huấn luyện mô hình PINN với cấu hình Ansys FEM Colormap & Discrete Log Residual...")
+model.execute_training_process()
+
+print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
+model.plot_fields(
+    resolution=200,
+    save_path=f"{output_dir}/fpi_final_fields.png",
+    show=False,
+    figsize=(12, 10)
+)
+print(f"[✔] HOÀN THÀNH! Kết quả đã được lưu tại: {output_dir}/")
+
+FILE: src\ansys_aedt\maxwell_2d\toy_model_1\configuration.py
 
 import os
 from pathlib import Path
@@ -171,11 +526,7 @@ class Configuration:
         )
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\maxwell_2d\toy_model_1\create_model.py
-#==============================================================================
+FILE: src\ansys_aedt\maxwell_2d\toy_model_1\create_model.py
 
 import os
 from pathlib import Path
@@ -350,11 +701,7 @@ def create_model(toy_model_obj):
     return toy_model_obj
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\maxwell_2d\toy_model_1\export_flux_density.py
-#==============================================================================
+FILE: src\ansys_aedt\maxwell_2d\toy_model_1\export_flux_density.py
 
 import os
 import inspect
@@ -499,16 +846,21 @@ def export_flux_density(
     return export_path
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\maxwell_2d\toy_model_1\plot_flux_density.py
-#==============================================================================
+FILE: src\ansys_aedt\maxwell_2d\toy_model_1\plot_flux_density.py
 
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from scipy.interpolate import RectBivariateSpline
+
+# 20 mã màu Hex chuẩn Ansys Maxwell FEM kế thừa từ mã nguồn PINN
+ANSYS_FEM_HEX_COLORS = [
+    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
+    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
+    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00', 
+    '#FFD700', '#FFA100', '#FF6B00', '#FF3600', '#FF0000'
+]
 
 def plot_flux_density(
     toy_model_obj, 
@@ -517,17 +869,21 @@ def plot_flux_density(
     save_path=None,
     save_image_path=None,
     title="B-field Density Map (T)", 
-    target_resolution=2000,
+    target_resolution=1500,
     sigma_smooth=0.0,
     smooth="cubic",
     transpose_axes=False,
     show=True,
-    figsize=(10, 8),
-    dpi=300,
+    figsize=(6.4, 4.8),
+    dpi=100,
+    vmin=0.0,
+    vmax=2.0,
+    cmap="ansys_fem",
+    num_divisions=100,
     **kwargs
 ):
     """
-    Vẽ và hiển thị cửa sổ heatmap mật độ từ thông B với độ phân giải siêu nét DPI=300.
+    Vẽ và hiển thị heatmap mật độ từ thông B kế thừa 20 mã màu Ansys FEM chuẩn từ PINN.
     """
     record = getattr(toy_model_obj, "record", None)
     field_record = getattr(record, "flux_density_field", None) if record else None
@@ -547,7 +903,7 @@ def plot_flux_density(
 
     unique_x = field_record.x
     unique_y = field_record.y
-    grid_b = field_record.b_mag  # Ma trận kích thước (ny, nx)
+    grid_b = field_record.b_mag
 
     if transpose_axes:
         grid_b = grid_b.T
@@ -556,8 +912,7 @@ def plot_flux_density(
     if len(unique_x) < 2 or len(unique_y) < 2:
         raise ValueError(f"Dữ liệu lưới không đủ để vẽ heatmap: nx={len(unique_x)}, ny={len(unique_y)}")
 
-    # Tạo lưới nội suy siêu mịn 2000x2000 điểm
-    res = target_resolution if (target_resolution and target_resolution > 0) else 2000
+    res = target_resolution if (target_resolution and target_resolution > 0) else 1000
     x_dense = np.linspace(unique_x.min(), unique_x.max(), res)
     y_dense = np.linspace(unique_y.min(), unique_y.max(), res)
 
@@ -571,7 +926,20 @@ def plot_flux_density(
         from scipy.ndimage import gaussian_filter
         grid_b_dense = gaussian_filter(grid_b_dense, sigma=sigma_smooth)
 
-    # Cấu hình cửa sổ đồ thị độ phân giải cao chuẩn DPI=300
+    # Cấu hình Bảng màu Ansys FEM kế thừa từ mã nguồn PINN
+    if cmap == "ansys_fem":
+        if num_divisions is not None and num_divisions > 0:
+            cmap_obj = mcolors.LinearSegmentedColormap.from_list("ansys_fem_interp", ANSYS_FEM_HEX_COLORS, N=num_divisions)
+            levels = np.linspace(vmin, vmax, num_divisions + 1)
+            norm_obj = mcolors.BoundaryNorm(levels, ncolors=cmap_obj.N, clip=True)
+        else:
+            cmap_obj = mcolors.ListedColormap(ANSYS_FEM_HEX_COLORS)
+            levels = np.linspace(vmin, vmax, 21)
+            norm_obj = mcolors.BoundaryNorm(levels, ncolors=cmap_obj.N, clip=True)
+    else:
+        cmap_obj = cmap
+        norm_obj = mcolors.Normalize(vmin=vmin, vmax=vmax)
+
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
 
     extent = [unique_x.min(), unique_x.max(), unique_y.min(), unique_y.max()]
@@ -579,34 +947,29 @@ def plot_flux_density(
         grid_b_dense, 
         extent=extent, 
         origin='lower', 
-        cmap='jet', 
+        cmap=cmap_obj, 
+        norm=norm_obj,
         interpolation='bicubic',
         aspect='equal'
     )
 
     cbar = fig.colorbar(im, ax=ax, label='|B| (Tesla)', pad=0.03)
-    cbar.ax.tick_params(labelsize=10)
+    cbar.ax.tick_params(labelsize=9)
 
-    ax.set_title(title, fontsize=13, fontweight='bold', pad=14)
-    ax.set_xlabel('X (mm)', fontsize=11, labelpad=8)
-    ax.set_ylabel('Y (mm)', fontsize=11, labelpad=8)
+    ax.set_title(title, fontsize=11, fontweight='bold', pad=10)
+    ax.set_xlabel('X (mm)', fontsize=9)
+    ax.set_ylabel('Y (mm)', fontsize=9)
 
     ax.grid(False)
-
     plt.tight_layout()
     
     if show:
-        print(f"🖼️ Đang hiển thị cửa sổ heatmap mật độ từ thông siêu nét (DPI=300, {figsize[0]}x{figsize[1]} in, {res}x{res} px matrix)...")
+        print(f"🖼️ Đang hiển thị heatmap mật độ từ thông Ansys FEM ({figsize[0]}x{figsize[1]} in, scale {vmin}-{vmax} T)...")
         plt.show()
 
     return fig
 
-
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\maxwell_2d\toy_model_1\reset_ansys_environment.py
-#==============================================================================
+FILE: src\ansys_aedt\maxwell_2d\toy_model_1\reset_ansys_environment.py
 
 import os
 import glob
@@ -643,11 +1006,7 @@ if __name__ == "__main__":
     reset_ansys_environment()
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\maxwell_2d\toy_model_1\run_simulation.py
-#==============================================================================
+FILE: src\ansys_aedt\maxwell_2d\toy_model_1\run_simulation.py
 
 def run_simulation(toy_model_obj):
     print("\033[94mIn function run_simulation.\033[0m")
@@ -668,11 +1027,7 @@ def run_simulation(toy_model_obj):
     return toy_model_obj
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\maxwell_2d\toy_model_1\toy_model_1.py
-#==============================================================================
+FILE: src\ansys_aedt\maxwell_2d\toy_model_1\toy_model_1.py
 
 from types import SimpleNamespace
 from .configuration import Configuration
@@ -711,11 +1066,15 @@ class ToyModel1:
         save_path=None,
         save_image_path=None,
         smooth="cubic", 
-        target_resolution=2000, 
+        target_resolution=1500, 
         sigma_smooth=0.0,
         show=True,
-        figsize=(10, 8),
-        dpi=300, 
+        figsize=(6.4, 4.8),
+        dpi=100, 
+        vmin=0.0,
+        vmax=2.0,
+        cmap="ansys_fem",
+        num_divisions=100,
         **kwargs
     ):
         return plot_flux_density(
@@ -730,15 +1089,14 @@ class ToyModel1:
             show=show,
             figsize=figsize,
             dpi=dpi,
+            vmin=vmin,
+            vmax=vmax,
+            cmap=cmap,
+            num_divisions=num_divisions,
             **kwargs
         )
 
-
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\configuration.py
-#==============================================================================
+FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\configuration.py
 
 from types import SimpleNamespace
 
@@ -844,11 +1202,7 @@ class Configuation:
             )
         )
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\create_model.py
-#==============================================================================
+FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\create_model.py
 
 import subprocess
 import time
@@ -1062,11 +1416,7 @@ def create_model(reluctance_synchronous_motor):
     
     return reluctance_synchronous_motor
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\reluctance_synchronous_motor.py
-#==============================================================================
+FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\reluctance_synchronous_motor.py
 
 from .configuation import Configuation
 from .utils.create_model import create_model
@@ -1080,11 +1430,7 @@ class ReluctanceSynchronousMotor:
     def create_model(self):
         return create_model(reluctance_synchronous_motor=self)
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\reset_ansys_environment.py
-#==============================================================================
+FILE: src\ansys_aedt\rmxprt\reluctane_synchronous_motor\reset_ansys_environment.py
 
 import os
 import glob
@@ -1123,11 +1469,7 @@ def reset_ansys_environment():
 if __name__ == "__main__":
     reset_ansys_environment()
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\electro_magnetic_pinn.py
-#==============================================================================
+FILE: src\physics_informed_model\electro_magnetic_pinn.py
 
 import torch
 import torch.nn as nn
@@ -1144,6 +1486,9 @@ from electro_magnetic_pinn_engine.build_system import _build_system
 from electro_magnetic_pinn_engine.evaluate_fields import evaluate_fields
 from electro_magnetic_pinn_engine.plot_fields import plot_fields
 from electro_magnetic_pinn_engine.execute_training_process import execute_training_process
+
+from checkpoint_engine.save_checkpoint import save_checkpoint
+from checkpoint_engine.load_checkpoint import load_checkpoint
 
 
 class ElectroMagneticPINN:
@@ -1204,12 +1549,11 @@ class ElectroMagneticPINN:
 
             contour_levels=60,
 
-            # --- BIỂU ĐỒ PDE RESIDUAL ERROR (DISCRETE LOG STEPS) ---
             res_scale="log",          
             res_vmin=1e-4,            
             res_vmax=10.0,             
-            res_cmap="inferno",                                   # Đổi sang "inferno" để tăng tương phản định lượng
-            res_discrete_levels=[1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0], # Mốc dải phân cách loga rời rạc
+            res_cmap="inferno",                                   
+            res_discrete_levels=[1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0], 
 
             mur_scale="linear",       
             mur_vmin=0.0,             
@@ -1221,13 +1565,12 @@ class ElectroMagneticPINN:
             az_vmax=None,             
             az_cmap="jet",
 
-            # --- MÃ MÀU ANSYS FEM NỘI SUY ---
             b_mag_scale="linear",     
             b_mag_vmin=0.0,           
             b_mag_vmax=1.8,           
             b_mag_cmap="ansys_fem",
-            b_mag_unit="Tesla",             # "Tesla" hoặc "mTesla"
-            b_mag_number_of_division=100,   # Số dải màu nội suy (None hoặc 20 cho 20 màu gốc)
+            b_mag_unit="Tesla",             
+            b_mag_number_of_division=100,   
 
             by_scale="linear",        
             by_vmin=None,             
@@ -1278,30 +1621,25 @@ class ElectroMagneticPINN:
     def execute_training_process(self):
         return execute_training_process(self)
 
---------------------------------------------------------------------------------
+    def save_checkpoint(self, filepath=None):
+        return save_checkpoint(self, filepath=filepath)
 
-#==============================================================================
-# FILE: src\physics_informed_model\architectures\__init__.py
-#==============================================================================
+    def load_checkpoint(self, filepath=None):
+        return load_checkpoint(self, filepath=filepath)
+
+
+FILE: src\physics_informed_model\architectures\__init__.py
 
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\architectures\boundary_factor.py
-#==============================================================================
+FILE: src\physics_informed_model\architectures\boundary_factor.py
 
 def boundary_factor(self, xy):
     sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
     return sim_domain.boundary.compute_boundary_factor(xy, sim_domain.L0)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\architectures\build_single_network.py
-#==============================================================================
+FILE: src\physics_informed_model\architectures\build_single_network.py
 
 import torch.nn as nn
 
@@ -1322,21 +1660,13 @@ def _build_single_network(self, actual_input_dim, network_config):
     return nn.Sequential(*layers)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\architectures\forward.py
-#==============================================================================
+FILE: src\physics_informed_model\architectures\forward.py
 
 def forward(self, xy):
     return self.forward_network('background', xy)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\architectures\forward_network.py
-#==============================================================================
+FILE: src\physics_informed_model\architectures\forward_network.py
 
 import torch
 import torch.nn as nn
@@ -1453,11 +1783,7 @@ def forward_nu_network(self, network_key, xy):
     return nu_star
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\architectures\initialize_weights.py
-#==============================================================================
+FILE: src\physics_informed_model\architectures\initialize_weights.py
 
 import torch.nn as nn
 
@@ -1469,11 +1795,7 @@ def _initialize_weights(self):
                 nn.init.zeros_(module.bias)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\architectures\xpinn_architecture.py
-#==============================================================================
+FILE: src\physics_informed_model\architectures\xpinn_architecture.py
 
 import torch
 import torch.nn as nn
@@ -1570,11 +1892,186 @@ class XPINNArchitecture(nn.Module):
         last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
         nn.init.constant_(last_linear.bias, target_raw)
 
---------------------------------------------------------------------------------
+FILE: src\physics_informed_model\checkpoint_engine\__init__.py
 
-#==============================================================================
-# FILE: src\physics_informed_model\electro_magnetic_pinn_engine\__init__.py
-#==============================================================================
+from .save_checkpoint import save_checkpoint
+from .load_checkpoint import load_checkpoint
+
+__all__ = ["save_checkpoint", "load_checkpoint"]
+
+
+FILE: src\physics_informed_model\checkpoint_engine\load_checkpoint.py
+
+import pickle
+from pathlib import Path
+
+
+def get_project_root():
+    current_file = Path(__file__).resolve()
+    return current_file.parents[3]
+
+
+def resolve_checkpoint_filepath(filepath=None):
+    root_dir = get_project_root()
+    default_dir = root_dir / "checkpoints"
+
+    if filepath is None:
+        return default_dir / "pinn_model_checkpoint.pkl"
+
+    path_obj = Path(filepath)
+
+    if path_obj.is_absolute():
+        return path_obj
+
+    if path_obj.parent != Path("."):
+        return (root_dir / path_obj).resolve()
+
+    return default_dir / path_obj.name
+
+
+def load_checkpoint(pinn_instance, filepath=None):
+    path = resolve_checkpoint_filepath(filepath)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {path}")
+
+    with open(path, "rb") as f:
+        checkpoint_data = pickle.load(f)
+
+    if "sampler_config" in checkpoint_data:
+        pinn_instance.sampler_config = checkpoint_data["sampler_config"]
+    if "training_config" in checkpoint_data:
+        pinn_instance.training_config = checkpoint_data["training_config"]
+    if "visualization_config" in checkpoint_data:
+        pinn_instance.visualization_config = checkpoint_data[
+            "visualization_config"
+        ]
+
+    sim = pinn_instance.simulation_domain_engine_instance
+    if sim:
+        if "physics_config" in checkpoint_data:
+            sim.physics_config = checkpoint_data["physics_config"]
+        if "x_boundaries_tuple" in checkpoint_data:
+            sim.x_boundaries_tuple = checkpoint_data["x_boundaries_tuple"]
+        if "y_boundaries_tuple" in checkpoint_data:
+            sim.y_boundaries_tuple = checkpoint_data["y_boundaries_tuple"]
+
+    if pinn_instance.pinn_architecture_instance is None:
+        pinn_instance._build_system()
+
+    if (
+        checkpoint_data.get("model_state_dict")
+        and pinn_instance.pinn_architecture_instance
+    ):
+        pinn_instance.pinn_architecture_instance.load_state_dict(
+            checkpoint_data["model_state_dict"]
+        )
+
+    tm = pinn_instance.training_manager_instance
+    if tm:
+        if checkpoint_data.get("optimizer_adam_state_dict") and tm.optimizer_adam:
+            tm.optimizer_adam.load_state_dict(
+                checkpoint_data["optimizer_adam_state_dict"]
+            )
+        if (
+            checkpoint_data.get("optimizer_lbfgs_state_dict")
+            and tm.optimizer_lbfgs
+        ):
+            tm.optimizer_lbfgs.load_state_dict(
+                checkpoint_data["optimizer_lbfgs_state_dict"]
+            )
+        tm.completed_adam_epochs = checkpoint_data.get(
+            "completed_adam_epochs", 0
+        )
+        tm.global_step = checkpoint_data.get("global_step", 0)
+
+    vis = pinn_instance.visualizer_instance
+    if vis:
+        vis.loss_history = checkpoint_data.get("loss_history", [])
+        vis.epoch_history = checkpoint_data.get("epoch_history", [])
+
+    print(
+        f"[*] Successfully loaded single-file pickle checkpoint from: {path}"
+    )
+    return pinn_instance
+
+
+FILE: src\physics_informed_model\checkpoint_engine\save_checkpoint.py
+
+import pickle
+from pathlib import Path
+
+
+def get_project_root():
+    current_file = Path(__file__).resolve()
+    return current_file.parents[3]
+
+
+def resolve_checkpoint_filepath(filepath=None):
+    root_dir = get_project_root()
+    default_dir = root_dir / "checkpoints"
+
+    if filepath is None:
+        return default_dir / "pinn_model_checkpoint.pkl"
+
+    path_obj = Path(filepath)
+
+    if path_obj.is_absolute():
+        return path_obj
+
+    if path_obj.parent != Path("."):
+        return (root_dir / path_obj).resolve()
+
+    return default_dir / path_obj.name
+
+
+def save_checkpoint(pinn_instance, filepath=None):
+    path = resolve_checkpoint_filepath(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    arch = pinn_instance.pinn_architecture_instance
+    tm = pinn_instance.training_manager_instance
+    sim = pinn_instance.simulation_domain_engine_instance
+
+    checkpoint_data = {
+        "model_state_dict": arch.state_dict() if arch else None,
+        "optimizer_adam_state_dict": (
+            tm.optimizer_adam.state_dict() if tm and tm.optimizer_adam else None
+        ),
+        "optimizer_lbfgs_state_dict": (
+            tm.optimizer_lbfgs.state_dict()
+            if tm and tm.optimizer_lbfgs
+            else None
+        ),
+        "completed_adam_epochs": getattr(tm, "completed_adam_epochs", 0)
+        if tm
+        else 0,
+        "global_step": getattr(tm, "global_step", 0) if tm else 0,
+        "sampler_config": pinn_instance.sampler_config,
+        "training_config": pinn_instance.training_config,
+        "visualization_config": pinn_instance.visualization_config,
+        "physics_config": sim.physics_config if sim else None,
+        "x_boundaries_tuple": sim.x_boundaries_tuple if sim else None,
+        "y_boundaries_tuple": sim.y_boundaries_tuple if sim else None,
+        "loss_history": (
+            pinn_instance.visualizer_instance.loss_history
+            if pinn_instance.visualizer_instance
+            else []
+        ),
+        "epoch_history": (
+            pinn_instance.visualizer_instance.epoch_history
+            if pinn_instance.visualizer_instance
+            else []
+        ),
+    }
+
+    with open(path, "wb") as f:
+        pickle.dump(checkpoint_data, f)
+
+    print(f"[*] Successfully saved single-file pickle checkpoint to: {path}")
+
+
+FILE: src\physics_informed_model\electro_magnetic_pinn_engine\__init__.py
 
 from .build_system import _build_system
 from .evaluate_fields import evaluate_fields
@@ -1589,11 +2086,7 @@ __all__ = [
 ]
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\electro_magnetic_pinn_engine\build_system.py
-#==============================================================================
+FILE: src\physics_informed_model\electro_magnetic_pinn_engine\build_system.py
 
 import torch
 from architectures.xpinn_architecture import XPINNArchitecture
@@ -1632,11 +2125,7 @@ def _build_system(pinn_instance):
     pinn_instance.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\electro_magnetic_pinn_engine\evaluate_fields.py
-#==============================================================================
+FILE: src\physics_informed_model\electro_magnetic_pinn_engine\evaluate_fields.py
 
 import torch
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
@@ -1683,11 +2172,7 @@ def evaluate_fields(pinn_instance, points_tensor, return_numpy=False):
     return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\electro_magnetic_pinn_engine\execute_training_process.py
-#==============================================================================
+FILE: src\physics_informed_model\electro_magnetic_pinn_engine\execute_training_process.py
 
 def execute_training_process(pinn_instance):
     if pinn_instance.pinn_architecture_instance is None:
@@ -1753,11 +2238,7 @@ def execute_training_process(pinn_instance):
         pinn_instance.visualizer_instance.generate_animations()
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\electro_magnetic_pinn_engine\plot_fields.py
-#==============================================================================
+FILE: src\physics_informed_model\electro_magnetic_pinn_engine\plot_fields.py
 
 import torch
 import numpy as np
@@ -1911,11 +2392,7 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
 
     return fig, axs
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\physics_domain\collocation_sampler.py
-#==============================================================================
+FILE: src\physics_informed_model\physics_domain\collocation_sampler.py
 
 import torch
 import numpy as np
@@ -2189,11 +2666,7 @@ class CollocationSampler:
         return domains_data
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\physics_domain\physical_equations\interface_loss.py
-#==============================================================================
+FILE: src\physics_informed_model\physics_domain\physical_equations\interface_loss.py
 
 import torch
 
@@ -2351,11 +2824,7 @@ class InterfaceLoss:
         return weighted_interface
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\physics_domain\physical_equations\maxwell_pde_loss.py
-#==============================================================================
+FILE: src\physics_informed_model\physics_domain\physical_equations\maxwell_pde_loss.py
 
 import torch
 
@@ -2444,11 +2913,7 @@ class MaxwellPDELoss:
         return 1.0 - torch.exp(-beta * abs_sdf_star)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\add_material_domain_method.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\add_material_domain_method.py
 
 def add_material_domain(self, domain_object):
     domain_object.simulation_domain = self
@@ -2469,11 +2934,7 @@ def add_material_domain(self, domain_object):
     return self
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\build_background_domain.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\build_background_domain.py
 
 from simulation_domain_engine.material_domain.material_domain import MaterialDomain
 
@@ -2522,11 +2983,7 @@ def build_background_domain(self, domain_name="background", training_config=None
     return self.background_domain
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\create_material_domain.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\create_material_domain.py
 
 from simulation_domain_engine.material_domain.material_domain import MaterialDomain
 
@@ -2548,11 +3005,7 @@ def create_material_domain(
     return domain
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\display_methods.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\display_methods.py
 
 from simulation_domain_engine.domain_visualizer import display_simulation_domain
 
@@ -2565,11 +3018,7 @@ def display(self, x_boundaries_tuple=None, y_boundaries_tuple=None, resolution=1
     display_simulation_domain(self, xb, yb, resolution)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\domain_visualizer.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\domain_visualizer.py
 
 import torch
 import numpy as np
@@ -2768,21 +3217,13 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     plt.show()
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\get_domain_count.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\get_domain_count.py
 
 def get_domain_count(self):
     return len(self.domains_list)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\global_physical_properties_evaluation.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\global_physical_properties_evaluation.py
 
 import torch
 
@@ -2871,11 +3312,7 @@ def evaluate_global_physical_properties(domains_list, points_tensor):
     }
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\global_signed_distance_field.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\global_signed_distance_field.py
 
 import torch
 
@@ -2892,11 +3329,7 @@ def compute_global_signed_distance_field(domains_list, points_tensor):
     return global_signed_distance_field
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\set_boundary.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\set_boundary.py
 
 def set_boundary(self, boundary_object):
     boundary_object.simulation_domain = self
@@ -2904,11 +3337,7 @@ def set_boundary(self, boundary_object):
     return self
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\simulation_domain.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\simulation_domain.py
 
 from typing import List, Tuple, Dict, Any, Optional
 from types import SimpleNamespace
@@ -3070,11 +3499,7 @@ class SimulationDomain:
         )
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\validate_non_overlapping_domains.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\validate_non_overlapping_domains.py
 
 import torch
 
@@ -3105,19 +3530,11 @@ def validate_non_overlapping_domains(self, candidate_domain=None, check_resoluti
     return True
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\boundary\__init__.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\boundary\__init__.py
 
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\boundary\boundary.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\boundary\boundary.py
 
 import torch
 import numpy as np
@@ -3173,11 +3590,7 @@ class Boundary:
         return torch.tensor(pts_sampled, dtype=torch.float32, device=device, requires_grad=True)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\boundary\build_boundary.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\boundary\build_boundary.py
 
 import torch
 
@@ -3196,11 +3609,7 @@ def build_boundary(self):
     return self
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\boundary\compute_boundary_factor.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\boundary\compute_boundary_factor.py
 
 def compute_boundary_factor(self, points_tensor, domain_scale=None):
     x_min, x_max = self.geometry_config.x_boundaries_tuple
@@ -3214,19 +3623,11 @@ def compute_boundary_factor(self, points_tensor, domain_scale=None):
     return x_factor * y_factor
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\__init__.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\__init__.py
 
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\assign_coercive_direction.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\assign_coercive_direction.py
 
 import math
 
@@ -3269,11 +3670,7 @@ def assign_coercive_direction(self, direction=(0, 1)):
     return self
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\assign_material.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\assign_material.py
 
 def assign_material(self, material_name="air"):
     if self.simulation_domain is None or not hasattr(self.simulation_domain, 'material_data'):
@@ -3293,11 +3690,7 @@ def assign_material(self, material_name="air"):
     return self
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\build_domain.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\build_domain.py
 
 import torch
 
@@ -3341,11 +3734,7 @@ def build_domain(self):
     return self
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\compute_constant_bh_curve.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\compute_constant_bh_curve.py
 
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 
@@ -3360,11 +3749,7 @@ def compute_constant_bh_curve(self):
     self.physics_config.bh_curve_data = [b_samples, h_samples]
     return self.physics_config.bh_curve_data
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\compute_current_density.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\compute_current_density.py
 
 def compute_current_density(self):
     if callable(self.physics_config.current):
@@ -3378,11 +3763,7 @@ def compute_current_density(self):
     return self.current_density
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\compute_section_area.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\compute_section_area.py
 
 def compute_section_area(self):
     if self.geometry_config.outline is None or len(self.geometry_config.outline) < 3:
@@ -3394,11 +3775,7 @@ def compute_section_area(self):
     return self.section_area
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\evaluate_current_density.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\evaluate_current_density.py
 
 import torch
 
@@ -3409,11 +3786,7 @@ def evaluate_current_density(self, points_tensor):
     return torch.full((points_tensor.shape[0], 1), float(self.current_density), dtype=points_tensor.dtype, device=points_tensor.device)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\evaluate_magnetization_vector.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\evaluate_magnetization_vector.py
 
 import torch
 
@@ -3434,11 +3807,7 @@ def evaluate_magnetization_vector(self, points_tensor):
     return hx_tensor, hy_tensor
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\evaluate_reluctivity.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\evaluate_reluctivity.py
 
 import torch
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
@@ -3489,11 +3858,7 @@ def evaluate_reluctivity(self, points_tensor, B_magnitude_tensor=None, is_nonlin
     raise ValueError(f"Domain '{self.domain_name}' thiếu dữ liệu bh_curve_data hợp lệ.")
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\material_domain.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\material_domain.py
 
 from typing import Tuple, Union, List, Optional, Any
 from types import SimpleNamespace
@@ -3620,11 +3985,7 @@ class MaterialDomain:
         return _evaluate_current_density_module.evaluate_current_density(self, points_tensor)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_domain\polygon_signed_distance_field.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_domain\polygon_signed_distance_field.py
 
 import torch
 
@@ -3696,11 +4057,7 @@ def compute_polygon_signed_distance_field(vertices_tensor, points_tensor):
     return distance_sign * minimum_distances
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_library\__init__.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_library\__init__.py
 
 # __init__.py for material_library module
 from .material_data import MaterialData
@@ -3708,11 +4065,7 @@ from .material_data import MaterialData
 __all__ = ["MaterialData"]
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\simulation_domain_engine\material_library\material_data.py
-#==============================================================================
+FILE: src\physics_informed_model\simulation_domain_engine\material_library\material_data.py
 
 import torch
 import numpy as np
@@ -3774,614 +4127,7 @@ class MaterialData:
         """Trả về số lượng vật liệu trong kho"""
         return len(self.data)
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\tests\__init__.py
-#==============================================================================
-
-
-
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\tests\test_simulation.py
-#==============================================================================
-
-import os
-import sys
-import shutil
-from types import SimpleNamespace
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
-if parent_directory not in sys.path:
-    sys.path.insert(0, parent_directory)
-
-import torch
-import torch.nn as nn
-
-if torch.cuda.is_available():
-    torch.set_float32_matmul_precision("high")
-
-from electro_magnetic_pinn import ElectroMagneticPINN
-
-output_dir = "figure_high_precision_simulation_test"
-if os.path.exists(output_dir):
-    shutil.rmtree(output_dir)
-os.makedirs(output_dir)
-
-model = ElectroMagneticPINN()
-sim_domain = model.simulation_domain_engine_instance
-
-# =========================================================================
-# 1. QUY MÔ VẬT LÝ VÀ KHUNG TỌA ĐỘ (MET)
-# =========================================================================
-sim_domain.physics_config.scale_L0 = 0.12            # Scale chiều dài 120 mm
-sim_domain.physics_config.scale_H0 = 960000.0         # Scale cường độ từ trường 960 kA/m
-sim_domain.physics_config.scale_nu0 = 795774.715459   # Độ từ kháng chân không nu0
-sim_domain.physics_config.allow_overlapping_domains = False
-sim_domain.x_boundaries_tuple = (-0.12, 0.12)         # Khung biên X: [-120mm, +120mm]
-sim_domain.y_boundaries_tuple = (-0.12, 0.12)         # Khung biên Y: [-120mm, +120mm]
-
-# =========================================================================
-# 2. CẤU HÌNH TIẾN TRÌNH HUẤN LUYỆN & VÒNG LẶP FPI
-# =========================================================================
-model.sampler_config.dynamic_resampling = True
-model.sampler_config.resample_interval = 100
-model.sampler_config.resample_points_before_lbfgs_stage = True
-
-model.training_config.enable_linear_warmup_stage = True
-model.training_config.enable_nonlinear_adaptation_stage = True
-model.training_config.enable_lbfgs_refinement_stage = True
-
-epochs_warmup_target = 1000
-fpi_iterations = 5
-epochs_per_fpi = 1000
-
-model.training_config.fpi_outer_iterations = fpi_iterations
-model.training_config.fpi_alpha_damping = 0.5            # Damping mượt cho FPI
-model.training_config.fpi_tolerance = 1e-6
-
-model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
-model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
-
-model.training_config.adam_learning_rate = 2e-3
-model.training_config.target_loss_threshold = 1e-7
-model.training_config.adam_eta_min = 1e-6
-model.training_config.grad_clip_max_norm = 1.0
-model.training_config.max_non_finite_streak = 5
-model.training_config.adam_log_interval = 100
-
-model.training_config.pretrain_nu_epochs = 600
-model.training_config.pretrain_nu_lr = 5e-3
-model.training_config.fit_nu_epochs = 500
-model.training_config.fit_nu_lr = 3e-3
-
-model.training_config.number_of_lbfgs_iterations = 1500
-model.training_config.lbfgs_learning_rate = 0.5
-
-# =========================================================================
-# 3. CẤU HÌNH TRỰC QUAN HÓA ĐẦY ĐỦ (VISUALIZATION CONFIG)
-# =========================================================================
-vis_cfg = model.visualization_config
-vis_cfg.active = True
-vis_cfg.display_colab_frames = True
-vis_cfg.update_interval = 10
-vis_cfg.output_directory = output_dir
-vis_cfg.resolution = 160
-
-# --- TÙY CHỌN XUẤT ANIMATION ---
-vis_cfg.generate_gif_animation = True
-vis_cfg.gif_filename = "ansys_fem_training_process.gif"
-vis_cfg.generate_mp4_video = True
-vis_cfg.mp4_filename = "ansys_fem_training_process.mp4"
-vis_cfg.animation_fps = 10.0
-vis_cfg.gif_fps = 10.0
-vis_cfg.mp4_codec = "libx264"
-vis_cfg.mp4_quality = 8
-vis_cfg.contour_levels = 80
-
-# --- A. CẤU HÌNH BIỂU ĐỒ TRƯỜNG TỪ THÔNG |B| (ANSYS FEM COLORMAP) ---
-vis_cfg.b_mag_scale = "linear"
-vis_cfg.b_mag_cmap = "ansys_fem"          # Mã màu chuẩn Ansys FEM (hoặc 'jet', 'turbo', 'viridis')
-vis_cfg.b_mag_unit = "mTesla"             # Đơn vị hiển thị: "mTesla" hoặc "Tesla"
-vis_cfg.b_mag_vmin = 0.0                 # Giá trị cực tiểu (0 mT)
-vis_cfg.b_mag_vmax = 1800.0              # Giá trị cực đại (1800 mT = 1.8 T)
-vis_cfg.b_mag_number_of_division = 100   # Số dải màu nội suy mượt (None hoặc 20 cho 20 màu gốc)
-
-# --- B. CẤU HÌNH BIỂU ĐỒ SAI SỐ PDE RESIDUAL ERROR (DISCRETE LOG STEPS) ---
-vis_cfg.res_scale = "log"
-vis_cfg.res_vmin = 1e-4
-vis_cfg.res_vmax = 10.0
-vis_cfg.res_cmap = "inferno"              # Bảng màu tương phản cao ('inferno', 'magma', 'Reds')
-vis_cfg.res_discrete_levels = [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]  # Các mốc dải chia loga đồng mức
-
-# --- C. CẤU HÌNH BIỂU ĐỒ ĐỘ TỪ THẤM TƯƠNG ĐỐI \mu_r ---
-vis_cfg.mur_scale = "linear"
-vis_cfg.mur_vmin = 0.0
-vis_cfg.mur_vmax = 3000.0
-vis_cfg.mur_cmap = "turbo"
-
-# --- D. CẤU HÌNH BIỂU ĐỒ THẾ VECTƠ TỪ A_z ---
-vis_cfg.az_scale = "linear"
-vis_cfg.az_vmin = None                   # Tự động lấy Min
-vis_cfg.az_vmax = None                   # Tự động lấy Max
-vis_cfg.az_cmap = "jet"
-
-# --- E. CẤU HÌNH BIỂU ĐỒ THÀNH PHẦN B_y ---
-vis_cfg.by_scale = "linear"
-vis_cfg.by_vmin = None
-vis_cfg.by_vmax = None
-vis_cfg.by_cmap = "coolwarm"
-
-# =========================================================================
-# 4. KHAI BÁO CÁC MIỀN HÌNH HỌC TỪ ANSYS MAXWELL
-# =========================================================================
-
-# --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
-iron_yoke = sim_domain.create_material_domain(
-    domain_name="iron_yoke",
-    material_name="steel_1008",
-    outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
-)
-iron_yoke.physics_config.relative_permeability = 1000.0
-iron_yoke.physics_config.coercive = [0.0, 0.0]
-iron_yoke.physics_config.current = 0.0
-iron_yoke.physics_config.is_nonlinear = True
-
-iron_yoke.training_config.pde_weight = 8.0                   # Trọng số PDE nội miền
-iron_yoke.training_config.pde_nonlinear_weight = 2.0
-iron_yoke.training_config.interface_weight = 1.0
-iron_yoke.training_config.interface_potential_weight = 800.0
-iron_yoke.training_config.interface_bn_weight = 1000.0
-iron_yoke.training_config.interface_ht_weight = 1200.0
-iron_yoke.training_config.pde_fading_beta = 80.0
-iron_yoke.training_config.sampling_density_multiplier = 1.0
-
-iron_yoke.training_config.number_of_interior_points = 15000
-iron_yoke.training_config.number_of_surface_points = 4000
-
-iron_yoke.network_config.hidden_layers = 4
-iron_yoke.network_config.hidden_neurons = 128
-iron_yoke.network_config.activation_function = nn.Mish()
-iron_yoke.network_config.fourier_features = True
-iron_yoke.network_config.fourier_sigma = 1.3
-iron_yoke.network_config.fourier_mapping_size = 128
-
-iron_yoke.nu_network_config.hidden_layers = 3
-iron_yoke.nu_network_config.hidden_neurons = 64
-iron_yoke.nu_network_config.activation_function = nn.Mish()
-iron_yoke.nu_network_config.fourier_features = True
-iron_yoke.nu_network_config.fourier_sigma = 1.0
-iron_yoke.nu_network_config.fourier_mapping_size = 32
-
-iron_yoke.build_domain()
-
-# --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
-magnet_left = sim_domain.create_material_domain(
-    domain_name="magnet_left",
-    material_name="N30UH",
-    outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
-    coercive_direction=(0, 1)
-)
-magnet_left.physics_config.relative_permeability = 1.05
-magnet_left.physics_config.current = 0.0
-magnet_left.physics_config.is_nonlinear = False
-
-magnet_left.training_config.number_of_interior_points = 1500
-magnet_left.training_config.number_of_surface_points = 800
-
-magnet_left.network_config.hidden_layers = 4
-magnet_left.network_config.hidden_neurons = 64
-magnet_left.network_config.activation_function = nn.Mish()
-magnet_left.network_config.fourier_features = True
-magnet_left.network_config.fourier_sigma = 1.0
-magnet_left.network_config.fourier_mapping_size = 64
-
-magnet_left.build_domain()
-
-# --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
-magnet_right = sim_domain.create_material_domain(
-    domain_name="magnet_right",
-    material_name="N30UH",
-    outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]],
-    coercive_direction=(0, -1)
-)
-magnet_right.physics_config.relative_permeability = 1.05
-magnet_right.physics_config.current = 0.0
-magnet_right.physics_config.is_nonlinear = False
-
-magnet_right.training_config.number_of_interior_points = 1500
-magnet_right.training_config.number_of_surface_points = 800
-
-magnet_right.network_config.hidden_layers = 4
-magnet_right.network_config.hidden_neurons = 64
-magnet_right.network_config.activation_function = nn.Mish()
-magnet_right.network_config.fourier_features = True
-magnet_right.network_config.fourier_sigma = 1.0
-magnet_right.network_config.fourier_mapping_size = 64
-
-magnet_right.build_domain()
-
-# --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
-bg_training_cfg = SimpleNamespace(
-    pde_weight=1.0,
-    interface_weight=1.0,
-    interface_potential_weight=800.0,
-    interface_bn_weight=1000.0,
-    interface_ht_weight=1200.0,
-    pde_fading_beta=80.0,
-    sampling_density_multiplier=1.0,
-    number_of_interior_points=6000,
-    number_of_surface_points=0
-)
-bg_network_cfg = SimpleNamespace(
-    hidden_layers=4,
-    hidden_neurons=64,
-    activation_function=nn.Mish(),
-    fourier_features=True,
-    fourier_sigma=1.0,
-    fourier_mapping_size=64
-)
-sim_domain.build_background_domain(
-    domain_name="background",
-    training_config=bg_training_cfg,
-    network_config=bg_network_cfg
-)
-
-# =========================================================================
-# 5. CẬP NHẬT MÔ HÌNH VÀ THỰC THI HUẤN LUYỆN
-# =========================================================================
-model.update_electromagnetic_pinn()
-
-print("[*] Bắt đầu huấn luyện mô hình PINN với cấu hình Ansys FEM Colormap & Discrete Log Residual...")
-model.execute_training_process()
-
-print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
-model.plot_fields(
-    resolution=200,
-    save_path=f"{output_dir}/fpi_final_fields.png",
-    show=False,
-    figsize=(12, 10)
-)
-print(f"[✔] HOÀN THÀNH! Kết quả đã được lưu tại: {output_dir}/")
-
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\tests\test_simulation2.py
-#==============================================================================
-
-import os
-import sys
-import shutil
-from types import SimpleNamespace
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
-if parent_directory not in sys.path:
-    sys.path.insert(0, parent_directory)
-
-import torch
-import torch.nn as nn
-
-if torch.cuda.is_available():
-    torch.set_float32_matmul_precision("high")
-
-from electro_magnetic_pinn import ElectroMagneticPINN
-
-output_dir = "figure_high_precision_simulation_test"
-if os.path.exists(output_dir):
-    shutil.rmtree(output_dir)
-os.makedirs(output_dir)
-
-model = ElectroMagneticPINN()
-sim_domain = model.simulation_domain_engine_instance
-
-sim_domain.physics_config.scale_L0 = 0.12
-sim_domain.physics_config.scale_H0 = 960000.0
-sim_domain.physics_config.scale_nu0 = 795774.715459
-sim_domain.physics_config.allow_overlapping_domains = False
-sim_domain.x_boundaries_tuple = (-0.12, 0.12)
-sim_domain.y_boundaries_tuple = (-0.12, 0.12)
-
-model.sampler_config.dynamic_resampling = True
-model.sampler_config.resample_interval = 100
-model.sampler_config.resample_points_before_lbfgs_stage = True
-
-model.training_config.enable_linear_warmup_stage = True
-model.training_config.enable_nonlinear_adaptation_stage = True
-model.training_config.enable_lbfgs_refinement_stage = True
-
-epochs_warmup_target = 1000
-fpi_iterations = 5
-epochs_per_fpi = 1000
-
-model.training_config.fpi_outer_iterations = fpi_iterations
-model.training_config.fpi_alpha_damping = 0.8
-model.training_config.fpi_tolerance = 1e-6
-
-model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
-model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / model.training_config.number_of_adam_epochs
-
-model.training_config.adam_learning_rate = 2e-3
-model.training_config.target_loss_threshold = 1e-7
-model.training_config.adam_eta_min = 1e-6
-model.training_config.grad_clip_max_norm = 1.0
-model.training_config.max_non_finite_streak = 5
-model.training_config.adam_log_interval = 100
-
-model.training_config.pretrain_nu_epochs = 600
-model.training_config.pretrain_nu_lr = 5e-3
-model.training_config.fit_nu_epochs = 500
-model.training_config.fit_nu_lr = 3e-3
-
-model.training_config.number_of_lbfgs_iterations = 1500
-model.training_config.lbfgs_learning_rate = 0.5
-
-model.visualization_config.active = True
-model.visualization_config.display_colab_frames = True
-model.visualization_config.update_interval = 10
-model.visualization_config.output_directory = output_dir
-model.visualization_config.resolution = 160
-model.visualization_config.generate_gif_animation = True
-model.visualization_config.gif_filename = "high_precision_mur_training_process.gif"
-model.visualization_config.generate_mp4_video = True
-model.visualization_config.mp4_filename = "high_precision_mur_training_process.mp4"
-model.visualization_config.animation_fps = 10.0
-model.visualization_config.gif_fps = 10.0
-model.visualization_config.mp4_codec = "libx264"
-model.visualization_config.mp4_quality = 8
-model.visualization_config.contour_levels = 80
-
-# --- MIỀN 1: LÕI SẮT PHI TUYẾN (Iron Yoke) ---
-iron_yoke = sim_domain.create_material_domain(
-    domain_name="iron_yoke",
-    material_name="steel_1008",
-    outline=[[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
-)
-iron_yoke.physics_config.relative_permeability = 1000.0
-iron_yoke.physics_config.coercive = [0.0, 0.0]
-iron_yoke.physics_config.current = 0.0
-iron_yoke.physics_config.is_nonlinear = True
-
-iron_yoke.training_config.pde_weight = 1.0
-iron_yoke.training_config.pde_nonlinear_weight = 1.0
-iron_yoke.training_config.interface_weight = 1.0
-iron_yoke.training_config.interface_potential_weight = 800.0
-iron_yoke.training_config.interface_bn_weight = 1000.0
-iron_yoke.training_config.interface_ht_weight = 1200.0
-iron_yoke.training_config.pde_fading_beta = 80.0
-iron_yoke.training_config.sampling_density_multiplier = 1.0
-
-iron_yoke.training_config.number_of_interior_points = 8000
-iron_yoke.training_config.number_of_surface_points = 3000
-
-# TĂNG MẠNH TÁC ĐỘNG FOURIER FEATURES CHO MẠNG CHÍNH LÕI SẮT (Net_Az)
-iron_yoke.network_config.hidden_layers = 4
-iron_yoke.network_config.hidden_neurons = 128
-iron_yoke.network_config.activation_function = nn.Mish()
-iron_yoke.network_config.fourier_features = True
-iron_yoke.network_config.fourier_sigma = 2.5           # Tăng từ 1.2 lên 2.5
-iron_yoke.network_config.fourier_mapping_size = 256      # Tăng chiều nhúng từ 128 lên 256
-
-# TĂNG MẠNH FOURIER FEATURES CHO MẠNG PHỤ TÍNH RELUCTIVITY (Net_nu)
-iron_yoke.nu_network_config.hidden_layers = 3
-iron_yoke.nu_network_config.hidden_neurons = 64
-iron_yoke.nu_network_config.activation_function = nn.Mish()
-iron_yoke.nu_network_config.fourier_features = True
-iron_yoke.nu_network_config.fourier_sigma = 1.8        # Tăng từ 1.0 lên 1.8
-iron_yoke.nu_network_config.fourier_mapping_size = 64   # Tăng chiều nhúng từ 32 lên 64
-
-iron_yoke.build_domain()
-
-# --- MIỀN 2: NAM CHÂM VĨNH CỬU TRÁI (Magnet Left) ---
-magnet_left = sim_domain.create_material_domain(
-    domain_name="magnet_left",
-    material_name="N30UH",
-    outline=[[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]],
-    coercive_direction=(0, 1)
-)
-magnet_left.physics_config.relative_permeability = 1.05
-magnet_left.physics_config.current = 0.0
-magnet_left.physics_config.is_nonlinear = False
-
-magnet_left.training_config.number_of_interior_points = 1500
-magnet_left.training_config.number_of_surface_points = 800
-
-magnet_left.network_config.hidden_layers = 4
-magnet_left.network_config.hidden_neurons = 64
-magnet_left.network_config.activation_function = nn.Mish()
-magnet_left.network_config.fourier_features = True
-magnet_left.network_config.fourier_sigma = 1.0
-magnet_left.network_config.fourier_mapping_size = 64
-
-magnet_left.build_domain()
-
-# --- MIỀN 3: NAM CHÂM VĨNH CỬU PHẢI (Magnet Right) ---
-magnet_right = sim_domain.create_material_domain(
-    domain_name="magnet_right",
-    material_name="N30UH",
-    outline=[[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]],
-    coercive_direction=(0, -1)
-)
-magnet_right.physics_config.relative_permeability = 1.05
-magnet_right.physics_config.current = 0.0
-magnet_right.physics_config.is_nonlinear = False
-
-magnet_right.training_config.number_of_interior_points = 1500
-magnet_right.training_config.number_of_surface_points = 800
-
-magnet_right.network_config.hidden_layers = 4
-magnet_right.network_config.hidden_neurons = 64
-magnet_right.network_config.activation_function = nn.Mish()
-magnet_right.network_config.fourier_features = True
-magnet_right.network_config.fourier_sigma = 1.0
-magnet_right.network_config.fourier_mapping_size = 64
-
-magnet_right.build_domain()
-
-# --- MIỀN 4: KHÔNG KHÍ NỀN (Background Air Domain) ---
-bg_training_cfg = SimpleNamespace(
-    pde_weight=1.0,
-    interface_weight=1.0,
-    interface_potential_weight=800.0,
-    interface_bn_weight=1000.0,
-    interface_ht_weight=1200.0,
-    pde_fading_beta=80.0,
-    sampling_density_multiplier=1.0,
-    number_of_interior_points=6000,
-    number_of_surface_points=0
-)
-bg_network_cfg = SimpleNamespace(
-    hidden_layers=4,
-    hidden_neurons=64,
-    activation_function=nn.Mish(),
-    fourier_features=True,
-    fourier_sigma=1.0,
-    fourier_mapping_size=64
-)
-sim_domain.build_background_domain(
-    domain_name="background",
-    training_config=bg_training_cfg,
-    network_config=bg_network_cfg
-)
-
-model.update_electromagnetic_pinn()
-
-print("[*] Bắt đầu tiến trình huấn luyện...")
-model.execute_training_process()
-
-print("[*] Xuất biểu đồ trường kết quả cuối cùng...")
-model.plot_fields(
-    resolution=200,
-    save_path=f"{output_dir}/fpi_final_fields.png",
-    show=False,
-    figsize=(12, 10)
-)
-print(f"[✔] HOÀN THÀNH! Kết quả và animation đã lưu tại: {output_dir}/")
-
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\tests\test_simulation_domain.py
-#==============================================================================
-
-import os
-import sys
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-parent_directory = os.path.abspath(os.path.join(current_directory, '..'))
-if parent_directory not in sys.path:
-    sys.path.insert(0, parent_directory)
-
-import torch
-from electro_magnetic_pinn import ElectroMagneticPINN
-from simulation_domain_engine.material_domain.material_domain import MaterialDomain
-
-def run_geometry_and_physics_tests():
-    model = ElectroMagneticPINN()
-    sim = model.simulation_domain_engine_instance
-    sim.x_boundaries_tuple = (-0.1, 0.1)
-    sim.y_boundaries_tuple = (-0.1, 0.1)
-    sim.physics_config.scale_L0 = 0.1
-    sim.physics_config.scale_H0 = 800000.0
-
-    mag_left = MaterialDomain(domain_name="magnet_left")
-    mag_left.geometry_config.outline = [
-        [-0.04, -0.04],
-        [-0.02, -0.04],
-        [-0.02, 0.04],
-        [-0.04, 0.04]
-    ]
-    mag_left.physics_config.relative_permeability = 1.05
-    mag_left.physics_config.coercive = [0.0, 800000.0]
-    mag_left.training_config.number_of_interior_points = 400
-    mag_left.training_config.number_of_surface_points = 100
-    mag_left.training_config.sampling_density_multiplier = 1.5
-    mag_left.build_domain()
-
-    mag_right = MaterialDomain(domain_name="magnet_right")
-    mag_right.geometry_config.outline = [
-        [0.02, -0.04],
-        [0.04, -0.04],
-        [0.04, 0.04],
-        [0.02, 0.04]
-    ]
-    mag_right.physics_config.relative_permeability = 1.05
-    mag_right.physics_config.coercive = [0.0, -800000.0]
-    mag_right.training_config.number_of_interior_points = 400
-    mag_right.training_config.number_of_surface_points = 100
-    mag_right.training_config.sampling_density_multiplier = 0.5
-    mag_right.build_domain()
-
-    sim.add_material_domain(mag_left)
-    sim.add_material_domain(mag_right)
-    bg = sim.build_background_domain(domain_name="background")
-    bg.training_config.number_of_interior_points = 1000
-    bg.training_config.sampling_density_multiplier = 1.0
-
-    model.update_electromagnetic_pinn()
-
-    surf_sample = model.collocation_sampler_instance.sample_domain_surface_points(mag_left, 200)
-    nx, ny, tx, ty, cw = model.interface_loss_instance._compute_normals_and_tangents_from_outline(mag_left, surf_sample)
-    n_norms = torch.sqrt(nx ** 2 + ny ** 2)
-    t_norms = torch.sqrt(tx ** 2 + ty ** 2)
-    assert torch.allclose(n_norms, torch.ones_like(n_norms), atol=1e-5), "Pháp tuyến giao diện phải có độ dài đơn vị = 1."
-    assert torch.allclose(t_norms, torch.ones_like(t_norms), atol=1e-5), "Tiếp tuyến giao diện phải có độ dài đơn vị = 1."
-    assert torch.all(cw > 0.0), "Trọng số làm mượt góc phải dương tại các điểm lấy mẫu."
-
-    test_pts = torch.tensor([
-        [-0.03, 0.0],
-        [0.03, 0.0],
-        [0.0, 0.0],
-        [-0.1, 0.0],
-        [0.1, 0.05]
-    ], dtype=torch.float32, device=model.computation_device)
-
-    props = sim.evaluate_global_physical_properties(test_pts)
-    mat_ids = props["material_classification"].squeeze().cpu().tolist()
-    assert mat_ids[0] == 1.0, f"Điểm trong nam châm trái phải có ID 1.0, nhận được {mat_ids[0]}"
-    assert mat_ids[1] == 2.0, f"Điểm trong nam châm phải phải có ID 2.0, nhận được {mat_ids[1]}"
-    assert mat_ids[2] == 3.0, f"Điểm giữa khe hở không khí phải có ID 3.0, nhận được {mat_ids[2]}"
-
-    boundary_pts = torch.tensor([
-        [-0.1, 0.0],
-        [0.1, 0.0],
-        [0.0, -0.1],
-        [0.0, 0.1]
-    ], dtype=torch.float32, device=model.computation_device)
-    Az_bound = model.pinn_architecture_instance.forward_network('background', boundary_pts)
-    assert torch.allclose(Az_bound, torch.zeros_like(Az_bound), atol=1e-6), "Az tại biên ngoài Dirichlet phải bằng 0."
-
-    domains_data = model.collocation_sampler_instance.generate_all_domain_points()
-    assert domains_data['domain_1']['interior_points'].shape[0] == 600, "Sai số điểm khi nhân multiplier = 1.5"
-    assert domains_data['domain_1']['surface_points'].shape[0] == 150, "Sai số điểm bề mặt khi nhân multiplier = 1.5"
-    assert domains_data['domain_2']['interior_points'].shape[0] == 200, "Sai số điểm khi nhân multiplier = 0.5"
-    assert domains_data['domain_2']['surface_points'].shape[0] == 50, "Sai số điểm bề mặt khi nhân multiplier = 0.5"
-
-    loss_val = model.training_manager_instance.compute_loss(domains_data)
-    assert torch.isfinite(loss_val) and loss_val.item() > 10.0, "Loss khởi tạo phải hữu hạn và phản ánh nguồn H_c trên giao diện."
-
-    Az_f, Bx_f, By_f = model.evaluate_fields(test_pts)
-    assert torch.all(torch.isfinite(Az_f)) and torch.all(torch.isfinite(Bx_f)) and torch.all(torch.isfinite(By_f)), "Trường dự đoán không hữu hạn."
-
-    print("[*] TẤT CẢ CÁC BÀI KIỂM THỬ HÌNH HỌC, PHÁP TUYẾN GIAO DIỆN, LẤY MẪU VÀ VẬT LÝ ĐỀU ĐẠT (PASSED)!")
-
-if __name__ == "__main__":
-    run_geometry_and_physics_tests()
-
-
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\__init__.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\__init__.py
 
 from .training_manager import TrainingManager
 from .resolve_domain_net_key import resolve_domain_net_key
@@ -4402,11 +4148,7 @@ __all__ = [
 ]
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\compute_loss.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\compute_loss.py
 
 import torch
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
@@ -4509,11 +4251,7 @@ def compute_loss(training_manager_instance, domains_data):
     return total_loss
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\fit_nu_network_step.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\fit_nu_network_step.py
 
 import torch
 import torch.optim as optim
@@ -4592,11 +4330,7 @@ def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=N
     return max_nu_diff
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\pretrain_nu_networks.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\pretrain_nu_networks.py
 
 import torch
 import torch.optim as optim
@@ -4646,11 +4380,7 @@ def pretrain_nu_networks(training_manager_instance, domains_data, epochs=None, l
             opt_nu.step()
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\resolve_domain_net_key.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\resolve_domain_net_key.py
 
 def resolve_domain_net_key(domain, arch_instance):
     """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
@@ -4678,11 +4408,7 @@ def resolve_domain_net_key(domain, arch_instance):
     return candidates[0] if candidates else 'background'
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\train_adam.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\train_adam.py
 
 import torch
 import torch.optim as optim
@@ -4747,11 +4473,7 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     return domains_data
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\train_lbfgs.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\train_lbfgs.py
 
 import torch
 import torch.optim as optim
@@ -4799,11 +4521,7 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
     return domains_data
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_engine\training_manager.py
-#==============================================================================
+FILE: src\physics_informed_model\training_engine\training_manager.py
 
 import time
 import torch
@@ -4888,11 +4606,7 @@ class TrainingManager:
         return train_lbfgs(self, max_iterations, domains_data)
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_visualizer\__init__.py
-#==============================================================================
+FILE: src\physics_informed_model\training_visualizer\__init__.py
 
 from .training_visualizer import TrainingVisualizer
 from .resolve_domain_net_key import resolve_domain_net_key
@@ -4911,11 +4625,7 @@ __all__ = [
 ]
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_visualizer\generate_animations.py
-#==============================================================================
+FILE: src\physics_informed_model\training_visualizer\generate_animations.py
 
 def generate_animations(visualizer_instance):
     cfg = visualizer_instance.electro_magnetic_pinn.visualization_config
@@ -4925,11 +4635,7 @@ def generate_animations(visualizer_instance):
         visualizer_instance.generate_mp4()
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_visualizer\generate_gif.py
-#==============================================================================
+FILE: src\physics_informed_model\training_visualizer\generate_gif.py
 
 from IPython.display import Image, display
 import os
@@ -4955,11 +4661,7 @@ def generate_gif(visualizer_instance):
 
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_visualizer\generate_mp4.py
-#==============================================================================
+FILE: src\physics_informed_model\training_visualizer\generate_mp4.py
 
 import os
 import imageio
@@ -4985,11 +4687,7 @@ def generate_mp4(visualizer_instance):
         pass
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_visualizer\resolve_domain_net_key.py
-#==============================================================================
+FILE: src\physics_informed_model\training_visualizer\resolve_domain_net_key.py
 
 def resolve_domain_net_key(domain, arch_instance):
     """Xác định net_key khớp với khóa đã đăng ký trong XPINNArchitecture."""
@@ -5017,11 +4715,7 @@ def resolve_domain_net_key(domain, arch_instance):
     return candidates[0] if candidates else 'background'
 
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_visualizer\save_frame.py
-#==============================================================================
+FILE: src\physics_informed_model\training_visualizer\save_frame.py
 
 import os
 import torch
@@ -5283,11 +4977,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
         except Exception:
             pass
 
---------------------------------------------------------------------------------
-
-#==============================================================================
-# FILE: src\physics_informed_model\training_visualizer\training_visualizer.py
-#==============================================================================
+FILE: src\physics_informed_model\training_visualizer\training_visualizer.py
 
 import os
 import torch
@@ -5340,6 +5030,4 @@ class TrainingVisualizer:
     def generate_animations(self):
         return generate_animations(self)
 
-
---------------------------------------------------------------------------------
 

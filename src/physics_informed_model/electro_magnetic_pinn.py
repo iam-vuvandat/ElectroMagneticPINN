@@ -14,6 +14,9 @@ from electro_magnetic_pinn_engine.evaluate_fields import evaluate_fields
 from electro_magnetic_pinn_engine.plot_fields import plot_fields
 from electro_magnetic_pinn_engine.execute_training_process import execute_training_process
 
+from checkpoint_engine.save_checkpoint import save_checkpoint
+from checkpoint_engine.load_checkpoint import load_checkpoint
+
 
 class ElectroMagneticPINN:
     def __init__(self):
@@ -73,12 +76,11 @@ class ElectroMagneticPINN:
 
             contour_levels=60,
 
-            # --- BIỂU ĐỒ PDE RESIDUAL ERROR (DISCRETE LOG STEPS) ---
             res_scale="log",          
             res_vmin=1e-4,            
             res_vmax=10.0,             
-            res_cmap="inferno",                                   # Đổi sang "inferno" để tăng tương phản định lượng
-            res_discrete_levels=[1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0], # Mốc dải phân cách loga rời rạc
+            res_cmap="inferno",                                   
+            res_discrete_levels=[1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0], 
 
             mur_scale="linear",       
             mur_vmin=0.0,             
@@ -90,13 +92,12 @@ class ElectroMagneticPINN:
             az_vmax=None,             
             az_cmap="jet",
 
-            # --- MÃ MÀU ANSYS FEM NỘI SUY ---
             b_mag_scale="linear",     
             b_mag_vmin=0.0,           
             b_mag_vmax=1.8,           
             b_mag_cmap="ansys_fem",
-            b_mag_unit="Tesla",             # "Tesla" hoặc "mTesla"
-            b_mag_number_of_division=100,   # Số dải màu nội suy (None hoặc 20 cho 20 màu gốc)
+            b_mag_unit="Tesla",             
+            b_mag_number_of_division=100,   
 
             by_scale="linear",        
             by_vmin=None,             
@@ -146,3 +147,9 @@ class ElectroMagneticPINN:
 
     def execute_training_process(self):
         return execute_training_process(self)
+
+    def save_checkpoint(self, filepath=None):
+        return save_checkpoint(self, filepath=filepath)
+
+    def load_checkpoint(self, filepath=None):
+        return load_checkpoint(self, filepath=filepath)
