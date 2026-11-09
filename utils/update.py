@@ -1,77 +1,50 @@
 import os
 
+update_code = """import os
+
 excute2_path = os.path.join("scenarios", "excute2.py")
 
 if os.path.exists(excute2_path):
     with open(excute2_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    config_flags = (
-        "re_train_model = False\n"
-        'checkpoint_name = "toymodel1"\n\n'
+    target_sys_path = (
+        "current_directory = os.path.dirname(os.path.abspath(__file__))\\n"
+        "parent_directory = os.path.abspath(os.path.join(current_directory, '..'))\\n"
+        "if parent_directory not in sys.path:\\n"
+        "    sys.path.insert(0, parent_directory)\\n"
     )
 
-    if "re_train_model =" not in content:
-        target_insert_anchor = "# 1. QUY MÔ VẬT LÝ VÀ KHUNG TỌA ĐỘ (MET)"
-        if target_insert_anchor in content:
-            content = content.replace(target_insert_anchor, config_flags + target_insert_anchor)
-
-    old_execution = (
-        'model.update_electromagnetic_pinn()\n\n'
-        'print("[*] Bắt đầu huấn luyện mô hình PINN với cấu hình Ansys FEM Colormap & Discrete Log Residual...")\n'
-        'model.execute_training_process()\n\n'
-        'print("[*] Đang lưu checkpoint mô hình với tên \'toymodel1\'...")\n'
-        'model.save_checkpoint("toymodel1")'
+    new_sys_path = (
+        "current_directory = os.path.dirname(os.path.abspath(__file__))\\n"
+        "parent_directory = os.path.abspath(os.path.join(current_directory, '..'))\\n"
+        "pinn_module_path = os.path.join(parent_directory, 'src', 'physics_informed_model')\\n"
+        "if parent_directory not in sys.path:\\n"
+        "    sys.path.insert(0, parent_directory)\\n"
+        "if pinn_module_path not in sys.path:\\n"
+        "    sys.path.insert(0, pinn_module_path)\\n"
     )
 
-    new_execution = (
-        'model.update_electromagnetic_pinn()\n\n'
-        'if re_train_model:\n'
-        '    print("[*] Starting PINN model training with Ansys FEM Colormap & Discrete Log Residual configuration...")\n'
-        '    model.execute_training_process()\n'
-        '    print(f"[*] Saving model checkpoint: \'{checkpoint_name}\'...")\n'
-        '    model.save_checkpoint(checkpoint_name)\n'
-        'else:\n'
-        '    print(f"[*] Loading model checkpoint: \'{checkpoint_name}\'...")\n'
-        '    model.load_checkpoint(checkpoint_name)'
-    )
+    if target_sys_path in content:
+        content = content.replace(target_sys_path, new_sys_path)
+    elif "pinn_module_path not in sys.path" not in content:
+        import_anchor = "import sys\\n"
+        if import_anchor in content:
+            content = content.replace(import_anchor, import_anchor + new_sys_path + "\\n")
 
-    if old_execution in content:
-        content = content.replace(old_execution, new_execution)
-    elif "model.execute_training_process()" in content:
-        lines = content.splitlines()
-        new_lines = []
-        skip = False
-        for line in lines:
-            if "model.update_electromagnetic_pinn()" in line:
-                new_lines.append(new_execution)
-                skip = True
-            elif skip:
-                if 'print("[*] Xuất biểu đồ trường kết quả cuối cùng...")' in line:
-                    skip = False
-                    new_lines.append('print("[*] Exporting final field distribution plots...")')
-            else:
-                new_lines.append(line)
-        content = "\n".join(new_lines)
-
-    lines = content.splitlines()
-    cleaned_lines = []
-    for line in lines:
-        if "====" in line:
-            continue
-        if "#" in line:
-            line = line.split("#")[0]
-        if line.strip() != "" or (cleaned_lines and cleaned_lines[-1].strip() != ""):
-            cleaned_lines.append(line.rstrip())
-
-    content = "\n".join(cleaned_lines)
-    content = content.replace("[*] Bắt đầu huấn luyện mô hình PINN với cấu hình Ansys FEM Colormap & Discrete Log Residual...", "[*] Starting PINN model training with Ansys FEM Colormap & Discrete Log Residual configuration...")
-    content = content.replace("[*] Xuất biểu đồ trường kết quả cuối cùng...", "[*] Exporting final field distribution plots...")
-    content = content.replace("[✔] HOÀN THÀNH! Kết quả đã được lưu tại:", "[✔] COMPLETED! Results saved at:")
+    old_import = "from src.physics_informed_model.electro_magnetic_pinn import ElectroMagneticPINN"
+    new_import = "from electro_magnetic_pinn import ElectroMagneticPINN"
+    if old_import in content:
+        content = content.replace(old_import, new_import)
 
     with open(excute2_path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Successfully updated {excute2_path}")
-
+    print(f"Successfully fixed sys.path and imports in {excute2_path}")
 else:
     print(f"File not found: {excute2_path}")
+"""
+
+with open("update.py", "w", encoding="utf-8") as f:
+    f.write(update_code)
+
+print("Created update.py")
