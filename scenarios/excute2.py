@@ -48,7 +48,7 @@ model.training_config.enable_nonlinear_adaptation_stage = True
 model.training_config.enable_lbfgs_refinement_stage = True
 
 epochs_warmup_target = 1000
-fpi_iterations = 5
+fpi_iterations = 4
 epochs_per_fpi = 1000
 
 model.training_config.fpi_outer_iterations = fpi_iterations
@@ -137,22 +137,22 @@ iron_yoke.training_config.interface_ht_weight = 1200.0
 iron_yoke.training_config.pde_fading_beta = 80.0
 iron_yoke.training_config.sampling_density_multiplier = 1.0
 
-iron_yoke.training_config.number_of_interior_points = 15000
-iron_yoke.training_config.number_of_surface_points = 4000
+iron_yoke.training_config.number_of_interior_points = 6000
+iron_yoke.training_config.number_of_surface_points = 1500
 
-iron_yoke.network_config.hidden_layers = 4
-iron_yoke.network_config.hidden_neurons = 128
+iron_yoke.network_config.hidden_layers = 3
+iron_yoke.network_config.hidden_neurons = 64
 iron_yoke.network_config.activation_function = nn.Mish()
 iron_yoke.network_config.fourier_features = True
 iron_yoke.network_config.fourier_sigma = 1.3
-iron_yoke.network_config.fourier_mapping_size = 128
+iron_yoke.network_config.fourier_mapping_size = 64
 
-iron_yoke.nu_network_config.hidden_layers = 3
-iron_yoke.nu_network_config.hidden_neurons = 64
+iron_yoke.nu_network_config.hidden_layers = 2
+iron_yoke.nu_network_config.hidden_neurons = 32
 iron_yoke.nu_network_config.activation_function = nn.Mish()
 iron_yoke.nu_network_config.fourier_features = True
 iron_yoke.nu_network_config.fourier_sigma = 1.0
-iron_yoke.nu_network_config.fourier_mapping_size = 32
+iron_yoke.nu_network_config.fourier_mapping_size = 16
 
 iron_yoke.build_domain()
 
@@ -166,15 +166,15 @@ magnet_left.physics_config.relative_permeability = 1.05
 magnet_left.physics_config.current = 0.0
 magnet_left.physics_config.is_nonlinear = False
 
-magnet_left.training_config.number_of_interior_points = 1500
-magnet_left.training_config.number_of_surface_points = 800
+magnet_left.training_config.number_of_interior_points = 800
+magnet_left.training_config.number_of_surface_points = 400
 
-magnet_left.network_config.hidden_layers = 4
-magnet_left.network_config.hidden_neurons = 64
+magnet_left.network_config.hidden_layers = 3
+magnet_left.network_config.hidden_neurons = 32
 magnet_left.network_config.activation_function = nn.Mish()
 magnet_left.network_config.fourier_features = True
 magnet_left.network_config.fourier_sigma = 1.0
-magnet_left.network_config.fourier_mapping_size = 64
+magnet_left.network_config.fourier_mapping_size = 32
 
 magnet_left.build_domain()
 
@@ -188,15 +188,15 @@ magnet_right.physics_config.relative_permeability = 1.05
 magnet_right.physics_config.current = 0.0
 magnet_right.physics_config.is_nonlinear = False
 
-magnet_right.training_config.number_of_interior_points = 1500
-magnet_right.training_config.number_of_surface_points = 800
+magnet_right.training_config.number_of_interior_points = 800
+magnet_right.training_config.number_of_surface_points = 400
 
-magnet_right.network_config.hidden_layers = 4
-magnet_right.network_config.hidden_neurons = 64
+magnet_right.network_config.hidden_layers = 3
+magnet_right.network_config.hidden_neurons = 32
 magnet_right.network_config.activation_function = nn.Mish()
 magnet_right.network_config.fourier_features = True
 magnet_right.network_config.fourier_sigma = 1.0
-magnet_right.network_config.fourier_mapping_size = 64
+magnet_right.network_config.fourier_mapping_size = 32
 
 magnet_right.build_domain()
 
@@ -208,16 +208,16 @@ bg_training_cfg = SimpleNamespace(
     interface_ht_weight=1200.0,
     pde_fading_beta=80.0,
     sampling_density_multiplier=1.0,
-    number_of_interior_points=6000,
+    number_of_interior_points=2500,
     number_of_surface_points=0
 )
 bg_network_cfg = SimpleNamespace(
-    hidden_layers=4,
-    hidden_neurons=64,
+    hidden_layers=3,
+    hidden_neurons=32,
     activation_function=nn.Mish(),
     fourier_features=True,
     fourier_sigma=1.0,
-    fourier_mapping_size=64
+    fourier_mapping_size=32
 )
 sim_domain.build_background_domain(
     domain_name="background",
