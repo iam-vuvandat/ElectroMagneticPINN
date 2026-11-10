@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.png
+*.log
 
 data/
 draft/
