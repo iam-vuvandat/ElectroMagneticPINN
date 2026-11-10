@@ -1,59 +1,80 @@
-import os
+from pathlib import Path
+import sys
 
-# Đường dẫn đến file scenarios/excute2.py
-excute2_path = os.path.join("scenarios", "excute2.py")
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-if os.path.exists(excute2_path):
-    with open(excute2_path, "r", encoding="utf-8") as f:
-        content = f.read()
+from src.ansys_aedt.maxwell_2d.toy_model_1.toy_model_1 import ToyModel1
 
-    # 1. Giảm số bước FPI còn 4
-    content = content.replace("fpi_iterations = 5", "fpi_iterations = 4")
+def main():
+    toy_model = ToyModel1()
+    config = toy_model.configuration
 
-    # 2. Giảm nhẹ số điểm collocation
-    replacements_points = {
-        "iron_yoke.training_config.number_of_interior_points = 15000": "iron_yoke.training_config.number_of_interior_points = 6000",
-        "iron_yoke.training_config.number_of_surface_points = 4000": "iron_yoke.training_config.number_of_surface_points = 1500",
-        "magnet_left.training_config.number_of_interior_points = 1500": "magnet_left.training_config.number_of_interior_points = 800",
-        "magnet_left.training_config.number_of_surface_points = 800": "magnet_left.training_config.number_of_surface_points = 400",
-        "magnet_right.training_config.number_of_interior_points = 1500": "magnet_right.training_config.number_of_interior_points = 800",
-        "magnet_right.training_config.number_of_surface_points = 800": "magnet_right.training_config.number_of_surface_points = 400",
-        "number_of_interior_points=6000": "number_of_interior_points=2500"
-    }
-    for old_str, new_str in replacements_points.items():
-        content = content.replace(old_str, new_str)
+    # --- CẤU HÌNH THÔNG TIN CHUNG ---
+    config.name = "toy_model_1"
+    config.version = "2025.2"
+    config.solution_type = "Magnetostatic"
 
-    # 3. Giảm nhẹ kích thước mạng neural (layers, neurons, fourier features)
-    replacements_net = {
-        # Mạng iron_yoke
-        "iron_yoke.network_config.hidden_layers = 4": "iron_yoke.network_config.hidden_layers = 3",
-        "iron_yoke.network_config.hidden_neurons = 128": "iron_yoke.network_config.hidden_neurons = 64",
-        "iron_yoke.network_config.fourier_mapping_size = 128": "iron_yoke.network_config.fourier_mapping_size = 64",
-        
-        # Mạng nu_network của iron_yoke
-        "iron_yoke.nu_network_config.hidden_layers = 3": "iron_yoke.nu_network_config.hidden_layers = 2",
-        "iron_yoke.nu_network_config.hidden_neurons = 64": "iron_yoke.nu_network_config.hidden_neurons = 32",
-        "iron_yoke.nu_network_config.fourier_mapping_size = 32": "iron_yoke.nu_network_config.fourier_mapping_size = 16",
-        
-        # Mạng magnet_left
-        "magnet_left.network_config.hidden_layers = 4": "magnet_left.network_config.hidden_layers = 3",
-        "magnet_left.network_config.hidden_neurons = 64": "magnet_left.network_config.hidden_neurons = 32",
-        "magnet_left.network_config.fourier_mapping_size = 64": "magnet_left.network_config.fourier_mapping_size = 32",
-        
-        # Mạng magnet_right
-        "magnet_right.network_config.hidden_layers = 4": "magnet_right.network_config.hidden_layers = 3",
-        "magnet_right.network_config.hidden_neurons = 64": "magnet_right.network_config.hidden_neurons = 32",
-        "magnet_right.network_config.fourier_mapping_size = 64": "magnet_right.network_config.fourier_mapping_size = 32",
-        
-        # Mạng background
-        "hidden_layers=4,\n    hidden_neurons=64,": "hidden_layers=3,\n    hidden_neurons=32,",
-        "fourier_mapping_size=64\n)": "fourier_mapping_size=32\n)"
-    }
-    for old_str, new_str in replacements_net.items():
-        content = content.replace(old_str, new_str)
+    # --- CẤU HÌNH HÌNH HỌC (GEOMETRY) ---
+    config.geometry.yoke.x_start = "-60mm"
+    config.geometry.yoke.y_start = "-30mm"
+    config.geometry.yoke.width = "120mm"
+    config.geometry.yoke.height = "30mm"
 
-    with open(excute2_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"Successfully tuned network parameters and points in {excute2_path}")
-else:
-    print(f"File not found: {excute2_path}")
+    config.geometry.magnet_left.x_start = "-50mm"
+    config.geometry.magnet_left.y_start = "0mm"
+    config.geometry.magnet_left.width = "45mm"
+    config.geometry.magnet_left.height = "18mm"
+    config.geometry.magnet_left.coercive_direction = (0, 1)
+
+    config.geometry.magnet_right.x_start = "5mm"
+    config.geometry.magnet_right.y_start = "0mm"
+    config.geometry.magnet_right.width = "45mm"
+    config.geometry.magnet_right.height = "18mm"
+    config.geometry.magnet_right.coercive_direction = (0, -1)
+
+    config.geometry.region.x_start = "-120mm"
+    config.geometry.region.y_start = "-120mm"
+    config.geometry.region.width = "240mm"
+    config.geometry.region.height = "240mm"
+
+    # --- CẤU HÌNH VẬT LIỆU (MATERIALS) ---
+    config.materials.yoke_material = "steel_1008"
+    config.materials.magnet_material_left = "NdFe30 - Copy"
+    config.materials.magnet_material_right = "NdFe30 - Copy (2)"
+    config.materials.region_material = "vacuum"
+
+    # --- CẤU HÌNH PHÂN TÍCH & TRÍCH XUẤT LƯỚI (ANALYSIS) ---
+    config.analysis.setup_name = "Setup1"
+    config.analysis.max_passes = 10
+    config.analysis.min_passes = 2
+    config.analysis.percent_error = 1.0
+    config.analysis.max_element_length = "0.025mm"
+    config.analysis.b_fld_path = str(Path(project_root) / "src" / "ansys_aedt" / "maxwell_2d" / "toy_model_1" / "flux_density.fld")
+    config.analysis.grid_min = ["-120mm", "-120mm", "0mm"]
+    config.analysis.grid_max = ["120mm", "120mm", "0mm"]
+    config.analysis.grid_step = ["1mm", "1mm", "0mm"]
+
+    print("[1/4] Tạo mô hình hình học 2D...")
+    toy_model.create_model()
+
+    print("[2/4] Chạy mô phỏng Ansys Maxwell...")
+    toy_model.run_simulation()
+
+    print("[3/4] Trích xuất & Parse dữ liệu vào toy_model.record.flux_density_field...")
+    fld_output_path = toy_model.export_flux_density()
+
+    print("[4/4] Vẽ heatmap mật độ từ thông trực tiếp (Kế thừa 20 màu ANSYS FEM từ PINN)...")
+    toy_model.plot_flux_density(
+        target_resolution=1500,
+        sigma_smooth=0.0,
+        vmin=0.0,
+        vmax=2.0,
+        cmap="ansys_fem",
+        figsize=(6.4, 4.8),
+        dpi=100
+    )
+
+if __name__ == "__main__":
+    main()

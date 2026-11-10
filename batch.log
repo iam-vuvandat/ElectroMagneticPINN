@@ -769,3 +769,71 @@ The project 'Project190' has been edited and/or solved. Do you want to save the 
           [info] Normal completion of simulation on server: Local Machine. (04:45:52 AM  Nov 09, 2026)
 -- Message Window --
 Stopping Batch Run: 4:02:30 PM  Nov 09, 2026
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:20:15 AM  Nov 10, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:23:26 AM  Nov 10, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:27:44 AM  Nov 10, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 4:31:01 AM  Nov 10, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+The project 'Project193' has been edited and/or solved. Do you want to save the changes?
+-- Message Window --
+      *Global - Messages
+        [info] GRPC server running on port: 59809. 
+        [info] The project 'Project193' has been edited and/or solved. Do you want to save the changes?
+      Project193 (C:/Users/Surface/Documents/Ansoft/)
+        toy_model_1 (Magnetostatic, XY)
+          [info] Normal completion of simulation on server: Local Machine. (04:31:34 AM  Nov 10, 2026)
+-- Message Window --
+Stopping Batch Run: 4:37:14 AM  Nov 10, 2026
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 3:43:22 PM  Nov 10, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft
+The project 'Project193' has been edited and/or solved. Do you want to save the changes?
+-- Message Window --
+      *Global - Messages
+        [info] GRPC server running on port: 50377. 
+        [info] The project 'Project193' has been edited and/or solved. Do you want to save the changes?
+      Project193 (C:/Users/Surface/Documents/Ansoft/)
+        toy_model_1 (Magnetostatic, XY)
+          [info] Normal completion of simulation on server: Local Machine. (03:44:20 PM  Nov 10, 2026)
+-- Message Window --
+Stopping Batch Run: 5:55:34 PM  Nov 10, 2026
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: C:\Program Files\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 7:28:45 PM  Nov 10, 2026
+Running as user : TABLET-3C301EII\Surface
+Temp directory: C:\Users\Surface\AppData\Local\Temp
+Project directory: C:\Users\Surface\Documents\Ansoft

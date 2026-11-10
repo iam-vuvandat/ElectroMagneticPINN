@@ -29,7 +29,7 @@ os.makedirs(output_dir)
 model = ElectroMagneticPINN()
 sim_domain = model.simulation_domain_engine_instance
 
-re_train_model = True
+re_train_model = False
 checkpoint_name = "toymodel1"
 
 sim_domain.physics_config.scale_L0 = 0.12
