@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
@@ -8,6 +9,13 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import torch
 import torch.nn as nn
+
+try:
+    import ansys.aedt.core
+except ImportError:
+    if "google.colab" in sys.modules:
+        print("[*] Đáng cài đặt thư viện pyaedt trên Colab...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyaedt"])
 
 re_simulation_fem = False
 re_train_pinn = True
