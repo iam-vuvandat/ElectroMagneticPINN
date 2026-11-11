@@ -125,17 +125,17 @@ def main():
 
     pinn_model.visualization_config.active = True
     pinn_model.visualization_config.display_colab_frames = True
-    pinn_model.visualization_config.update_interval = 200
+    pinn_model.visualization_config.update_interval = 50
 
     pinn_model.training_config.enable_linear_warmup_stage = True
     pinn_model.training_config.enable_nonlinear_adaptation_stage = True
     pinn_model.training_config.enable_lbfgs_refinement_stage = True
 
     pinn_model.training_config.enable_lbfgs_after_warmup = True
-    pinn_model.training_config.lbfgs_warmup_iterations = 300
+    pinn_model.training_config.lbfgs_warmup_iterations = 1000
 
     pinn_model.training_config.enable_lbfgs_after_fpi_step = True
-    pinn_model.training_config.lbfgs_fpi_step_iterations = 300
+    pinn_model.training_config.lbfgs_fpi_step_iterations = 1000
 
     epochs_warmup_target = 1000
     fpi_iterations = 6
@@ -153,14 +153,14 @@ def main():
     pinn_model.training_config.adam_eta_min = 1e-6
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
-    pinn_model.training_config.adam_log_interval = 200
+    pinn_model.training_config.adam_log_interval = 50
 
     pinn_model.training_config.pretrain_nu_epochs = 1000
     pinn_model.training_config.pretrain_nu_lr = 5e-3
     pinn_model.training_config.fit_nu_epochs = 500
     pinn_model.training_config.fit_nu_lr = 3e-3
 
-    pinn_model.training_config.number_of_lbfgs_iterations = 5000
+    pinn_model.training_config.number_of_lbfgs_iterations = 1000
     pinn_model.training_config.lbfgs_learning_rate = 0.5
 
     iron_yoke = sim_domain.create_material_domain(
@@ -181,8 +181,8 @@ def main():
     iron_yoke.training_config.interface_ht_weight = 1.0
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
-    iron_yoke.training_config.number_of_interior_points = 500
-    iron_yoke.training_config.number_of_surface_points = 100
+    iron_yoke.training_config.number_of_interior_points = 1000
+    iron_yoke.training_config.number_of_surface_points = 200
 
     iron_yoke.network_config.hidden_layers = 3
     iron_yoke.network_config.hidden_neurons = 32
@@ -206,8 +206,8 @@ def main():
         coercive_direction=magnet_left_coercive_dir
     )
     magnet_left.physics_config.is_nonlinear = False
-    magnet_left.training_config.number_of_interior_points = 40
-    magnet_left.training_config.number_of_surface_points = 20
+    magnet_left.training_config.number_of_interior_points = 400
+    magnet_left.training_config.number_of_surface_points = 200
     magnet_left.network_config.hidden_layers = 3
     magnet_left.network_config.hidden_neurons = 32
     magnet_left.network_config.activation_function = nn.Mish()
@@ -223,8 +223,8 @@ def main():
         coercive_direction=magnet_right_coercive_dir
     )
     magnet_right.physics_config.is_nonlinear = False
-    magnet_right.training_config.number_of_interior_points = 40
-    magnet_right.training_config.number_of_surface_points = 20
+    magnet_right.training_config.number_of_interior_points = 400
+    magnet_right.training_config.number_of_surface_points = 200
     magnet_right.network_config.hidden_layers = 3
     magnet_right.network_config.hidden_neurons = 32
     magnet_right.network_config.activation_function = nn.Mish()
@@ -241,7 +241,7 @@ def main():
         interface_ht_weight=1.0,
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=300,
+        number_of_interior_points=5000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
