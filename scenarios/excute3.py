@@ -14,7 +14,7 @@ try:
     import ansys.aedt.core
 except ImportError:
     if "google.colab" in sys.modules:
-        print("[*] Đáng cài đặt thư viện pyaedt trên Colab...")
+        print("[*] Installing pyaedt library on Colab...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyaedt"])
 
 re_simulation_fem = False
@@ -61,7 +61,7 @@ def main():
     yoke_material_name = "steel_1008"
 
     print("==================================================")
-    print("[1/4] XỬ LÝ MÔ PHỎNG ANSYS MAXWELL FEM")
+    print("[1/4] ANSYS MAXWELL FEM SIMULATION PROCESSING")
     print("==================================================")
     toy_model = ToyModel1()
     fem_config = toy_model.configuration
@@ -95,14 +95,14 @@ def main():
     fem_config.analysis.grid_step = ["1mm", "1mm", "0mm"]
 
     if re_simulation_fem:
-        print("[*] re_simulation_fem = True: Đang tạo mô hình và chạy mô phỏng FEM trên Ansys Maxwell...")
+        print("[*] re_simulation_fem = True: Creating model and running FEM simulation on Ansys Maxwell...")
         toy_model.create_model()
         toy_model.run_simulation()
         toy_model.export_flux_density(export_path=str(fld_path))
     else:
-        print("[*] re_simulation_fem = False: Đang đọc trực tiếp dữ liệu FEM từ file .fld...")
+        print("[*] re_simulation_fem = False: Reading FEM field data directly from .fld file...")
         if not fld_path.exists():
-            raise FileNotFoundError(f"Không tìm thấy file dữ liệu trường FEM tại: {fld_path}. Vui lòng bật re_simulation_fem = True để mô phỏng.")
+            raise FileNotFoundError(f"FEM field data file not found at: {fld_path}. Please set re_simulation_fem = True to simulate.")
         toy_model.export_flux_density(export_path=str(fld_path))
 
     field_record = toy_model.record.flux_density_field
@@ -111,7 +111,7 @@ def main():
     fem_b_mag = field_record.b_mag
 
     print("\n==================================================")
-    print("[2/4] XỬ LÝ MÔ HÌNH PINN (ELECTROMAGNETIC PINN)")
+    print("[2/4] PINN MODEL SETUP (ELECTROMAGNETIC PINN)")
     print("==================================================")
     pinn_model = ElectroMagneticPINN()
     sim_domain = pinn_model.simulation_domain_engine_instance
@@ -124,37 +124,47 @@ def main():
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
     pinn_model.sampler_config.dynamic_resampling = True
-    pinn_model.sampler_config.resample_interval = 100
+    pinn_model.sampler_config.resample_interval = 500
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
+
+    pinn_model.visualization_config.active = True
+    pinn_model.visualization_config.display_colab_frames = True
+    pinn_model.visualization_config.update_interval = 200
 
     pinn_model.training_config.enable_linear_warmup_stage = True
     pinn_model.training_config.enable_nonlinear_adaptation_stage = True
     pinn_model.training_config.enable_lbfgs_refinement_stage = True
 
-    epochs_warmup_target = 1000
+    pinn_model.training_config.enable_lbfgs_after_warmup = True
+    pinn_model.training_config.lbfgs_warmup_iterations = 1000
+
+    pinn_model.training_config.enable_lbfgs_after_fpi_step = True
+    pinn_model.training_config.lbfgs_fpi_step_iterations = 1000
+
+    epochs_warmup_target = 5000
     fpi_iterations = 6
-    epochs_per_fpi = 1000
+    epochs_per_fpi = 5000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
-    pinn_model.training_config.fpi_alpha_damping = 0.5
+    pinn_model.training_config.fpi_alpha_damping = 0.8
     pinn_model.training_config.fpi_tolerance = 1e-6
 
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     pinn_model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / pinn_model.training_config.number_of_adam_epochs
 
-    pinn_model.training_config.adam_learning_rate = 2e-3
+    pinn_model.training_config.adam_learning_rate = 1e-3
     pinn_model.training_config.target_loss_threshold = 1e-7
     pinn_model.training_config.adam_eta_min = 1e-6
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
     pinn_model.training_config.adam_log_interval = 100
 
-    pinn_model.training_config.pretrain_nu_epochs = 600
+    pinn_model.training_config.pretrain_nu_epochs = 1000
     pinn_model.training_config.pretrain_nu_lr = 5e-3
     pinn_model.training_config.fit_nu_epochs = 500
     pinn_model.training_config.fit_nu_lr = 3e-3
 
-    pinn_model.training_config.number_of_lbfgs_iterations = 2500
+    pinn_model.training_config.number_of_lbfgs_iterations = 4000
     pinn_model.training_config.lbfgs_learning_rate = 0.5
 
     iron_yoke = sim_domain.create_material_domain(
@@ -185,7 +195,7 @@ def main():
     iron_yoke.network_config.fourier_sigma = 1.3
     iron_yoke.network_config.fourier_mapping_size = 128
 
-    iron_yoke.nu_network_config.hidden_layers = 3
+    iron_yoke.nu_network_config.hidden_layers = 4
     iron_yoke.nu_network_config.hidden_neurons = 64
     iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
@@ -202,8 +212,8 @@ def main():
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 1200
     magnet_left.training_config.number_of_surface_points = 600
-    magnet_left.network_config.hidden_layers = 3
-    magnet_left.network_config.hidden_neurons = 32
+    magnet_left.network_config.hidden_layers = 4
+    magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = True
     magnet_left.network_config.fourier_sigma = 1.0
@@ -219,8 +229,8 @@ def main():
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 1200
     magnet_right.training_config.number_of_surface_points = 600
-    magnet_right.network_config.hidden_layers = 3
-    magnet_right.network_config.hidden_neurons = 32
+    magnet_right.network_config.hidden_layers = 4
+    magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = True
     magnet_right.network_config.fourier_sigma = 1.0
@@ -240,11 +250,11 @@ def main():
     )
     bg_network_cfg = SimpleNamespace(
         hidden_layers=4,
-        hidden_neurons=64,
+        hidden_neurons=128,
         activation_function=nn.Mish(),
         fourier_features=True,
         fourier_sigma=1.0,
-        fourier_mapping_size=64
+        fourier_mapping_size=120
     )
     sim_domain.build_background_domain(
         domain_name="background",
@@ -255,25 +265,25 @@ def main():
     pinn_model.update_electromagnetic_pinn()
 
     if re_train_pinn:
-        print("[*] re_train_pinn = True: Tiến hành huấn luyện mô hình PINN mới...")
+        print("[*] re_train_pinn = True: Training new PINN model...")
         pinn_model.execute_training_process()
-        print(f"[*] Đang lưu checkpoint PINN: '{checkpoint_name}'...")
+        print(f"[*] Saving PINN checkpoint: '{checkpoint_name}'...")
         pinn_model.save_checkpoint(checkpoint_name)
         
         if "google.colab" in sys.modules:
             checkpoint_path = resolve_checkpoint_filepath(checkpoint_name)
             if checkpoint_path.exists():
-                print(f"[*] Phát hiện môi trường Google Colab. Đang chuẩn bị tải về: {checkpoint_path}...")
+                print(f"[*] Google Colab environment detected. Preparing download: {checkpoint_path}...")
                 from google.colab import files
                 files.download(str(checkpoint_path))
             else:
-                print(f"[!] Không tìm thấy file checkpoint để tải về: {checkpoint_path}")
+                print(f"[!] Checkpoint file not found for download: {checkpoint_path}")
     else:
-        print(f"[*] re_train_pinn = False: Tải checkpoint PINN sẵn có '{checkpoint_name}'...")
+        print(f"[*] re_train_pinn = False: Loading existing PINN checkpoint '{checkpoint_name}'...")
         pinn_model.load_checkpoint(checkpoint_name)
 
     print("\n==================================================")
-    print("[3/4] TÍNH TOÁN TRƯỜNG B TỪ PINN TRÊN LƯỚI ĐỒNG BỘ")
+    print("[3/4] COMPUTING PINN B-FIELD ON SYNCHRONIZED GRID")
     print("==================================================")
     res_x = len(fem_x_mm)
     res_y = len(fem_y_mm)
@@ -295,7 +305,7 @@ def main():
     norm_error_percent = (delta_b_mag / fem_b_max) * 100.0
 
     print("\n==================================================")
-    print("[4/4] VẼ VÀ SO SÁNH KẾT QUẢ FEM VS PINN (3 KHUNG HÌNH)")
+    print("[4/4] PLOTTING AND COMPARING FEM VS PINN (3 PANELS)")
     print("==================================================")
     cmap_ansys = mcolors.LinearSegmentedColormap.from_list("ansys_fem_interp", ANSYS_FEM_HEX_COLORS, N=100)
     levels = np.linspace(0.0, 2.0, 101)
@@ -350,9 +360,9 @@ def main():
     plt.tight_layout()
     save_fig_path = output_dir / "fem_vs_pinn_bmap_comparison.png"
     plt.savefig(save_fig_path, dpi=300)
-    print(f"✅ Đã lưu đồ thị so sánh tại: {save_fig_path}")
+    print(f"[*] Saved comparison plot to: {save_fig_path}")
 
-    print("🖼️ Đang hiển thị giao diện đồ thị...")
+    print("[*] Displaying figure...")
     plt.show()
 
 if __name__ == "__main__":

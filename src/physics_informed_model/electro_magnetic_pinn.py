@@ -30,6 +30,8 @@ class ElectroMagneticPINN:
             enable_linear_warmup_stage=True,
             enable_nonlinear_adaptation_stage=True,
             enable_lbfgs_refinement_stage=True,
+            enable_lbfgs_after_warmup=False,
+            enable_lbfgs_after_fpi_step=False,
             linear_warmup_epochs_ratio=0.3,
 
             adam_learning_rate=1e-3,
@@ -53,6 +55,8 @@ class ElectroMagneticPINN:
 
             lbfgs_learning_rate=0.5,
             number_of_lbfgs_iterations=1500,
+            lbfgs_warmup_iterations=1500,
+            lbfgs_fpi_step_iterations=1500,
             lbfgs_maximum_evaluations=2500,
             lbfgs_tolerance_gradient=1e-12,
             lbfgs_tolerance_change=1e-12,
@@ -72,7 +76,7 @@ class ElectroMagneticPINN:
             gif_fps=5,
             mp4_codec="libx264",
             mp4_quality=8,
-            display_colab_frames=False,
+            display_colab_frames=True,
 
             contour_levels=60,
 
