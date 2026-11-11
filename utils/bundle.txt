@@ -443,6 +443,7 @@ FILE: scenarios\excute3.py
 import os
 import sys
 import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
@@ -451,15 +452,16 @@ import matplotlib.colors as mcolors
 import torch
 import torch.nn as nn
 
-# ==============================================================================
-# CẤU HÌNH CỜ ĐIỀU KHIỂN LUỒNG THỰC THI (CONTROL FLAGS)
-# ==============================================================================
-re_simulation_fem = True  # Set True để chạy lại mô phỏng Ansys Maxwell FEM
-re_train_pinn = False      # Set True để huấn luyện lại mô hình ElectroMagneticPINN
+try:
+    import ansys.aedt.core
+except ImportError:
+    if "google.colab" in sys.modules:
+        print("[*] Đáng cài đặt thư viện pyaedt trên Colab...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyaedt"])
 
-# ==============================================================================
-# THIẾT LẬP ĐƯỜNG DẪN HỆ THỐNG
-# ==============================================================================
+re_simulation_fem = False
+re_train_pinn = True
+
 current_directory = os.path.dirname(os.path.abspath(__file__))
 parent_directory = os.path.abspath(os.path.join(current_directory, ".."))
 pinn_module_path = os.path.join(parent_directory, "src", "physics_informed_model")
@@ -472,8 +474,8 @@ if pinn_module_path not in sys.path:
 from src.ansys_aedt.maxwell_2d.toy_model_1.toy_model_1 import ToyModel1
 from electro_magnetic_pinn import ElectroMagneticPINN
 from src.ansys_aedt.maxwell_2d.toy_model_1.plot_flux_density import ANSYS_FEM_HEX_COLORS
+from checkpoint_engine.save_checkpoint import resolve_checkpoint_filepath
 
-# Cấu hình Font chữ học thuật (Academic Style)
 plt.rcParams.update({
     "font.family": "serif",
     "font.serif": ["Times New Roman", "DejaVu Serif", "Liberation Serif"],
@@ -489,20 +491,14 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_name = "toymodel1"
 
-    # ==========================================================================
-    # KHAI BÁO THÔNG SỐ HÌNH HỌC VÀ VẬT LIỆU CHUNG (DÙNG ĐỒNG BỘ CHO FEM & PINN)
-    # ==========================================================================
-    # 1. Hình học (Đơn vị: mét)
     yoke_outline = [[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
     magnet_left_outline = [[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]]
     magnet_right_outline = [[0.005, 0.0], [0.05, 0.0], [0.05, 0.018], [0.005, 0.018]]
     region_outline = [[-0.12, -0.12], [0.12, -0.12], [0.12, 0.12], [-0.12, 0.12]]
 
-    # 2. Hướng từ hóa nam châm
     magnet_left_coercive_dir = (0, 1)
     magnet_right_coercive_dir = (0, -1)
 
-    # 3. Loại vật liệu nam châm sử dụng chung: NdFe30
     magnet_material_name = "NdFe30"
     yoke_material_name = "steel_1008"
 
@@ -512,7 +508,6 @@ def main():
     toy_model = ToyModel1()
     fem_config = toy_model.configuration
 
-    # Gán cấu hình chung vào Ansys FEM Configuration
     fem_config.name = "toy_model_1"
     fem_config.version = "2025.2"
     fem_config.solution_type = "Magnetostatic"
@@ -524,7 +519,6 @@ def main():
     fem_config.geometry.magnet_right.coercive_direction = magnet_right_coercive_dir
     fem_config.geometry.region.outline = region_outline
 
-    # Cấu hình vật liệu cho FEM (NdFe30)
     fem_config.materials.yoke_material = yoke_material_name
     fem_config.materials.magnet_material_left = "NdFe30 - Copy"
     fem_config.materials.magnet_material_right = "NdFe30 - Copy (2)"
@@ -564,7 +558,6 @@ def main():
     pinn_model = ElectroMagneticPINN()
     sim_domain = pinn_model.simulation_domain_engine_instance
 
-    # Cấu hình chuẩn hóa vật lý miền PINN
     sim_domain.physics_config.scale_L0 = 0.12
     sim_domain.physics_config.scale_H0 = 960000.0
     sim_domain.physics_config.scale_nu0 = 795774.715459
@@ -572,7 +565,6 @@ def main():
     sim_domain.x_boundaries_tuple = (-0.12, 0.12)
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
-    # Cấu hình huấn luyện PINN
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 100
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
@@ -582,7 +574,7 @@ def main():
     pinn_model.training_config.enable_lbfgs_refinement_stage = True
 
     epochs_warmup_target = 1000
-    fpi_iterations = 4
+    fpi_iterations = 6
     epochs_per_fpi = 1000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
@@ -604,10 +596,9 @@ def main():
     pinn_model.training_config.fit_nu_epochs = 500
     pinn_model.training_config.fit_nu_lr = 3e-3
 
-    pinn_model.training_config.number_of_lbfgs_iterations = 1500
+    pinn_model.training_config.number_of_lbfgs_iterations = 2500
     pinn_model.training_config.lbfgs_learning_rate = 0.5
 
-    # Cấu hình các miền vật liệu cho PINN (Dùng chung yoke_outline, magnet_left_outline, magnet_right_outline và vật liệu NdFe30)
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke",
         material_name=yoke_material_name,
@@ -626,22 +617,22 @@ def main():
     iron_yoke.training_config.interface_ht_weight = 1200.0
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
-    iron_yoke.training_config.number_of_interior_points = 6000
-    iron_yoke.training_config.number_of_surface_points = 1500
+    iron_yoke.training_config.number_of_interior_points = 18000
+    iron_yoke.training_config.number_of_surface_points = 3500
 
-    iron_yoke.network_config.hidden_layers = 3
-    iron_yoke.network_config.hidden_neurons = 64
+    iron_yoke.network_config.hidden_layers = 5
+    iron_yoke.network_config.hidden_neurons = 128
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
     iron_yoke.network_config.fourier_sigma = 1.3
-    iron_yoke.network_config.fourier_mapping_size = 64
+    iron_yoke.network_config.fourier_mapping_size = 128
 
-    iron_yoke.nu_network_config.hidden_layers = 2
-    iron_yoke.nu_network_config.hidden_neurons = 32
+    iron_yoke.nu_network_config.hidden_layers = 3
+    iron_yoke.nu_network_config.hidden_neurons = 64
     iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
     iron_yoke.nu_network_config.fourier_sigma = 1.0
-    iron_yoke.nu_network_config.fourier_mapping_size = 16
+    iron_yoke.nu_network_config.fourier_mapping_size = 32
     iron_yoke.build_domain()
 
     magnet_left = sim_domain.create_material_domain(
@@ -651,8 +642,8 @@ def main():
         coercive_direction=magnet_left_coercive_dir
     )
     magnet_left.physics_config.is_nonlinear = False
-    magnet_left.training_config.number_of_interior_points = 800
-    magnet_left.training_config.number_of_surface_points = 400
+    magnet_left.training_config.number_of_interior_points = 1200
+    magnet_left.training_config.number_of_surface_points = 600
     magnet_left.network_config.hidden_layers = 3
     magnet_left.network_config.hidden_neurons = 32
     magnet_left.network_config.activation_function = nn.Mish()
@@ -668,8 +659,8 @@ def main():
         coercive_direction=magnet_right_coercive_dir
     )
     magnet_right.physics_config.is_nonlinear = False
-    magnet_right.training_config.number_of_interior_points = 800
-    magnet_right.training_config.number_of_surface_points = 400
+    magnet_right.training_config.number_of_interior_points = 1200
+    magnet_right.training_config.number_of_surface_points = 600
     magnet_right.network_config.hidden_layers = 3
     magnet_right.network_config.hidden_neurons = 32
     magnet_right.network_config.activation_function = nn.Mish()
@@ -686,16 +677,16 @@ def main():
         interface_ht_weight=1200.0,
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=2500,
+        number_of_interior_points=10000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
-        hidden_layers=3,
-        hidden_neurons=32,
+        hidden_layers=4,
+        hidden_neurons=64,
         activation_function=nn.Mish(),
         fourier_features=True,
         fourier_sigma=1.0,
-        fourier_mapping_size=32
+        fourier_mapping_size=64
     )
     sim_domain.build_background_domain(
         domain_name="background",
@@ -710,6 +701,15 @@ def main():
         pinn_model.execute_training_process()
         print(f"[*] Đang lưu checkpoint PINN: '{checkpoint_name}'...")
         pinn_model.save_checkpoint(checkpoint_name)
+        
+        if "google.colab" in sys.modules:
+            checkpoint_path = resolve_checkpoint_filepath(checkpoint_name)
+            if checkpoint_path.exists():
+                print(f"[*] Phát hiện môi trường Google Colab. Đang chuẩn bị tải về: {checkpoint_path}...")
+                from google.colab import files
+                files.download(str(checkpoint_path))
+            else:
+                print(f"[!] Không tìm thấy file checkpoint để tải về: {checkpoint_path}")
     else:
         print(f"[*] re_train_pinn = False: Tải checkpoint PINN sẵn có '{checkpoint_name}'...")
         pinn_model.load_checkpoint(checkpoint_name)
@@ -746,7 +746,6 @@ def main():
     fig, axs = plt.subplots(1, 3, figsize=(21, 6), dpi=300)
     extent = [fem_x_mm.min(), fem_x_mm.max(), fem_y_mm.min(), fem_y_mm.max()]
 
-    # 1. Biểu đồ FEM
     im0 = axs[0].imshow(
         fem_b_mag,
         extent=extent,
@@ -761,7 +760,6 @@ def main():
     cbar0 = fig.colorbar(im0, ax=axs[0], pad=0.02)
     cbar0.set_label(r"$|B|$ (T)")
 
-    # 2. Biểu đồ PINN
     im1 = axs[1].imshow(
         pinn_b_mag,
         extent=extent,
@@ -776,7 +774,6 @@ def main():
     cbar1 = fig.colorbar(im1, ax=axs[1], pad=0.02)
     cbar1.set_label(r"$|B|$ (T)")
 
-    # 3. Biểu đồ Sai số chuẩn hóa Normalized Error
     im2 = axs[2].imshow(
         norm_error_percent,
         extent=extent,
