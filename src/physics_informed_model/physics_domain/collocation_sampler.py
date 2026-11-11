@@ -268,3 +268,8 @@ class CollocationSampler:
                     }
 
         return domains_data
+
+
+    def get_training_points_count(self, domains_data=None):
+        from physics_domain.get_training_points_count import get_training_points_count
+        return get_training_points_count(self, domains_data=domains_data)

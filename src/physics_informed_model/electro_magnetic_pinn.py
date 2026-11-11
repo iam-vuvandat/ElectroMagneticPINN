@@ -157,3 +157,27 @@ class ElectroMagneticPINN:
 
     def load_checkpoint(self, filepath=None):
         return load_checkpoint(self, filepath=filepath)
+
+    
+
+    def visualize_collocation_sampling(self, domains_data=None, save_path=None, show=True):
+        if domains_data is None:
+            if self.collocation_sampler_instance is None:
+                from physics_domain.collocation_sampler import CollocationSampler
+                self.collocation_sampler_instance = CollocationSampler(
+                    electro_magnetic_pinn=self,
+                    device=getattr(self, 'computation_device', torch.device('cpu'))
+                )
+            domains_data = self.collocation_sampler_instance.generate_all_domain_points()
+
+        from visualization.plot_collocation_sampling import plot_collocation_sampling
+        return plot_collocation_sampling(domains_data=domains_data, save_path=save_path, show=show)
+
+    def display_training_points_count(self, domains_data=None):
+        if self.collocation_sampler_instance is None:
+            from physics_domain.collocation_sampler import CollocationSampler
+            self.collocation_sampler_instance = CollocationSampler(
+                electro_magnetic_pinn=self,
+                device=getattr(self, 'computation_device', torch.device('cpu'))
+            )
+        return self.collocation_sampler_instance.get_training_points_count(domains_data=domains_data)
