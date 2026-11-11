@@ -121,7 +121,7 @@ def main():
 
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 10
-    pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
+    pinn_model.sampler_config.resample_points_before_lbfgs_stage = False
 
     pinn_model.visualization_config.active = True
     pinn_model.visualization_config.display_colab_frames = True
@@ -132,17 +132,17 @@ def main():
     pinn_model.training_config.enable_lbfgs_refinement_stage = True
 
     pinn_model.training_config.enable_lbfgs_after_warmup = True
-    pinn_model.training_config.lbfgs_warmup_iterations = 1000
+    pinn_model.training_config.lbfgs_warmup_iterations = 300
 
     pinn_model.training_config.enable_lbfgs_after_fpi_step = True
-    pinn_model.training_config.lbfgs_fpi_step_iterations = 1000
+    pinn_model.training_config.lbfgs_fpi_step_iterations = 300
 
-    epochs_warmup_target = 10000
+    epochs_warmup_target = 1000
     fpi_iterations = 6
-    epochs_per_fpi = 10000
+    epochs_per_fpi = 1000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
-    pinn_model.training_config.fpi_alpha_damping = 0.8
+    pinn_model.training_config.fpi_alpha_damping = 0.4
     pinn_model.training_config.fpi_tolerance = 1e-6
 
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
@@ -185,14 +185,14 @@ def main():
     iron_yoke.training_config.number_of_surface_points = 100
 
     iron_yoke.network_config.hidden_layers = 3
-    iron_yoke.network_config.hidden_neurons = 64
+    iron_yoke.network_config.hidden_neurons = 32
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.3
+    iron_yoke.network_config.fourier_sigma = 2.0
     iron_yoke.network_config.fourier_mapping_size = 128
 
     iron_yoke.nu_network_config.hidden_layers = 3
-    iron_yoke.nu_network_config.hidden_neurons = 64
+    iron_yoke.nu_network_config.hidden_neurons = 32
     iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
     iron_yoke.nu_network_config.fourier_sigma = 1.0
@@ -209,7 +209,7 @@ def main():
     magnet_left.training_config.number_of_interior_points = 40
     magnet_left.training_config.number_of_surface_points = 20
     magnet_left.network_config.hidden_layers = 3
-    magnet_left.network_config.hidden_neurons = 64
+    magnet_left.network_config.hidden_neurons = 32
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = True
     magnet_left.network_config.fourier_sigma = 1.0
@@ -226,7 +226,7 @@ def main():
     magnet_right.training_config.number_of_interior_points = 40
     magnet_right.training_config.number_of_surface_points = 20
     magnet_right.network_config.hidden_layers = 3
-    magnet_right.network_config.hidden_neurons = 64
+    magnet_right.network_config.hidden_neurons = 32
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = True
     magnet_right.network_config.fourier_sigma = 1.0
@@ -246,10 +246,10 @@ def main():
     )
     bg_network_cfg = SimpleNamespace(
         hidden_layers=3,
-        hidden_neurons=64,
+        hidden_neurons=32,
         activation_function=nn.Mish(),
         fourier_features=True,
-        fourier_sigma=1.0,
+        fourier_sigma=2.0,
         fourier_mapping_size=120
     )
     sim_domain.build_background_domain(
