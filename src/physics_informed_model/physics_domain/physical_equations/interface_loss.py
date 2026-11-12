@@ -62,10 +62,10 @@ class InterfaceLoss:
         ty = unit_tangents[edge_idx, 1:2].detach()
         return nx, ny, tx, ty, corner_w
 
-    def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
+    def compute_pointwise_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
         if pts.shape[0] == 0:
-            zero = torch.tensor(0.0, device=pts.device)
-            return zero, zero, zero, zero
+            empty = torch.empty((0, 1), device=pts.device, dtype=pts.dtype)
+            return empty, empty, empty
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
@@ -77,7 +77,7 @@ class InterfaceLoss:
         Az_a = model.forward_network(key_a, pts)
         Az_b = model.forward_network(key_b, pts)
 
-        loss_val = torch.mean((Az_a - Az_b) ** 2)
+        err_val = (Az_a - Az_b) ** 2
 
         grad_a = torch.autograd.grad(
             outputs=Az_a,
@@ -100,9 +100,8 @@ class InterfaceLoss:
 
         Bn_a_star = Bx_a_star * nx + By_a_star * ny
         Bn_b_star = Bx_b_star * nx + By_b_star * ny
-        loss_Bn = torch.mean(corner_w * ((Bn_a_star - Bn_b_star) ** 2))
+        err_Bn = corner_w * ((Bn_a_star - Bn_b_star) ** 2)
 
-        # Đánh giá nu* từ Net_nu hoặc vật liệu hiện hành
         if hasattr(model, 'nu_networks') and key_a in model.nu_networks:
             nu_a_star = model.forward_nu_network(key_a, pts)
         else:
@@ -136,7 +135,22 @@ class InterfaceLoss:
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
         nu_pair_scale = torch.clamp(torch.maximum(nu_a_star.detach(), nu_b_star.detach()), min=1e-6)
         ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
-        loss_Ht = torch.mean(corner_w * (ht_diff_normalized ** 2))
+        err_Ht = corner_w * (ht_diff_normalized ** 2)
+
+        return err_val, err_Bn, err_Ht
+
+    def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
+        if pts.shape[0] == 0:
+            zero = torch.tensor(0.0, device=pts.device)
+            return zero, zero, zero, zero
+
+        err_val, err_Bn, err_Ht = self.compute_pointwise_pair_components(
+            key_a, domain_a, key_b, domain_b, pts
+        )
+
+        loss_val = torch.mean(err_val)
+        loss_Bn = torch.mean(err_Bn)
+        loss_Ht = torch.mean(err_Ht)
 
         w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1000.0))
         w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 500.0))

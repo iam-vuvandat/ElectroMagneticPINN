@@ -7,7 +7,6 @@ from matplotlib.colors import LogNorm, Normalize
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from training_visualizer.resolve_domain_net_key import resolve_domain_net_key
 
-# 20 mã màu chuẩn FEM Ansys Maxwell
 ANSYS_FEM_HEX_COLORS = [
     '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
     '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
@@ -21,6 +20,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     
     model = visualizer_instance.electro_magnetic_pinn.pinn_architecture_instance
     pde_evaluator = visualizer_instance.electro_magnetic_pinn.maxwell_pde_loss_instance
+    interface_evaluator = visualizer_instance.electro_magnetic_pinn.interface_loss_instance
     sim_domain = visualizer_instance.electro_magnetic_pinn.simulation_domain_engine_instance
     vis_cfg = visualizer_instance.electro_magnetic_pinn.visualization_config
 
@@ -82,19 +82,63 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
     mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     residual_numpy = residual_total.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
-    
-    fig, axs = plt.subplots(2, 4, figsize=(23, 10))
+
+    domains_dict = domains_data.get("domains", domains_data)
+    shared_dict = domains_data.get("shared_interfaces", {})
+    bg_domain = sim_domain.background_domain
+
+    if_coords_list = []
+    err_az_list = []
+    err_bn_list = []
+    err_ht_list = []
+
+    if interface_evaluator is not None:
+        for key, d in domains_dict.items():
+            domain = d["domain_object"]
+            net_key = resolve_domain_net_key(domain, model)
+            outer_pts = d.get("outer_surface_points", d.get("surface_points"))
+            if outer_pts is not None and outer_pts.shape[0] > 0 and net_key != 'background':
+                pts_req = outer_pts.to(computation_device).detach().clone().requires_grad_(True)
+                e_az, e_bn, e_ht = interface_evaluator.compute_pointwise_pair_components(
+                    key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=pts_req
+                )
+                if_coords_list.append(pts_req.detach().cpu().numpy())
+                err_az_list.append(e_az.detach().cpu().numpy().ravel())
+                err_bn_list.append(e_bn.detach().cpu().numpy().ravel())
+                err_ht_list.append(e_ht.detach().cpu().numpy().ravel())
+
+        for pair_key, pair_data in shared_dict.items():
+            s_pts = pair_data.get("interface_points")
+            if s_pts is not None and s_pts.shape[0] > 0:
+                pts_req = s_pts.to(computation_device).detach().clone().requires_grad_(True)
+                e_az, e_bn, e_ht = interface_evaluator.compute_pointwise_pair_components(
+                    key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
+                    key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts_req
+                )
+                if_coords_list.append(pts_req.detach().cpu().numpy())
+                err_az_list.append(e_az.detach().cpu().numpy().ravel())
+                err_bn_list.append(e_bn.detach().cpu().numpy().ravel())
+                err_ht_list.append(e_ht.detach().cpu().numpy().ravel())
+
+    if if_coords_list:
+        if_coords_all = np.vstack(if_coords_list)
+        err_az_all = np.concatenate(err_az_list)
+        err_bn_all = np.concatenate(err_bn_list)
+        err_ht_all = np.concatenate(err_ht_list)
+    else:
+        if_coords_all = np.empty((0, 2))
+        err_az_all = np.empty((0,))
+        err_bn_all = np.empty((0,))
+        err_ht_all = np.empty((0,))
+
+    fig, axs = plt.subplots(2, 5, figsize=(28, 10))
     n_levels = getattr(vis_cfg, 'contour_levels', 60)
 
-    # --- SUBPLOT 1: axs[0, 0] ---
     ax_pts = axs[0, 0]
     ax_pts.set_title("Categorized Collocation Points")
     
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
     pair_colors = ['#800000', '#004080', '#004d40', '#4a148c', '#bf360c']
-
-    domains_dict = domains_data.get("domains", domains_data)
-    shared_dict = domains_data.get("shared_interfaces", {})
 
     for idx, (key, d) in enumerate(domains_dict.items()):
         c_dom = domain_colors[idx % len(domain_colors)]
@@ -114,7 +158,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
     
-    # --- SUBPLOT 2: axs[0, 1] (PDE Residual Error - Discrete Log Steps) ---
     res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else 1e-4
     res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else 10.0
     res_abs = np.clip(np.abs(residual_numpy), res_min, res_max)
@@ -141,7 +184,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     axs[0, 1].set_title("PDE Residual Error (Discrete Log)")
     axs[0, 1].set_aspect('equal')
 
-    # --- SUBPLOT 3: axs[0, 2] ---
     mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
     mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
     mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -165,15 +207,13 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     axs[0, 2].set_title(r"Permeability Distribution ($\mu_r$)")
     axs[0, 2].set_aspect('equal')
     
-    # --- SUBPLOT 4: axs[0, 3] ---
     axs[0, 3].plot(visualizer_instance.epoch_history, visualizer_instance.loss_history, 'b-')
     axs[0, 3].set_yscale('log')
     axs[0, 3].set_title("Loss Optimization")
     axs[0, 3].set_xlabel("Total Optimization Step")
     axs[0, 3].set_ylabel("Loss")
     axs[0, 3].grid(True, which="both", ls="-", alpha=0.2)
-    
-    # --- SUBPLOT 5: axs[1, 0] ---
+
     az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
     az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
     levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
@@ -183,7 +223,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     axs[1, 0].set_title("Magnetic Vector Potential ($A_z$)")
     axs[1, 0].set_aspect('equal')
 
-    # --- SUBPLOT 6: axs[1, 1] (FEM COLORMAP NỘI SUY) ---
     b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
     b_scale = 1000.0 if b_unit == "mTesla" else 1.0
     B_mag_plot = B_mag_numpy * b_scale
@@ -216,7 +255,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     axs[1, 1].set_title(f"Flux Density Magnitude ($|B|$ [{b_min}-{b_max}{unit_str}])")
     axs[1, 1].set_aspect('equal')
 
-    # --- SUBPLOT 7: axs[1, 2] ---
     contour_b_bg = axs[1, 2].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, b_mag_clamped, levels=levels_b,
         cmap=cmap_b, norm=norm_b, alpha=0.3
@@ -232,12 +270,30 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data):
     axs[1, 2].set_title("Flux Density Vectors (B)")
     axs[1, 2].set_aspect('equal')
 
-    # --- SUBPLOT 8: axs[1, 3] ---
-    mat_id_numpy = mat_id.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
-    im_mat = axs[1, 3].imshow(mat_id_numpy, extent=[visualizer_instance.x_bounds[0], visualizer_instance.x_bounds[1], visualizer_instance.y_bounds[0], visualizer_instance.y_bounds[1]], origin='lower', interpolation='nearest', cmap='tab10')
-    fig.colorbar(im_mat, ax=axs[1, 3], label="Domain ID")
-    axs[1, 3].set_title("Material Classification")
-    axs[1, 3].set_aspect('equal')
+    def plot_interface_loss_map(ax_target, err_vals, title_str, cbar_label):
+        for dom in sim_domain.domains_list:
+            if getattr(dom, 'domain_name', '') != 'background' and dom.geometry_config.outline is not None:
+                outline = np.array(dom.geometry_config.outline)
+                closed_poly = np.vstack([outline, outline[0]])
+                ax_target.plot(closed_poly[:, 0], closed_poly[:, 1], color='#888888', linestyle='--', linewidth=0.8, alpha=0.7)
+        if if_coords_all.shape[0] > 0 and err_vals.shape[0] > 0:
+            vmin_if = 1e-8
+            vmax_if = max(float(np.max(err_vals)), 1e-4)
+            err_clamped = np.clip(err_vals, vmin_if, vmax_if)
+            sc = ax_target.scatter(
+                if_coords_all[:, 0], if_coords_all[:, 1],
+                c=err_clamped, cmap='jet', norm=LogNorm(vmin=vmin_if, vmax=vmax_if),
+                s=6.0, marker='o', linewidths=0
+            )
+            fig.colorbar(sc, ax=ax_target, label=cbar_label)
+        ax_target.set_xlim(visualizer_instance.x_bounds)
+        ax_target.set_ylim(visualizer_instance.y_bounds)
+        ax_target.set_title(title_str)
+        ax_target.set_aspect('equal')
+
+    plot_interface_loss_map(axs[0, 4], err_az_all, r"Interface Loss Map ($A_z$)", r"$(A_{z,a}^* - A_{z,b}^*)^2$")
+    plot_interface_loss_map(axs[1, 3], err_bn_all, r"Interface Loss Map ($B_n$)", r"$w_c (B_{n,a}^* - B_{n,b}^*)^2$")
+    plot_interface_loss_map(axs[1, 4], err_ht_all, r"Interface Loss Map ($H_t$)", r"$w_c (\Delta H_t^* / \nu)^2$")
     
     fig.suptitle(f"XPINN Training Process - Step {epoch}", fontsize=16)
     plt.tight_layout()
