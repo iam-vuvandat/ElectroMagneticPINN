@@ -169,10 +169,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
                     color=color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=5
                 )
 
-    # ==========================================================
-    # ROW 0: Geometry outline | Collocation point | Loss optimization | Loss weight
-    # ==========================================================
-    # [0, 0] Geometry outline
     ax_geo = axs[0, 0]
     total_domains = sim_domain.get_domain_count()
     palette = ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F', '#EDC948', '#B07AA1']
@@ -199,7 +195,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_geo.set_title("Geometry outline")
     ax_geo.set_aspect('equal')
 
-    # [0, 1] Collocation point
     ax_pts = axs[0, 1]
     ax_pts.set_title("Collocation point")
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
@@ -228,7 +223,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
 
-    # [0, 2] Loss optimization (PDE loss, A_z loss, B_n loss, H_t loss)
     ax_loss = axs[0, 2]
     steps = visualizer_instance.epoch_history
     ax_loss.plot(steps, visualizer_instance.pde_loss_history, label="PDE loss", linewidth=1.4)
@@ -242,7 +236,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_loss.grid(True, which="both", ls="--", alpha=0.25)
     ax_loss.legend(loc="upper right", fontsize=8.5)
 
-    # [0, 3] Loss weight (A_z, B_n, H_t)
     ax_w = axs[0, 3]
     ax_w.plot(steps, visualizer_instance.w_az_history, label=r"$A_z$", linewidth=1.4)
     ax_w.plot(steps, visualizer_instance.w_bn_history, label=r"$B_n$", linewidth=1.4)
@@ -253,30 +246,35 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_w.grid(True, which="both", ls="--", alpha=0.25)
     ax_w.legend(loc="upper right", fontsize=8.5)
 
-    # ==========================================================
-    # ROW 1: PDE residual map | A_z interface loss map | B_n interface loss map | H_t interface loss map
-    # ==========================================================
-    # [1, 0] PDE residual map
-    res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else 1e-4
-    res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else 10.0
-    res_abs = np.clip(np.abs(residual_numpy), res_min, res_max)
-    disc_levels = getattr(vis_cfg, 'res_discrete_levels', [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0])
+    disc_levels = getattr(vis_cfg, 'res_discrete_levels', [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0])
+    res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else float(disc_levels[0])
+    res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else float(disc_levels[-1])
+    res_scale_mode = getattr(vis_cfg, 'res_scale', 'log')
 
-    if getattr(vis_cfg, 'res_scale', 'log') == 'log' and disc_levels is not None:
-        base_cmap = plt.cm.get_cmap(vis_cfg.res_cmap, len(disc_levels) - 1)
+    if res_scale_mode == 'log' and disc_levels is not None:
+        base_cmap = plt.get_cmap(vis_cfg.res_cmap, len(disc_levels) - 1)
         norm_res = mcolors.BoundaryNorm(disc_levels, ncolors=base_cmap.N, clip=True)
         levels_res = disc_levels
+    elif res_scale_mode == 'log':
+        base_cmap = plt.get_cmap(vis_cfg.res_cmap)
+        norm_res = LogNorm(vmin=res_min, vmax=res_max, clip=True)
+        levels_res = np.logspace(np.log10(res_min), np.log10(res_max), n_levels)
     else:
-        base_cmap = vis_cfg.res_cmap
+        base_cmap = plt.get_cmap(vis_cfg.res_cmap)
         levels_res = np.linspace(res_min, res_max, n_levels)
-        norm_res = Normalize(vmin=res_min, vmax=res_max)
+        norm_res = Normalize(vmin=res_min, vmax=res_max, clip=True)
 
+    res_abs = np.clip(np.abs(residual_numpy), res_min, res_max)
     contour_res = axs[1, 0].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, res_abs,
         levels=levels_res, cmap=base_cmap, norm=norm_res
     )
-    cbar_res = fig.colorbar(contour_res, ax=axs[1, 0], ticks=disc_levels if getattr(vis_cfg, 'res_scale', 'log') == 'log' else None)
-    if getattr(vis_cfg, 'res_scale', 'log') == 'log':
+    cbar_res = fig.colorbar(
+        contour_res,
+        ax=axs[1, 0],
+        ticks=disc_levels if (res_scale_mode == 'log' and disc_levels is not None) else None
+    )
+    if res_scale_mode == 'log':
         cbar_res.ax.set_yscale('log')
     cbar_res.set_label("Residual Magnitude", fontsize=9)
     draw_domain_outlines(axs[1, 0], color='#FFFFFF', linestyle='--', linewidth=0.7, alpha=0.5)
@@ -286,31 +284,29 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     def plot_interface_loss_map(ax_target, err_vals, title_str, cbar_label):
         draw_domain_outlines(ax_target, color='#888888', linestyle='--', linewidth=0.8, alpha=0.7)
         if if_coords_all.shape[0] > 0 and err_vals.shape[0] > 0:
-            vmin_if = 1e-8
-            vmax_if = max(float(np.max(err_vals)), 1e-4)
-            err_clamped = np.clip(err_vals, vmin_if, vmax_if)
+            err_clamped = np.clip(err_vals, res_min, res_max)
             sc = ax_target.scatter(
                 if_coords_all[:, 0], if_coords_all[:, 1],
-                c=err_clamped, cmap='jet', norm=LogNorm(vmin=vmin_if, vmax=vmax_if),
+                c=err_clamped, cmap=base_cmap, norm=norm_res,
                 s=6.0, marker='o', linewidths=0
             )
-            fig.colorbar(sc, ax=ax_target, label=cbar_label)
+            cbar_if = fig.colorbar(
+                sc,
+                ax=ax_target,
+                ticks=disc_levels if (res_scale_mode == 'log' and disc_levels is not None) else None
+            )
+            if res_scale_mode == 'log':
+                cbar_if.ax.set_yscale('log')
+            cbar_if.set_label(cbar_label, fontsize=9)
         ax_target.set_xlim(visualizer_instance.x_bounds)
         ax_target.set_ylim(visualizer_instance.y_bounds)
         ax_target.set_title(title_str)
         ax_target.set_aspect('equal')
 
-    # [1, 1] A_z interface loss map
     plot_interface_loss_map(axs[1, 1], err_az_all, r"$A_z$ interface loss map", r"$(A_{z,a}^* - A_{z,b}^*)^2$")
-    # [1, 2] B_n interface loss map
     plot_interface_loss_map(axs[1, 2], err_bn_all, r"$B_n$ interface loss map", r"$w_c (B_{n,a}^* - B_{n,b}^*)^2$")
-    # [1, 3] H_t interface loss map
     plot_interface_loss_map(axs[1, 3], err_ht_all, r"$H_t$ interface loss map", r"$w_c (\Delta H_t^* / \nu)^2$")
 
-    # ==========================================================
-    # ROW 2: Permeability map | A_z map | Flux density |B| map | B vector map
-    # ==========================================================
-    # [2, 0] Permeability map
     mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
     mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
     mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -335,7 +331,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 0].set_title("Permeability map")
     axs[2, 0].set_aspect('equal')
 
-    # [2, 1] A_z map
     az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
     az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
     levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
@@ -348,7 +343,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 1].set_title(r"$A_z$ map")
     axs[2, 1].set_aspect('equal')
 
-    # [2, 2] Flux density |B| map
     b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
     b_scale = 1000.0 if b_unit == "mTesla" else 1.0
     B_mag_plot = B_mag_numpy * b_scale
@@ -382,7 +376,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 2].set_title(r"Flux density $|B|$ map")
     axs[2, 2].set_aspect('equal')
 
-    # [2, 3] B vector map
     contour_b_bg = axs[2, 3].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, b_mag_clamped, levels=levels_b,
         cmap=cmap_b, norm=norm_b, alpha=0.3
