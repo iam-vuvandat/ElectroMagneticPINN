@@ -128,9 +128,9 @@ def main():
     pinn_model.visualization_config.update_interval = 200
 
     pinn_model.training_config.enable_relobralo = True
-    pinn_model.training_config.relobralo_alpha = 0.999
+    pinn_model.training_config.relobralo_alpha = 0.98
+    pinn_model.training_config.relobralo_rho = 0.98
     pinn_model.training_config.relobralo_temperature = 0.1
-    pinn_model.training_config.relobralo_rho = 0.999
 
     pinn_model.training_config.enable_linear_warmup_stage = True
     pinn_model.training_config.enable_nonlinear_adaptation_stage = True
