@@ -34,6 +34,11 @@ class ElectroMagneticPINN:
             enable_lbfgs_after_fpi_step=False,
             linear_warmup_epochs_ratio=0.3,
 
+            enable_relobralo=False,
+            relobralo_alpha=0.999,
+            relobralo_temperature=0.1,
+            relobralo_rho=0.999,
+
             adam_learning_rate=1e-3,
             number_of_adam_epochs=2500,
             target_loss_threshold=1e-5,
@@ -157,8 +162,6 @@ class ElectroMagneticPINN:
 
     def load_checkpoint(self, filepath=None):
         return load_checkpoint(self, filepath=filepath)
-
-    
 
     def visualize_collocation_sampling(self, domains_data=None, save_path=None, show=True):
         if domains_data is None:

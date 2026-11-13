@@ -8,6 +8,7 @@ from training_engine.fit_nu_network_step import fit_nu_network_step
 from training_engine.compute_loss import compute_loss
 from training_engine.train_adam import train_adam
 from training_engine.train_lbfgs import train_lbfgs
+from training_engine.relobralo_balancer import ReLoBRaLoBalancer
 
 
 class TrainingManager:
@@ -27,8 +28,6 @@ class TrainingManager:
         
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         
-        # Đưa cả tham số của Net_Az và Net_nu vào Adam để tối ưu thống nhất khi cần
-        # Chỉ tối ưu hóa tham số của Net_Az trong Adam. Net_nu được cập nhật riêng qua bước FPI (fit_nu_network_step)
         self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
         
         self.optimizer_lbfgs = optim.LBFGS(
@@ -41,6 +40,17 @@ class TrainingManager:
             history_size=self.lbfgs_history_size,
             line_search_fn="strong_wolfe"
         )
+
+        self.enable_relobralo = bool(getattr(t_cfg, 'enable_relobralo', False))
+        self.relobralo_balancer = None
+        if self.enable_relobralo:
+            self.relobralo_balancer = ReLoBRaLoBalancer(
+                keys=("loss_pde", "loss_a", "loss_bn", "loss_ht"),
+                alpha=float(getattr(t_cfg, 'relobralo_alpha', 0.999)),
+                temperature=float(getattr(t_cfg, 'relobralo_temperature', 0.1)),
+                rho=float(getattr(t_cfg, 'relobralo_rho', 0.999))
+            )
+
         self.last_loss_breakdown = {}
         self.completed_adam_epochs = 0
         self.global_step = 0
@@ -71,8 +81,13 @@ class TrainingManager:
     def fit_nu_network_step(self, domains_data, alpha_damping=None, epochs=None, lr=None):
         return fit_nu_network_step(self, domains_data, alpha_damping=alpha_damping, epochs=epochs, lr=lr)
 
-    def compute_loss(self, domains_data):
-        return compute_loss(self, domains_data)
+    def compute_loss(self, domains_data, update_relobralo=True, is_resampling_step=False):
+        return compute_loss(
+            self,
+            domains_data,
+            update_relobralo=update_relobralo,
+            is_resampling_step=is_resampling_step
+        )
 
     def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
         return train_adam(self, epochs, domains_data, dynamic_resampling=dynamic_resampling, resample_fn=resample_fn, resample_interval=resample_interval)

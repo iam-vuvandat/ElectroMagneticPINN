@@ -14,6 +14,7 @@ from simulation_domain_engine.material_domain import evaluate_reluctivity as _ev
 from simulation_domain_engine.material_domain import evaluate_magnetization_vector as _evaluate_magnetization_vector_module
 from simulation_domain_engine.material_domain import evaluate_current_density as _evaluate_current_density_module
 
+
 class MaterialDomain:
 
     def __init__(self, domain_name: str = "air_domain", simulation_domain: Optional[Any] = None) -> None:
@@ -34,19 +35,12 @@ class MaterialDomain:
         )
         
         self.training_config = SimpleNamespace(
-            pde_weight=1.0,
-            pde_nonlinear_weight=1.0,
-            interface_weight=1.0,
-            interface_potential_weight=1000.0,
-            interface_bn_weight=500.0,
-            interface_ht_weight=500.0,
             pde_fading_beta=100.0,
             sampling_density_multiplier=1.0,
             number_of_interior_points=2000,
             number_of_surface_points=1200
         )
         
-        # Cấu hình Mạng chính (Net_Az)
         self.network_config = SimpleNamespace(
             hidden_layers=4,
             hidden_neurons=64,
@@ -56,7 +50,6 @@ class MaterialDomain:
             fourier_mapping_size=128
         )
 
-        # Cấu hình Mạng phụ (Net_nu) cho miền phi tuyến
         self.nu_network_config = SimpleNamespace(
             hidden_layers=2,
             hidden_neurons=32,
@@ -87,9 +80,6 @@ class MaterialDomain:
         return _build_domain_module.build_domain(self)
 
     def update_material_domain(self) -> "MaterialDomain":
-        """
-        Đồng bộ toàn bộ thuộc tính cấu hình và dựng lại ranh giới hình học cho miền vật liệu.
-        """
         return self.build_domain()
 
     def _compute_constant_bh_curve(self) -> Any:
@@ -103,7 +93,7 @@ class MaterialDomain:
 
     def compute_signed_distance_field(self, points_tensor: torch.Tensor) -> torch.Tensor:
         if self.outline_tensor is None:
-            raise RuntimeError(f"Domain '{self.domain_name}' chưa được gọi hàm build_domain().")
+            raise RuntimeError(f"Domain '{self.domain_name}' has not called build_domain().")
         return compute_polygon_signed_distance_field(self.outline_tensor, points_tensor)
 
     def evaluate_reluctivity(

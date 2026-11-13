@@ -1,5 +1,6 @@
 import torch
 
+
 class InterfaceLoss:
     def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
         self.electro_magnetic_pinn = electro_magnetic_pinn
@@ -152,9 +153,9 @@ class InterfaceLoss:
         loss_Bn = torch.mean(err_Bn)
         loss_Ht = torch.mean(err_Ht)
 
-        w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1000.0))
-        w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 500.0))
-        w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 500.0))
+        w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1.0))
+        w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 1.0))
+        w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 1.0))
 
         weighted_interface = w_az * loss_val + w_bn * loss_Bn + w_ht * loss_Ht
         return weighted_interface, loss_val, loss_Bn, loss_Ht

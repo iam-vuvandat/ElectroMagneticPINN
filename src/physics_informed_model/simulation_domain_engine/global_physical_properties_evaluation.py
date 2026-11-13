@@ -2,6 +2,7 @@ import torch
 
 VACUUM_RELUCTIVITY = 795774.715459
 
+
 def evaluate_global_physical_properties(domains_list, points_tensor):
     number_of_points = points_tensor.shape[0]
     computation_device = points_tensor.device
@@ -21,9 +22,9 @@ def evaluate_global_physical_properties(domains_list, points_tensor):
         global_hx = base_hx.clone()
         global_hy = base_hy.clone()
         global_jz = background_domain.evaluate_current_density(points_tensor).clone()
-        base_pde_weight = float(background_domain.training_config.pde_weight)
-        base_interface_weight = float(background_domain.training_config.interface_weight)
-        base_sampling_density = float(background_domain.training_config.sampling_density_multiplier)
+        base_pde_weight = float(getattr(background_domain.training_config, 'pde_weight', 1.0))
+        base_interface_weight = float(getattr(background_domain.training_config, 'interface_weight', 1.0))
+        base_sampling_density = float(getattr(background_domain.training_config, 'sampling_density_multiplier', 1.0))
         base_mat_id = float(background_domain.domain_id) if background_domain.domain_id is not None else float(len(domains_list))
     else:
         global_reluctivity = torch.full((number_of_points, 1), VACUUM_RELUCTIVITY, dtype=computation_dtype, device=computation_device)
@@ -64,14 +65,18 @@ def evaluate_global_physical_properties(domains_list, points_tensor):
         jz_dom = domain_object.evaluate_current_density(points_tensor)
         domain_id_val = float(domain_object.domain_id) if domain_object.domain_id is not None else float(idx + 1)
 
+        dom_pde_w = float(getattr(domain_object.training_config, 'pde_weight', 1.0))
+        dom_if_w = float(getattr(domain_object.training_config, 'interface_weight', 1.0))
+        dom_samp_mult = float(getattr(domain_object.training_config, 'sampling_density_multiplier', 1.0))
+
         global_reluctivity = torch.where(is_inside_and_closer, nu_dom, global_reluctivity)
         global_hx = torch.where(is_inside_and_closer, hx_dom, global_hx)
         global_hy = torch.where(is_inside_and_closer, hy_dom, global_hy)
         global_jz = torch.where(is_inside_and_closer, jz_dom, global_jz)
         global_mat_id = torch.where(is_inside_and_closer, torch.full_like(global_mat_id, domain_id_val), global_mat_id)
-        global_pde_weight = torch.where(is_inside_and_closer, torch.full_like(global_pde_weight, float(domain_object.training_config.pde_weight)), global_pde_weight)
-        global_interface_weight = torch.where(is_inside_and_closer, torch.full_like(global_interface_weight, float(domain_object.training_config.interface_weight)), global_interface_weight)
-        global_sampling_density = torch.where(is_inside_and_closer, torch.full_like(global_sampling_density, float(domain_object.training_config.sampling_density_multiplier)), global_sampling_density)
+        global_pde_weight = torch.where(is_inside_and_closer, torch.full_like(global_pde_weight, dom_pde_w), global_pde_weight)
+        global_interface_weight = torch.where(is_inside_and_closer, torch.full_like(global_interface_weight, dom_if_w), global_interface_weight)
+        global_sampling_density = torch.where(is_inside_and_closer, torch.full_like(global_sampling_density, dom_samp_mult), global_sampling_density)
 
     return {
         "reluctivity": global_reluctivity,

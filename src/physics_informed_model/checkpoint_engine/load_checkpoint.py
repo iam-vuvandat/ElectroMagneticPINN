@@ -76,6 +76,13 @@ def load_checkpoint(pinn_instance, filepath=None):
             tm.optimizer_lbfgs.load_state_dict(
                 checkpoint_data["optimizer_lbfgs_state_dict"]
             )
+        if (
+            checkpoint_data.get("relobralo_state_dict")
+            and getattr(tm, "relobralo_balancer", None)
+        ):
+            tm.relobralo_balancer.load_state_dict(
+                checkpoint_data["relobralo_state_dict"]
+            )
         tm.completed_adam_epochs = checkpoint_data.get(
             "completed_adam_epochs", 0
         )

@@ -93,6 +93,7 @@ def run_bundle():
         ".py",
         ".md",
         ".txt",
+        ".tex",
         ".yml",
         ".yaml",
         ".json",

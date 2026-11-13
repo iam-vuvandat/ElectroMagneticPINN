@@ -43,6 +43,11 @@ def save_checkpoint(pinn_instance, filepath=None):
             if tm and tm.optimizer_lbfgs
             else None
         ),
+        "relobralo_state_dict": (
+            tm.relobralo_balancer.state_dict()
+            if tm and getattr(tm, "relobralo_balancer", None)
+            else None
+        ),
         "completed_adam_epochs": getattr(tm, "completed_adam_epochs", 0)
         if tm
         else 0,

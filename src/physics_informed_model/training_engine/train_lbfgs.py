@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
 
+
 def train_lbfgs(training_manager_instance, max_iterations, domains_data):
     if max_iterations <= 0:
         return domains_data
@@ -26,7 +27,11 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
     
     def closure():
         training_manager_instance.optimizer_lbfgs.zero_grad(set_to_none=True)
-        loss = training_manager_instance.compute_loss(domains_data)
+        loss = training_manager_instance.compute_loss(
+            domains_data,
+            update_relobralo=False,
+            is_resampling_step=False
+        )
         if not torch.isfinite(loss):
             return loss
         loss.backward()
