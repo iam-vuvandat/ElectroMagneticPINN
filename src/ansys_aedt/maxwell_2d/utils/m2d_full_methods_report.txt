@@ -1,0 +1,411 @@
+
+==================== METHODS OF m2d ====================
+m2d.Position(*args) -> 'None'
+m2d.activate_variable_optimization(name: str, minimum: float | None = None, maximum: float | None = None) -> bool
+m2d.activate_variable_sensitivity(name: str, minimum: float | None = None, maximum: float | None = None) -> bool
+m2d.activate_variable_statistical(name: str, minimum: float | None = None, maximum: float | None = None, tolerance: float | None = None, probability: float | None = None, mean: float | None = None) -> bool
+m2d.activate_variable_tuning(name: str, minimum: float | None = None, maximum: float | None = None) -> bool
+m2d.add_from_toolkit(toolkit: type, draw: bool = False, **kwargs) -> Any
+m2d.add_stackup_3d() -> 'Stackup3D'
+m2d.add_winding_coils(assignment: 'str', coils: 'list') -> 'bool'
+m2d.analyze(setup: 'str' = None, cores: 'int' = None, tasks: 'int' = None, gpus: 'int' = None, acf_file: 'str' = None, use_auto_settings: 'bool' = True, solve_in_batch: 'bool' = False, machine: 'str' = 'localhost', run_in_thread: 'bool' = False, revert_to_initial_mesh: 'bool' = False, blocking: 'bool' = True) -> 'bool'
+m2d.analyze_from_zero() -> 'bool'
+m2d.analyze_setup(name: 'str' = None, cores: 'int' = None, tasks: 'int' = None, gpus: 'int' = None, acf_file: 'str' = None, use_auto_settings: 'bool' = True, num_variations_to_distribute: 'int' = None, allowed_distribution_types: 'list' = None, revert_to_initial_mesh: 'bool' = False, blocking: 'bool' = True) -> 'bool'
+m2d.apply_skew(skew_type: 'str | None' = 'Continuous', skew_part: 'str | None' = 'Rotor', skew_angle: 'str | None' = '1', skew_angle_unit: 'str | None' = 'deg', number_of_slices: 'int | None' = 2, custom_slices_skew_angles: 'list | None' = None) -> 'bool'
+m2d.archive_project(project_path: str | pathlib.Path = None, include_external_files: bool = True, include_results_file: bool = True, additional_files: list = None, notes: str = '') -> bool
+m2d.assign_balloon(assignment: 'list', boundary: 'str | None' = None, is_voltage: 'bool | None' = False) -> 'BoundaryObject | bool'
+m2d.assign_coil(assignment: 'list', conductors_number: 'int | None' = 1, polarity: 'str | None' = 'Positive', name: 'str | None' = None) -> 'BoundaryObject | bool'
+m2d.assign_current(assignment: 'list | str', amplitude: 'int | float | str | None' = 1, phase: 'str | None' = '0deg', solid: 'bool | None' = True, swap_direction: 'bool | None' = False, name: 'str | None' = None) -> 'BoundaryObject'
+m2d.assign_current_density(assignment: 'list', current_density_name: 'str | None' = None, phase: 'str | None' = '0deg', current_density_x: 'str | None' = '0', current_density_y: 'str | None' = '0', current_density_z: 'str | None' = '0', current_density_2d: 'str | None' = '0', coordinate_system: 'str | None' = 'Global', coordinate_system_type: 'str | None' = 'Cartesian') -> 'bool'
+m2d.assign_end_connection(assignment: 'list[int] | str | Object3d', resistance: 'str | float | None' = 0, inductance: 'str | float | None' = 0, boundary: 'str | None' = None) -> 'BoundaryObject | bool'
+m2d.assign_floating(assignment: 'list', charge_value: 'int | float | None' = 0, name: 'str | None' = None) -> 'BoundaryObject'
+m2d.assign_force(assignment: 'list', coordinate_system: 'str | None' = 'Global', is_virtual: 'bool | None' = True, force_name: 'str | None' = None) -> 'MaxwellForce'
+m2d.assign_master_slave(independent: 'int', dependent: 'int', reverse_master: 'bool | None' = False, reverse_slave: 'bool | None' = False, same_as_master: 'bool | None' = True, boundary: 'str | None' = None) -> 'tuple[BoundaryObject, BoundaryObject] | bool'
+m2d.assign_material(assignment: 'str | list', material: 'str') -> 'bool'
+m2d.assign_matrix(args: 'MaxwellMatrixSchema') -> 'MaxwellParameters'
+m2d.assign_radiation(assignment: 'list', radiation: 'str | None' = None) -> 'BoundaryObject | bool'
+m2d.assign_rotate_motion(assignment: 'str', coordinate_system: 'str | None' = 'Global', axis: 'str | int | Gravity | None' = 'Z', positive_movement: 'bool | None' = True, start_position: 'int | str | float | None' = 0, has_rotation_limits: 'bool | None' = True, negative_limit: 'int | str | float | None' = 0, positive_limit: 'int | str | float | None' = 360, non_cylindrical: 'bool | None' = False, mechanical_transient: 'bool | None' = False, angular_velocity: 'int | float | str | None' = '0rpm', inertia: 'float | None' = 1, damping: 'float | None' = 0, load_torque: 'int | float | str | None' = '0newton') -> 'BoundaryObject'
+m2d.assign_symmetry(assignment: 'list', symmetry_name: 'str | None' = None, is_odd: 'bool | None' = True) -> 'bool'
+m2d.assign_torque(assignment: 'list', coordinate_system: 'str | None' = 'Global', is_positive: 'bool | None' = True, is_virtual: 'bool | None' = True, axis: 'str | None' = 'Z', torque_name: 'str | None' = None) -> 'MaxwellTorque'
+m2d.assign_translate_motion(assignment: 'str', coordinate_system: 'str | None' = 'Global', axis: 'str | None' = 'Z', positive_movement: 'bool | None' = True, start_position: 'int | str | None' = 0, periodic_translate: 'bool | None' = True, negative_limit: 'int | str | None' = 0, positive_limit: 'int | str | None' = 0, velocity: 'int | str | None' = 0, mechanical_transient: 'bool | None' = False, mass: 'int | str | None' = 1, damping: 'int | None' = 0, load_force: 'int | str | None' = 0, motion_name: 'str | None' = None) -> 'BoundaryObject | bool'
+m2d.assign_vector_potential(assignment: 'list', vector_value: 'float | None' = 0, boundary: 'str | None' = None) -> 'BoundaryObject | bool'
+m2d.assign_voltage(assignment: 'list', amplitude: 'float | None' = 1, name: 'str | None' = None) -> 'BoundaryObject'
+m2d.assign_voltage_drop(assignment: 'list', amplitude: 'float | None' = 1, swap_direction: 'bool | None' = False, name: 'str | None' = None)
+m2d.assign_winding(assignment: 'list | None' = None, winding_type: 'str | None' = 'Current', is_solid: 'bool | None' = True, current: 'float | None' = 1, resistance: 'float | None' = 0, inductance: 'float | None' = 0, voltage: 'float | None' = 0, parallel_branches: 'int | None' = 1, phase: 'float | None' = 0, name: 'str | None' = None) -> 'BoundaryObject | bool'
+m2d.assignmaterial_from_sherlock_files(component_file: 'str', material_file: 'str') -> 'bool'
+m2d.autosave_disable() -> bool
+m2d.autosave_enable() -> bool
+m2d.axis_directions(value, *args, **kwargs)
+m2d.change_automatically_use_causal_materials(lossy_dielectric: bool = True) -> bool
+m2d.change_design_settings(settings: dict) -> bool
+m2d.change_inductance_computation(compute_transient_inductance: 'bool | None' = True, incremental_matrix: 'bool | None' = False) -> 'bool'
+m2d.change_material_override(material_override: bool = True) -> bool
+m2d.change_property(aedt_object: 'object', tab_name: 'str', property_object: 'str', property_name: 'str', property_value: 'str | list') -> 'bool'
+m2d.change_symmetry_multiplier(value: 'int | None' = 1)
+m2d.change_validation_settings(entity_check_level: str = 'Strict', ignore_unclassified: bool = False, skip_intersections: bool = False)
+m2d.check_beta_option_enabled(beta_option: str) -> bool
+m2d.check_if_project_is_loaded(input_file: str | pathlib.Path) -> str | bool
+m2d.clean_proj_folder(directory: str | pathlib.Path = None, name: str = None) -> bool
+m2d.cleanup_solution(variations: 'str | list' = 'All', entire_solution: 'bool' = True, field: 'bool' = True, mesh: 'bool' = True, linked_data: 'bool' = True) -> 'bool'
+m2d.close_desktop() -> bool
+m2d.close_project(name: str = None, save: bool = True) -> bool
+m2d.copy_design_from(project: pathlib.Path | str, design: str, save_project: bool = True, set_active_design: bool = True) -> str
+m2d.copy_project(destination: str, name: str) -> bool
+m2d.copy_solid_bodies_from(design: 'object', assignment: 'list' = None, no_vacuum: 'bool' = True, no_pec: 'bool' = True, include_sheets: 'bool' = False) -> 'bool'
+m2d.create_dataset(name: str, x: list, y: list, z: list = None, v: list = None, is_project_dataset: bool = True, x_unit: str = '', y_unit: str = '', z_unit: str = '', v_unit: str = '', sort: bool = True) -> ansys.aedt.core.application.variables.DataSet | bool
+m2d.create_dataset1d_design(name: str, x: list, y: list, x_unit: str = '', y_unit: str = '', sort: bool = True) -> ansys.aedt.core.application.variables.DataSet
+m2d.create_dataset1d_project(name: str, x: list, y: list, x_unit: str = '', y_unit: str = '', sort: bool = True) -> ansys.aedt.core.application.variables.DataSet
+m2d.create_dataset3d(name: str, x: list, y: list, z: list | None = None, v: list | None = None, x_unit: str = '', y_unit: str = '', z_unit: str = '', v_unit: str = '', is_project_dataset: bool = True, sort: bool = True) -> ansys.aedt.core.application.variables.DataSet
+m2d.create_em_target_design(design: str, setup: str | None = None, design_setup: str | None = None) -> bool
+m2d.create_external_circuit(circuit_design: 'str | None' = None) -> 'MaxwellCircuit | bool'
+m2d.create_new_project(name: str) -> bool
+m2d.create_output_variable(variable: 'str', expression: 'str', solution: 'str' = None, context: 'list' = None, is_differential: 'bool' = False) -> 'bool'
+m2d.create_setup(name: 'str' = 'MySetupAuto', setup_type: 'int | str | None' = None, **kwargs) -> 'SetupMaxwell'
+m2d.dataset_exists(name: str, is_project_dataset: bool = True) -> bool
+m2d.deactivate_variable_optimization(name: str) -> bool
+m2d.deactivate_variable_sensitivity(name: str) -> bool
+m2d.deactivate_variable_statistical(name: str) -> bool
+m2d.deactivate_variable_tuning(name: str) -> bool
+m2d.delete_design(name: str = None, fallback_design: str = None) -> bool
+m2d.delete_project(name: str) -> bool
+m2d.delete_separator(name: str) -> bool
+m2d.delete_setup(name: 'str') -> 'bool'
+m2d.delete_unused_variables() -> bool
+m2d.delete_variable(name: str) -> bool
+m2d.design_variation(variation: str = None) -> str
+m2d.duplicate_design(name: str, save_after_duplicate: bool = True) -> bool
+m2d.eddy_effects_on(assignment: 'list | str', enable_eddy_effects: 'bool | None' = True, enable_displacement_current: 'bool | None' = True) -> 'bool'
+m2d.edit_external_circuit(netlist_file_path: 'str', schematic_design_name: 'str | None' = None, parameters: 'dict | None' = None) -> 'bool'
+m2d.edit_notes(text: str) -> bool
+m2d.enable_harmonic_force(assignment: 'list', force_type: 'int | None' = 0, window_function: 'str | None' = 'Rectangular', use_number_of_last_cycles: 'bool | None' = True, last_cycles_number: 'int | None' = 1, calculate_force: 'str | None' = 'Harmonic') -> 'bool'
+m2d.enable_harmonic_force_on_layout_component(assignment: 'str', nets: 'dict', force_type: 'int | None' = 0, window_function: 'str | None' = 'Rectangular', use_number_of_last_cycles: 'bool | None' = True, last_cycles_number: 'int | None' = 1, calculate_force: 'str | None' = 'Harmonic', start_time: 'str | None' = '0s', stop_time: 'str | None' = '2ms', use_number_of_cycles_for_stop_time: 'bool | None' = True, number_of_cycles_for_stop_time: 'int | None' = 1, include_no_layer: 'bool | None' = True) -> 'bool'
+m2d.evaluate_expression(expression: str) -> float
+m2d.export_3d_model(file_name: 'str' = '', file_path: 'str' = '', file_format: 'str' = '.step', assignment_to_export: 'list | None' = None, assignment_to_remove: 'list | None' = None, major_version: 'int' = -1, minor_version: 'int' = -1) -> 'bool'
+m2d.export_convergence(setup: 'str', variations: 'str' = '', output_file: 'str' = None) -> 'str'
+m2d.export_design_preview_to_jpg(output_file: str | pathlib.Path) -> bool
+m2d.export_element_based_harmonic_force(output_directory: 'str | None' = None, setup: 'str | None' = None, start_frequency: 'float | None' = None, stop_frequency: 'float | None' = None, number_of_frequency: 'int | None' = None) -> 'str'
+m2d.export_matrix(matrix_name: 'str', output_file: 'str | Path', setup: 'str | None' = None, is_post_processed: 'bool | None' = False, default_adaptive: 'str | None' = 'LastAdaptive', is_format_default: 'bool | None' = True, width: 'int | None' = 12, precision: 'int | None' = 6, is_exponential: 'bool | None' = False, use_independent_nominal_values: 'bool | None' = True) -> 'bool'
+m2d.export_mesh_stats(setup: 'str', variations: 'str' = '', output_file: 'str' = None) -> 'str'
+m2d.export_parametric_results(sweep: 'str', output_file: 'str', export_units: 'bool' = True) -> 'bool'
+m2d.export_profile(setup: str, variation: str = '', output_file: str = None) -> str
+m2d.export_results(analyze: 'bool' = False, export_folder: 'str' = None, matrix_name: 'str' = 'Original', matrix_type: 'str' = 'S', touchstone_format: 'str' = 'MagPhase', touchstone_number_precision: 'int' = 15, length: 'str' = '1meter', impedance: 'float' = 50, include_gamma_comment: 'bool' = True, support_non_standard_touchstone_extension: 'bool' = False, variations: 'list' = None) -> 'list[str]'
+m2d.export_variables_to_csv(output_file: str | pathlib.Path, export_project_variables: bool = True, export_design_properties: bool = True) -> bool
+m2d.flatten_3d_components(components: 'str | list' = None, purge_history: 'bool' = True, password: 'str' = None) -> 'bool'
+m2d.generate_design_data(line_filter: 'Optional' = None, object_filter: 'Optional' = None) -> 'bool'
+m2d.generate_temp_project_directory(name: str) -> str | bool
+m2d.generate_unique_setup_name(name: 'str' = None) -> 'str'
+m2d.get_all_conductors_names() -> 'list[str]'
+m2d.get_all_dielectrics_names() -> 'list[str]'
+m2d.get_all_source_modes() -> 'list[str]'
+m2d.get_all_sources() -> 'list[str]'
+m2d.get_component_variables(name: 'str | Path') -> 'dict'
+m2d.get_evaluated_value(name: str, units: str = None) -> float
+m2d.get_module(module_name: str) -> object
+m2d.get_monitor_data() -> 'dict'
+m2d.get_nominal_variation(with_values: 'bool' = False) -> 'dict'
+m2d.get_object_material_properties(assignment: 'list' = None, prop_names: 'str | list' = None) -> 'dict'
+m2d.get_oo_name(aedt_object: object, object_name: str = None) -> list[str]
+m2d.get_oo_object(aedt_object: object, object_name: str) -> object
+m2d.get_oo_properties(aedt_object: object, object_name: str) -> list[str]
+m2d.get_oo_property_value(aedt_object: object, object_name: str, prop_name: str) -> str | float | bool
+m2d.get_output_variable(variable: 'str', solution: 'str' = None)
+m2d.get_profile(name: str = None) -> ansys.aedt.core.modules.profile.Profiles
+m2d.get_property_value(assignment: 'str', property_name: 'str', property_type: 'str' = None) -> 'any'
+m2d.get_registry_key_int(name: str) -> int
+m2d.get_registry_key_string(name: str) -> str
+m2d.get_setup(name: 'str') -> 'Setup'
+m2d.get_setups() -> 'list[str]'
+m2d.get_sweeps(name: 'str') -> 'list[str]'
+m2d.get_traces_for_plot(get_self_terms: 'bool' = True, get_mutual_terms: 'bool' = True, first_element_filter: 'str' = None, second_element_filter: 'str' = None, category: 'str' = 'dB(S', differential_pairs: 'list' = None) -> 'list'
+m2d.hidden_variable(name: str | list, value: bool = True) -> bool
+m2d.identify_touching_conductors(assignment: 'str' = None) -> 'dict'
+m2d.import_3d_cad(input_file: 'str | Path', healing: 'bool' = False, refresh_all_ids: 'bool' = True, import_materials: 'bool' = False, create_lightweight_part: 'bool' = False, group_by_assembly: 'bool' = False, create_group: 'bool' = True, separate_disjoints_lumped_object: 'bool' = False, import_free_surfaces: 'bool' = False, point_coincidence_tolerance: 'float' = 1e-06, reduce_stl: 'bool' = False, reduce_percentage: 'int' = 0, reduce_error: 'int' = 0, merge_planar_faces: 'bool' = True) -> 'bool'
+m2d.import_dataset1d(input_file: str | pathlib.Path, name: str = None, is_project_dataset: bool = True, sort: bool = True) -> ansys.aedt.core.application.variables.DataSet
+m2d.import_dataset3d(input_file: str | pathlib.Path, name: str = None, encoding: str = 'utf-8-sig', is_project_dataset: bool = True, sort: bool = True) -> ansys.aedt.core.application.variables.DataSet
+m2d.import_dxf(input_file: 'str | Path', layers: 'list[str]', auto_detect_close: 'bool' = True, self_stitch: 'bool' = True, self_stitch_tolerance: 'float' = 0.0, scale: 'float' = 0.001, defeature_geometry: 'bool' = False, defeature_distance: 'float' = 0.0, round_coordinates: 'bool' = False, round_num_digits: 'int' = 4, write_poly_with_width_as_filled_poly: 'bool' = False, import_method: 'int | bool' = 1) -> 'bool'
+m2d.import_gds_3d(input_file: 'str', mapping_layers: 'dict', units: 'str' = 'um', import_method: 'int' = 1) -> 'bool'
+m2d.insert_design(name: str = None, solution_type: str = None) -> str
+m2d.list_of_variations(setup: 'str' = None, sweep: 'str' = None) -> 'list[str]'
+m2d.load_project(file_name: str, design: str | None = None, close_active: bool = False, set_active: bool = False) -> bool
+m2d.plot(assignment: 'list' = None, show: 'bool' = True, output_file: 'str' = None, plot_as_separate_objects: 'bool' = True, plot_air_objects: 'bool' = True, force_opacity_value: 'float' = None, clean_files: 'bool' = False, view: 'str' = 'isometric', show_legend: 'bool' = True, dark_mode: 'bool' = False, show_grid: 'bool' = False, show_bounding: 'bool' = False) -> 'ModelPlotter'
+m2d.read_design_data() -> dict
+m2d.read_only_variable(name: str, value: bool = True) -> bool
+m2d.release_desktop(close_projects: bool = True, close_desktop: bool = True) -> bool
+m2d.remove_all_unused_definitions() -> bool
+m2d.rename_design(name: str, save: bool = True) -> bool
+m2d.save_project(file_name: str | pathlib.Path = None, overwrite: bool = True, refresh_ids: bool = False) -> bool
+m2d.set_active_design(name: str) -> bool
+m2d.set_active_dso_config_name(product_name: str = 'HFSS', config_name: str = 'Local') -> bool
+m2d.set_core_losses(assignment: 'list | str', core_loss_on_field: 'bool | None' = False) -> 'bool'
+m2d.set_custom_hpc_options(cores: 'int' = None, gpus: 'int' = None, tasks: 'int' = None, num_variations_to_distribute: 'int' = None, allowed_distribution_types: 'list' = None, use_auto_settings: 'bool' = True) -> 'bool'
+m2d.set_hpc_from_file(acf_file: 'str | Path' = None, configuration_name: 'str' = None) -> 'bool'
+m2d.set_initial_angle(motion_setup: 'str', angle: 'float') -> 'bool'
+m2d.set_license_type(license_type: str = 'Pool') -> bool
+m2d.set_oo_property_value(aedt_object: object, object_name: str, prop_name: str, value: str) -> bool
+m2d.set_registry_from_file(registry_file: str | pathlib.Path, make_active: bool = True) -> bool
+m2d.set_registry_key(name: str, value: str | int) -> bool
+m2d.set_source_context(sources: 'list[str]', number_of_modes: 'int' = 1) -> 'bool'
+m2d.set_temporary_directory(path: str | pathlib.Path) -> bool
+m2d.setup_y_connection(assignment: 'list | None' = None) -> 'bool'
+m2d.solve_in_batch(file_name: 'str' = None, machine: 'str' = 'localhost', run_in_thread: 'bool' = False, cores: 'int' = 4, tasks: 'int' = 1, setup: 'str' = None, revert_to_initial_mesh: 'bool' = False) -> 'bool'
+m2d.solve_inside(name: 'str', activate: 'bool | None' = True) -> 'bool'
+m2d.stop_simulations(clean_stop: 'bool' = True) -> 'str'
+m2d.submit_job(cluster_name: 'str', aedt_full_exe_path: 'str' = None, nodes: 'int' = 1, cores: 'int' = 32, wait_for_license: 'bool' = True, setting_file: 'str' = None) -> 'str'
+m2d.validate_simple(log_file: str | pathlib.Path = None) -> int
+m2d.value_with_units(value: 'float | int | str', units: 'str' = None, units_system: 'str' = 'Length') -> 'str'
+
+==================== METHODS OF m2d.modeler ====================
+m2d.modeler.Position(*args) -> 'None'
+m2d.modeler.SweepOptions(draftType: 'str' = 'Round', draftAngle: 'str' = '0deg', twistAngle: 'str' = '0deg') -> 'None'
+m2d.modeler.add_new_objects()
+m2d.modeler.add_new_points()
+m2d.modeler.add_new_solids()
+m2d.modeler.add_new_user_defined_component()
+m2d.modeler.automatic_thicken_sheets(assignment, value, extrude_internally: 'bool' = True, internal_extrusion: 'int' = 1) -> 'bool'
+m2d.modeler.break_spaceclaim_connection() -> 'bool'
+m2d.modeler.calculate_radius_2D(assignment, inner: bool = False)
+m2d.modeler.chassis_subtraction(chassis_part)
+m2d.modeler.check_plane(assignment, face_location, offset: 'int' = 1)
+m2d.modeler.clean_objects_name(main_part_name) -> 'bool'
+m2d.modeler.cleanup_objects() -> 'None'
+m2d.modeler.cleanup_points() -> 'None'
+m2d.modeler.cleanup_solids() -> 'None'
+m2d.modeler.clone(assignment)
+m2d.modeler.connect(assignment)
+m2d.modeler.convert_segments_to_line(assignment) -> 'bool'
+m2d.modeler.convert_to_selections(assignment, return_list: 'bool' = False)
+m2d.modeler.copy(assignment)
+m2d.modeler.cover_faces(assignment) -> 'bool'
+m2d.modeler.cover_lines(assignment) -> 'bool'
+m2d.modeler.create_air_region(x_pos: 'int' = 0, y_pos: 'int' = 0, z_pos: 'int' = 0, x_neg: 'int' = 0, y_neg: 'int' = 0, z_neg: 'int' = 0, is_percentage: 'bool' = True)
+m2d.modeler.create_airbox(offset: 'int' = 0, offset_type: 'str' = 'Absolute', name: 'str' = 'AirBox_Auto')
+m2d.modeler.create_circle(origin, radius, num_sides: int = 0, is_covered: bool = True, name: str | None = None, material: str | None = None, non_model: bool = False, **kwargs)
+m2d.modeler.create_coordinate_system(origin=None, reference_cs: 'str' = 'Global', name: 'str | None' = None, mode: 'str' = 'axis', view: 'str' = 'iso', x_pointing=None, y_pointing=None, psi: 'int' = 0, theta: 'int' = 0, phi: 'int' = 0, u=None)
+m2d.modeler.create_ellipse(origin, major_radius, ratio, is_covered: bool = True, name: str | None = None, material: str | None = None, non_model: bool = False, segments: int = 0, **kwargs)
+m2d.modeler.create_face_coordinate_system(face, origin, axis_position, axis: 'str' = 'X', name: 'str | None' = None, offset=None, rotation: 'int' = 0, always_move_to_end: 'bool' = True)
+m2d.modeler.create_face_list(assignment, name: 'str | None' = None)
+m2d.modeler.create_faceted_bondwire_from_true_surface(assignment, direction, min_size: 'float' = 0.2, number_of_segments: 'int' = 8)
+m2d.modeler.create_group(objects=None, components=None, groups=None, group_name=None)
+m2d.modeler.create_object_coordinate_system(assignment, origin, x_axis, y_axis, move_to_end: 'bool' = True, reverse_x_axis: 'bool' = False, reverse_y_axis: 'bool' = False, name: 'str | None' = None)
+m2d.modeler.create_object_from_edge(assignment, non_model: 'bool' = False)
+m2d.modeler.create_object_from_face(assignment, non_model: 'bool' = False)
+m2d.modeler.create_object_list(assignment, name: 'str | None' = None)
+m2d.modeler.create_outer_facelist(assignment, name: 'str' = 'outer_faces') -> 'bool'
+m2d.modeler.create_plane(name: 'str | None' = None, plane_base_x: 'str' = '0mm', plane_base_y: 'str' = '0mm', plane_base_z: 'str' = '0mm', plane_normal_x: 'str' = '0mm', plane_normal_y: 'str' = '0mm', plane_normal_z: 'str' = '0mm', color: 'str' = '(143 175 143)')
+m2d.modeler.create_point(position, name: 'str | None' = None, color: 'str' = '(143 175 143)')
+m2d.modeler.create_polyline(points, segment_type=None, cover_surface: 'bool' = False, close_surface: 'bool' = False, name: 'str | None' = None, material: 'str | None' = None, xsection_type=None, xsection_orient=None, xsection_width: 'int' = 1, xsection_topwidth: 'int' = 1, xsection_height: 'int' = 1, xsection_num_seg: 'int' = 0, xsection_bend_type=None, non_model: 'bool' = False)
+m2d.modeler.create_rectangle(origin, sizes, is_covered: bool = True, name: str | None = None, material: str | None = None, non_model: bool = False, **kwargs)
+m2d.modeler.create_region(pad_value: int = 300, pad_type: str = 'Percentage Offset', name: str = 'Region', **kwarg)
+m2d.modeler.create_regular_polygon(origin, start_point, num_sides: int = 6, name: str | None = None, material: str | None = None, non_model: bool = False, **kwargs)
+m2d.modeler.create_sheet_to_ground(assignment, ground_name=None, orientation: 'int' = 0, sheet_dim: 'int' = 1)
+m2d.modeler.create_spiral_on_face(assignment, width, filling_factor: 'float' = 1.5)
+m2d.modeler.create_subregion(padding_values, padding_types, assignment, name: 'str | None' = None)
+m2d.modeler.create_udp(dll, parameters, library: 'str' = 'syslib', name: 'str | None' = None)
+m2d.modeler.delete(assignment=None) -> 'bool'
+m2d.modeler.delete_objects_containing(contained_string, case_sensitive: 'bool' = True) -> 'bool'
+m2d.modeler.detach_faces(assignment, faces)
+m2d.modeler.does_object_exists(assignment) -> 'bool'
+m2d.modeler.duplicate_along_line(assignment, vector, clones: 'int' = 2, attach: 'bool' = False, is_3d_comp: 'bool' = False, duplicate_assignment: 'bool' = True)
+m2d.modeler.duplicate_and_mirror(assignment, origin, vector, is_3d_comp: 'bool' = False, duplicate_assignment: 'bool' = True)
+m2d.modeler.duplicate_around_axis(assignment, axis, angle: 'int' = 90, clones: 'int' = 2, create_new_objects: 'bool' = True, is_3d_comp: 'bool' = False, duplicate_assignment: 'bool' = True)
+m2d.modeler.duplicate_coordinate_system_to_global(coordinate_system)
+m2d.modeler.edit_region_dimensions(values) -> 'bool'
+m2d.modeler.explicitly_subtract(tool_parts, blank_parts) -> 'bool'
+m2d.modeler.export_3d_model(file_name: 'str' = '', file_path: 'str' = '', file_format: 'str' = '.step', assignment_to_export=None, assignment_to_remove=None, major_version=-1, minor_version=-1) -> 'bool'
+m2d.modeler.find_closest_edges(start_object, end_object, direction: 'int' = 0)
+m2d.modeler.find_new_objects()
+m2d.modeler.find_point_around(assignment, origin, offset, plane)
+m2d.modeler.find_port_faces(assignment)
+m2d.modeler.fit_all() -> 'None'
+m2d.modeler.flatten_assembly() -> 'bool'
+m2d.modeler.generate_object_history(assignment, non_model: 'bool' = False) -> 'bool'
+m2d.modeler.get_bodynames_from_position(position, units=None, include_non_model: 'bool' = True)
+m2d.modeler.get_boundaries_name()
+m2d.modeler.get_bounding_dimension()
+m2d.modeler.get_closest_edgeid_to_position(position, units=None)
+m2d.modeler.get_edge_length(assignment)
+m2d.modeler.get_edge_midpoint(assignment)
+m2d.modeler.get_edge_vertices(assignment)
+m2d.modeler.get_edgeid_from_position(position, assignment=None, units=None)
+m2d.modeler.get_edgeids_from_vertexid(vertex, assignment)
+m2d.modeler.get_edges_for_circuit_port(assignment, xy_plane: 'bool' = True, yz_plane: 'bool' = True, xz_plane: 'bool' = True, allow_perpendicular: 'bool' = False, tolerance: 'float' = 1e-06)
+m2d.modeler.get_edges_for_circuit_port_from_sheet(assignment, xy_plane: 'bool' = True, yz_plane: 'bool' = True, xz_plane: 'bool' = True, allow_perpendicular: 'bool' = False, tolerance: 'float' = 1e-06)
+m2d.modeler.get_edges_on_bounding_box(assignment, return_colinear: 'bool' = True, tolerance: 'float' = 1e-06)
+m2d.modeler.get_entitylist_id(name: 'str')
+m2d.modeler.get_equivalent_parallel_edges(assignment, port_on_plane: 'bool' = True, axis: 'int' = 0, start_object: 'str' = '', end_object: 'str' = '')
+m2d.modeler.get_existing_polyline(assignment)
+m2d.modeler.get_face_area(assignment)
+m2d.modeler.get_face_by_id(assignment)
+m2d.modeler.get_face_center(assignment)
+m2d.modeler.get_face_edges(assignment)
+m2d.modeler.get_face_vertices(assignment)
+m2d.modeler.get_faceid_from_position(position, assignment=None, units=None)
+m2d.modeler.get_faces_from_materials(filter_materials)
+m2d.modeler.get_group_bounding_box(group)
+m2d.modeler.get_line_ids()
+m2d.modeler.get_matched_object_name(search_string)
+m2d.modeler.get_mid_points_on_dir(assignment, axis)
+m2d.modeler.get_model_bounding_box()
+m2d.modeler.get_obj_id(assignment)
+m2d.modeler.get_object_edges(assignment)
+m2d.modeler.get_object_faces(assignment)
+m2d.modeler.get_object_from_name(assignment)
+m2d.modeler.get_object_name_from_edge_id(assignment)
+m2d.modeler.get_object_vertices(assignment)
+m2d.modeler.get_objects_by_material(material: 'str | None' = None)
+m2d.modeler.get_objects_in_group(group)
+m2d.modeler.get_objects_w_string(string_name, case_sensitive: 'bool' = True)
+m2d.modeler.get_solving_volume()
+m2d.modeler.get_vertex_position(assignment)
+m2d.modeler.get_vertices_of_line(assignment)
+m2d.modeler.get_working_coordinate_system()
+m2d.modeler.global_to_cs(point, coordinate_system)
+m2d.modeler.heal_objects(assignment, auto_heal: 'bool' = True, tolerant_stitch: 'bool' = True, simplify_geometry: 'bool' = True, tighten_gaps: 'bool' = True, heal_to_solid: 'bool' = False, stop_after_first_stitch_error: 'bool' = False, max_stitch_tolerance: 'float' = 0.001, explode_and_stitch: 'bool' = True, geometry_simplification_tolerance: 'int' = 1, maximum_generated_radius: 'int' = 1, simplify_type: 'int' = 0, tighten_gaps_width: 'float' = 1e-05, remove_silver_faces: 'bool' = True, remove_small_edges: 'bool' = True, remove_small_faces: 'bool' = True, silver_face_tolerance: 'int' = 1, small_edge_tolerance: 'int' = 1, small_face_area_tolerance: 'int' = 1, bounding_box_scale_factor: 'int' = 0, remove_holes: 'bool' = True, remove_chamfers: 'bool' = True, remove_blends: 'bool' = True, hole_radius_tolerance: 'int' = 1, chamfer_width_tolerance: 'int' = 1, blend_radius_tolerance: 'int' = 1, allowable_surface_area_change: 'int' = 5, allowable_volume_change: 'int' = 5) -> 'bool'
+m2d.modeler.import_3d_cad(input_file: 'str | Path', healing: 'bool' = False, refresh_all_ids: 'bool' = True, import_materials: 'bool' = False, create_lightweight_part: 'bool' = False, group_by_assembly: 'bool' = False, create_group: 'bool' = True, separate_disjoints_lumped_object: 'bool' = False, import_free_surfaces: 'bool' = False, point_coincidence_tolerance: 'float' = 1e-06, reduce_stl: 'bool' = False, reduce_percentage: 'int' = 0, reduce_error: 'int' = 0, merge_planar_faces: 'bool' = True, merge_angle: 'float' = 0.02) -> 'bool'
+m2d.modeler.import_discovery_model(input_file: 'str') -> 'bool'
+m2d.modeler.import_primitives_from_file(input_file: 'str | None' = None, primitives: 'dict | None' = None)
+m2d.modeler.import_spaceclaim_document(input_file: 'str') -> 'bool'
+m2d.modeler.imprint(blank_list, tool_list, keep_originals: 'bool' = True) -> 'bool'
+m2d.modeler.imprint_normal_projection(assignment, keep_originals: 'bool' = True)
+m2d.modeler.imprint_vector_projection(assignment, vector_points, distance, keep_originals: 'bool' = True)
+m2d.modeler.intersect(assignment, keep_originals: 'bool' = False)
+m2d.modeler.invert_cs(coordinate_system, to_global: 'bool' = False)
+m2d.modeler.load_scdm_in_hfss(input_file: 'str') -> 'bool'
+m2d.modeler.mirror(assignment, origin, vector, duplicate: 'bool' = False, is_3d_comp: 'bool' = False, duplicate_assignment: 'bool' = True)
+m2d.modeler.modeler_variable(value)
+m2d.modeler.move(assignment, vector) -> 'bool'
+m2d.modeler.move_edge(assignment, offset: 'float' = 1.0) -> 'bool'
+m2d.modeler.move_face(assignment, offset: 'float' = 1.0) -> 'bool'
+m2d.modeler.objects_in_bounding_box(bounding_box, check_lines: bool = True, check_sheets: bool = True)
+m2d.modeler.paste()
+m2d.modeler.polyline_segment(type, num_seg: 'int' = 0, num_points: 'int' = 0, arc_angle: 'int' = 0, arc_center=None, arc_plane=None)
+m2d.modeler.project_sheet(sheet, object, thickness, draft_angle: 'int' = 0, angle_unit: 'str' = 'deg', keep_originals: 'bool' = True) -> 'bool'
+m2d.modeler.purge_history(assignment, non_model: 'bool' = False) -> 'bool'
+m2d.modeler.radial_split_2D(radius, name: str) -> bool
+m2d.modeler.reassign_subregion(region, parts) -> 'bool'
+m2d.modeler.reference_cs_to_global(coordinate_system)
+m2d.modeler.refresh() -> 'None'
+m2d.modeler.refresh_all_ids()
+m2d.modeler.rotate(assignment, axis, angle: 'float' = 90.0, units: 'str' = 'deg') -> 'bool'
+m2d.modeler.scale(assignment, x: 'float' = 2.0, y: 'float' = 2.0, z: 'float' = 2.0) -> 'bool'
+m2d.modeler.section(assignment, plane, create_new: 'bool' = True, section_cross_object: 'bool' = False) -> 'bool'
+m2d.modeler.select_allfaces_fromobjects(assignment)
+m2d.modeler.separate_bodies(assignment, create_group: 'bool' = False)
+m2d.modeler.set_object_model_state(assignment, model: 'bool' = True) -> 'bool'
+m2d.modeler.set_objects_deformation(assignment) -> 'bool'
+m2d.modeler.set_objects_temperature(assignment, ambient_temperature: 'int' = 22, create_project_var: 'bool' = False) -> 'bool'
+m2d.modeler.set_working_coordinate_system(name: 'str') -> 'bool'
+m2d.modeler.setunassigned_mats() -> 'bool'
+m2d.modeler.simplify_objects(assignment, simplify_type: 'str' = 'Polygon Fit', extrusion_axis: 'str' = 'Auto', clean_up: 'bool' = True, allow_splitting: 'bool' = True, separate_bodies: 'bool' = True, clone_body: 'bool' = True, generate_primitive_history: 'bool' = False, interior_points_on_arc: 'int' = 5, length_threshold_percentage: 'int' = 25, create_group_for_new_objects: 'bool' = False) -> 'bool'
+m2d.modeler.split(assignment, plane=None, sides: 'str' = 'Both', tool=None, split_crossing_objs: 'bool' = False, delete_invalid_objs: 'bool' = True)
+m2d.modeler.subtract(blank_list, tool_list, keep_originals: 'bool' = True) -> 'bool'
+m2d.modeler.sweep_along_normal(assignment, faces, sweep_value: 'float' = 0.1)
+m2d.modeler.sweep_along_path(assignment, sweep_object, draft_angle: 'int' = 0, draft_type: 'str' = 'Round', is_check_face_intersection: 'bool' = False, twist_angle: 'int' = 0)
+m2d.modeler.sweep_along_vector(assignment, sweep_vector, draft_angle: 'int' = 0, draft_type: 'str' = 'Round')
+m2d.modeler.sweep_around_axis(assignment, axis, sweep_angle: 'int' = 360, draft_angle: 'int' = 0, number_of_segments: 'int' = 0)
+m2d.modeler.thicken_sheet(assignment, thickness, both_sides: 'bool' = False)
+m2d.modeler.uncover_faces(assignment) -> 'bool'
+m2d.modeler.ungroup(groups) -> 'bool'
+m2d.modeler.unite(assignment, purge: 'bool' = False, keep_originals: 'bool' = False)
+m2d.modeler.update_geometry_property(assignment, name: 'str | None' = None, value=None)
+m2d.modeler.update_object(assignment)
+m2d.modeler.update_udp(assignment, operation, parameters) -> 'bool'
+m2d.modeler.value_in_object_units(value)
+m2d.modeler.vertex_data_of_lines(text_filter=None)
+m2d.modeler.wrap_sheet(sheet, object, imprinted: 'bool' = False) -> 'bool'
+
+==================== METHODS OF m2d.materials ====================
+m2d.materials.add_material(name: str, properties=None)
+m2d.materials.add_material_sweep(assignment, name: str)
+m2d.materials.add_surface_material(name: str, emissivity=None)
+m2d.materials.check_thermal_modifier(material: str) -> bool
+m2d.materials.duplicate_material(material: str, name: str | None = None, properties=None)
+m2d.materials.duplicate_surface_material(material: str, name: str | None = None)
+m2d.materials.exists_material(material: str)
+m2d.materials.export_materials_to_file(output_file)
+m2d.materials.get_used_project_material_names()
+m2d.materials.import_materials_from_excel(input_file: str)
+m2d.materials.import_materials_from_file(input_file: str | None = None)
+m2d.materials.import_materials_from_workbench(input_file: str, name_suffix=None)
+m2d.materials.remove_material(material: str, library: str = 'Project') -> bool
+
+==================== METHODS OF m2d.boundaries ====================
+m2d.boundaries.append(object, /)
+m2d.boundaries.clear()
+m2d.boundaries.copy()
+m2d.boundaries.count(value, /)
+m2d.boundaries.extend(iterable, /)
+m2d.boundaries.index(value, start=0, stop=9223372036854775807, /)
+m2d.boundaries.insert(index, object, /)
+m2d.boundaries.pop(index=-1, /)
+m2d.boundaries.remove(value, /)
+m2d.boundaries.reverse()
+m2d.boundaries.sort(*, key=None, reverse=False)
+
+==================== METHODS OF m2d.mesh ====================
+m2d.mesh.assign_curvature_extraction(assignment, disabled_for_faceted: bool = True, name: str | None = None)
+m2d.mesh.assign_curvilinear_elements(assignment, enable: bool = True, name: str | None = None)
+m2d.mesh.assign_cylindrical_gap(entity, name: str | None = None, band_mapping_angle=None, clone_mesh: bool = False, moving_side_layers: int = 1, static_side_layers: int = 1)
+m2d.mesh.assign_density_control(assignment, refine_inside: bool = True, maximum_element_length=None, layers_number=None, name: str | None = None)
+m2d.mesh.assign_edge_cut(assignment, layer_thickness: str = '1mm', name: str | None = None)
+m2d.mesh.assign_initial_mesh(method: str = 'Auto', surface_deviation=None, normal_deviation=None, aspect_ratio=None, flex_mesh: bool = False, curvilinear: bool = False, fallback: bool = True, phi: bool = True, auto_model_resolution: bool = True, model_resolution_length: str = '0.0001mm') -> bool
+m2d.mesh.assign_initial_mesh_from_slider(level: int = 5, method: str = 'Auto', dynamic_surface: bool = True, flex_mesh: bool = False, curvilinear: bool = False, fallback: bool = True, phi: bool = True, auto_model_resolution: bool = True, model_resolution_length: str = '0.0001mm') -> bool
+m2d.mesh.assign_length_mesh(assignment, inside_selection: bool = True, maximum_length: int = 1, maximum_elements: int = 1000, name: str | None = None)
+m2d.mesh.assign_model_resolution(assignment, defeature_length=None, name: str | None = None)
+m2d.mesh.assign_rotational_layer(assignment, layers_number: int = 3, total_thickness: str = '1mm', name: str | None = None)
+m2d.mesh.assign_skin_depth(assignment, skin_depth: str = '0.2mm', maximum_elements=None, triangulation_max_length: str = '0.1mm', layers_number: str = '2', name: str | None = None)
+m2d.mesh.assign_surf_priority_for_tau(assignment, surface_priority: int = 0)
+m2d.mesh.assign_surface_mesh(assignment, level, name: str | None = None)
+m2d.mesh.assign_surface_mesh_manual(assignment, surface_deviation=None, normal_dev=None, aspect_ratio=None, name: str | None = None)
+m2d.mesh.delete_mesh_operations(mesh_type=None) -> bool
+m2d.mesh.generate_mesh(name: str)
+
+==================== METHODS OF m2d.post ====================
+m2d.post.animate_fields_from_aedtplt(plot_name: 'str', plot_folder: 'str | None' = None, variation_variable: 'str' = 'Phase', variations: 'list[str]' = ['0deg'], project_path: 'str' = '', export_gif: 'bool' = False, show: 'bool' = True, dark_mode: 'bool' = False, show_bounding: 'bool' = False, show_grid: 'bool' = False)
+m2d.post.available_display_types(report_category=None) -> 'list'
+m2d.post.available_quantities_categories(report_category=None, display_type=None, solution: 'str | None' = None, context=None, is_siwave_dc: 'bool' = False)
+m2d.post.available_report_quantities(report_category=None, display_type=None, solution: 'str | None' = None, quantities_category=None, context=None, is_siwave_dc: 'bool' = False, differential_pairs: 'bool' = False)
+m2d.post.available_report_solutions(report_category=None)
+m2d.post.change_field_property(plot_name: 'str', property_name: 'str', property_value: 'Any') -> 'None'
+m2d.post.copy_report_data(plot_name, paste: 'bool' = True) -> 'bool'
+m2d.post.create_3d_plot(solution_data: 'Any', nominal_sweep: 'str | None' = None, nominal_value: 'str | None' = None, primary_sweep: 'str' = 'Theta', secondary_sweep: 'str' = 'Phi', snapshot_path: 'str | Path | None' = None, show: 'bool' = True) -> 'bool'
+m2d.post.create_fieldplot_cutplane(assignment: 'str | list[str]', quantity: 'str', setup: 'str | None' = None, intrinsics: 'str | dict[str, str] | None' = None, plot_name: 'str | None' = None, filter_objects: 'list[str] | None' = None, field_type: 'str' = 'DC R/L Fields') -> 'FieldPlot'
+m2d.post.create_fieldplot_layers(layers, quantity, setup: str | None = None, nets=None, plot_on_surface: bool = True, intrinsics=None, name: str | None = None)
+m2d.post.create_fieldplot_layers_nets(layers_nets, quantity, setup: str | None = None, intrinsics=None, plot_on_surface: bool = True, plot_name=None)
+m2d.post.create_fieldplot_line(assignment: 'str | list[str]', quantity: 'str', setup: 'str | None' = None, intrinsics: 'str | dict[str, str] | None' = None, plot_name: 'str | None' = None, field_type: 'str' = 'DC R/L Fields') -> 'FieldPlot'
+m2d.post.create_fieldplot_line_traces(seeding_faces, in_volume_tracing_objs=None, surface_tracing_objs=None, setup: str | None = None, intrinsics=None, plot_name=None, field_type: str = 'DC R/L Fields')
+m2d.post.create_fieldplot_surface(assignment: 'str | list[str] | list[FacePrimitive]', quantity: 'str', setup: 'str | None' = None, intrinsics: 'str | dict[str, str] | None' = None, plot_name: 'str | None' = None, field_type: 'str' = 'DC R/L Fields') -> 'FieldPlot'
+m2d.post.create_fieldplot_volume(assignment: 'str | list[str]', quantity: 'str', setup: 'str | None' = None, intrinsics: 'str | dict[str, str] | None' = None, plot_name: 'str | None' = None, field_type: 'str' = 'DC R/L Fields') -> 'FieldPlot'
+m2d.post.create_report(expressions=None, setup_sweep_name=None, domain: 'str' = 'Sweep', variations: 'dict | None' = None, primary_sweep_variable=None, secondary_sweep_variable=None, report_category=None, plot_type: 'str' = 'Rectangular Plot', context=None, subdesign_id: 'int | None' = None, polyline_points: 'int' = 1001, plot_name=None) -> 'Standard'
+m2d.post.create_report_from_configuration(input_file: 'str | None' = None, report_settings=None, solution_name=None, name: 'str | None' = None, matplotlib: 'bool' = False, show: 'bool' = True)
+m2d.post.delete_field_plot(name: 'str') -> 'bool'
+m2d.post.delete_report(plot_name=None) -> 'bool'
+m2d.post.evaluate_inception_voltage(plot_name, field_line_number=None) -> bool
+m2d.post.export_field_file(quantity: 'str', solution: 'str | None' = None, variations: 'dict[str, Any] | None' = None, output_file: 'str | None' = None, assignment: 'str' = 'AllObjects', objects_type: 'str' = 'Vol', intrinsics: 'str | dict[str, str] | None' = None, phase: 'str | None' = None, sample_points_file: 'str | None' = None, sample_points: 'list[list[float]] | None' = None, export_with_sample_points: 'bool' = True, reference_coordinate_system: 'str' = 'Global', export_in_si_system: 'bool' = True, export_field_in_reference: 'bool' = True) -> 'bool'
+m2d.post.export_field_file_on_grid(quantity: 'str', solution: 'str | None' = None, variations: 'dict[str, Any] | None' = None, file_name: 'str | None' = None, grid_type: 'str' = 'Cartesian', grid_center: 'list[float] | None' = None, grid_start: 'list[float] | None' = None, grid_stop: 'list[float] | None' = None, grid_step: 'list[float] | None' = None, is_vector: 'bool' = False, intrinsics: 'str | dict[str, str] | None' = None, phase: 'str | None' = None, export_with_sample_points: 'bool' = True, reference_coordinate_system: 'str' = 'Global', export_in_si_system: 'bool' = True, export_field_in_reference: 'bool' = True) -> 'str | bool'
+m2d.post.export_field_jpg(file_name: 'str', plot_name: 'str', folder_name: 'str', orientation: 'str' = 'isometric', width: 'int' = 1920, height: 'int' = 1080, display_wireframe: 'bool' = True, selections: 'list[str] | None' = None, show_axis: 'bool' = True, show_grid: 'bool' = True, show_ruler: 'bool' = True, show_region: 'str' = 'Default') -> 'bool'
+m2d.post.export_field_plot(plot_name: 'str', output_dir: 'str | Path', file_name: 'str' = '', file_format: 'str' = 'aedtplt') -> 'str | bool'
+m2d.post.export_inception_voltage(plot_name, output_file, field_line_number=None) -> bool
+m2d.post.export_mesh_obj(setup: 'str | None' = None, intrinsics: 'str | dict[str, str] | None' = None, export_air_objects: 'bool' = False, on_surfaces: 'bool' = True) -> 'str | None'
+m2d.post.export_model_obj(assignment: 'str | list[str] | None' = None, export_path: 'str | Path | None' = None, export_as_multiple_objects: 'bool' = False, air_objects: 'bool' = False) -> 'list[str]'
+m2d.post.export_model_picture(full_name: 'str | Path | None' = None, show_axis: 'bool' = True, show_grid: 'bool' = True, show_ruler: 'bool' = True, show_region: 'str' = 'Default', selections: 'list[str] | None' = None, field_selections: 'str | list[str] | None' = None, orientation: 'str' = 'isometric', width: 'int' = 0, height: 'int' = 0) -> 'str'
+m2d.post.export_report_to_csv(project_dir, plot_name, uniform: 'bool' = False, start=None, end=None, step=None, use_trace_number_format: 'bool' = False)
+m2d.post.export_report_to_file(output_dir, plot_name, extension, unique_file: 'bool' = False, uniform: 'bool' = False, start=None, end=None, step=None, use_trace_number_format: 'bool' = False)
+m2d.post.export_report_to_jpg(project_path, plot_name, width: 'int' = 800, height: 'int' = 450, image_format: 'str' = 'jpg') -> 'bool'
+m2d.post.get_all_report_quantities(solution: 'str | None' = None, context=None, is_siwave_dc: 'bool' = False)
+m2d.post.get_efields_data(setup_sweep_name: 'str' = '', ff_setup: 'str' = 'Infinite Sphere1') -> 'dict[str, Any]'
+m2d.post.get_field_extremum(assignment: 'str', max_min: "Literal['Max', 'Min']", location: "Literal['Surface', 'Volume']", field: 'str', setup: 'str | None' = None, intrinsics: 'dict[str, str] | None' = None) -> 'tuple[tuple[float, float, float], float]'
+m2d.post.get_model_plotter_geometries(objects: 'list[str] | None' = None, plot_as_separate_objects: 'bool' = True, plot_air_objects: 'bool' = False, force_opacity_value: 'float | None' = None, array_coordinates: 'list[list[float]] | None' = None, generate_mesh: 'bool' = True, get_objects_from_aedt: 'bool' = True)
+m2d.post.get_scalar_field_value(quantity: 'str', scalar_function: 'str' = 'Maximum', solution: 'str | None' = None, variations: 'dict[str, Any] | None' = None, is_vector: 'bool' = False, intrinsics: 'str | dict[str, str] | None' = None, phase: 'str | None' = None, object_name: 'str' = 'AllObjects', object_type: 'str' = 'volume', adjacent_side: 'bool' = False) -> 'float'
+m2d.post.get_solution_data(expressions=None, setup_sweep_name=None, domain=None, variations: 'dict | None' = None, primary_sweep_variable=None, report_category=None, context=None, subdesign_id: 'int | None' = None, polyline_points: 'int' = 1001, math_formula=None) -> "'SolutionData'"
+m2d.post.get_solution_data_per_variation(solution_type: 'str' = 'Far Fields', setup_sweep_name: 'str' = '', context=None, sweeps=None, expressions: 'str' = '')
+m2d.post.modify_inception_parameters(plot_name: str, gas_type: int = 0, gas_pressure: int = 1, use_inception: bool = False, potential_u0: int = 0, potential_k: int = 0, potential_a: int = 1, critical_value: float = 2.588, streamer_constant: float = 9.15, ionization_check: bool = False, ionization_equation: str = 'x', ionization_dataset: list | None = None) -> bool
+m2d.post.nb_display(show_axis: 'bool' = True, show_grid: 'bool' = True, show_ruler: 'bool' = True)
+m2d.post.paste_report_data() -> 'bool'
+m2d.post.plot_animated_field(quantity: 'str', assignment: 'str | list[str]', plot_type: 'str' = 'Surface', setup: 'str | None' = None, intrinsics: 'str | dict[str, str] | None' = None, variation_variable: 'str' = 'Phi', variations: 'list[str] | None' = None, view: 'str' = 'isometric', show: 'bool' = True, scale_min: 'float | None' = None, scale_max: 'float | None' = None, plot_cad_objs: 'bool' = True, log_scale: 'bool' = True, zoom: 'float | None' = None, export_gif: 'bool' = False, export_path: 'str' = '', force_opacity_value: 'float' = 0.1, dark_mode: 'bool' = False, show_grid: 'bool' = False, show_bounding: 'bool' = False, show_legend: 'bool' = True, filter_objects: 'list[str] | None' = None, file_format: 'str' = 'case')
+m2d.post.plot_field(quantity: 'str', assignment: 'str | list[str]', plot_type: 'str' = 'Surface', setup: 'str | None' = None, intrinsics: 'str | dict[str, str] | None' = None, mesh_on_fields: 'bool' = False, view: 'str' = 'isometric', plot_label: 'str | None' = None, show: 'bool' = True, scale_min: 'float | None' = None, scale_max: 'float | None' = None, plot_cad_objs: 'bool' = True, log_scale: 'bool' = False, export_path: 'str' = '', image_format: 'str' = 'jpg', keep_plot_after_generation: 'bool' = False, dark_mode: 'bool' = False, show_bounding: 'bool' = False, show_grid: 'bool' = False, show_legend: 'bool' = True, filter_objects: 'list[str] | None' = None, plot_as_separate_objects: 'bool' = True, file_format: 'str' = 'case')
+m2d.post.plot_field_from_fieldplot(plot_name: 'str', project_path: 'str' = '', mesh_plot: 'bool' = False, image_format: 'str' = 'jpg', view: 'str' = 'isometric', plot_label: 'str' = 'Temperature', plot_folder: 'str | None' = None, show: 'bool' = True, scale_min: 'float | None' = None, scale_max: 'float | None' = None, plot_cad_objs: 'bool' = True, log_scale: 'bool' = True, dark_mode: 'bool' = False, show_grid: 'bool' = False, show_bounding: 'bool' = False, show_legend: 'bool' = True, plot_as_separate_objects: 'bool' = True, file_format: 'str' = 'case')
+m2d.post.plot_model_obj(objects: 'list[str] | None' = None, show: 'bool' = True, export_path: 'str | Path | None' = None, plot_as_separate_objects: 'bool' = True, plot_air_objects: 'bool' = False, force_opacity_value: 'float | None' = None, clean_files: 'bool' = False, array_coordinates: 'list[list[float]] | None' = None, view: 'str' = 'isometric', show_legend: 'bool' = True, dark_mode: 'bool' = False, show_bounding: 'bool' = False, show_grid: 'bool' = False)
+m2d.post.plot_scene(frames: 'list[str] | str', gif_path: 'str | Path', norm_index: 'int' = 0, dy_rng: 'int' = 0, fps: 'int' = 30, show: 'bool' = True, view: 'str' = 'yz', zoom: 'float' = 2.0, convert_fields_in_db: 'bool' = False, log_multiplier: 'float' = 10.0) -> 'bool'
+m2d.post.rename_report(plot_name, new_name) -> 'bool'
+m2d.post.steal_focus_oneditor() -> 'bool'
