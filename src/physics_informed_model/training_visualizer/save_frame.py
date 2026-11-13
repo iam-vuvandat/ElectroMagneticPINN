@@ -281,19 +281,35 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[1, 0].set_title("PDE residual map")
     axs[1, 0].set_aspect('equal')
 
+    if_levels = getattr(vis_cfg, 'if_discrete_levels', [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2])
+    if_min = getattr(vis_cfg, 'if_vmin', None)
+    if_min = float(if_min) if if_min is not None else float(if_levels[0])
+    if_max = getattr(vis_cfg, 'if_vmax', None)
+    if_max = float(if_max) if if_max is not None else float(if_levels[-1])
+
+    if res_scale_mode == 'log' and if_levels is not None:
+        if_cmap = plt.get_cmap(vis_cfg.res_cmap, len(if_levels) - 1)
+        norm_if = mcolors.BoundaryNorm(if_levels, ncolors=if_cmap.N, clip=True)
+    elif res_scale_mode == 'log':
+        if_cmap = plt.get_cmap(vis_cfg.res_cmap)
+        norm_if = LogNorm(vmin=if_min, vmax=if_max, clip=True)
+    else:
+        if_cmap = plt.get_cmap(vis_cfg.res_cmap)
+        norm_if = Normalize(vmin=if_min, vmax=if_max, clip=True)
+
     def plot_interface_loss_map(ax_target, err_vals, title_str, cbar_label):
         draw_domain_outlines(ax_target, color='#888888', linestyle='--', linewidth=0.8, alpha=0.7)
         if if_coords_all.shape[0] > 0 and err_vals.shape[0] > 0:
-            err_clamped = np.clip(err_vals, res_min, res_max)
+            err_clamped = np.clip(err_vals, if_min, if_max)
             sc = ax_target.scatter(
                 if_coords_all[:, 0], if_coords_all[:, 1],
-                c=err_clamped, cmap=base_cmap, norm=norm_res,
+                c=err_clamped, cmap=if_cmap, norm=norm_if,
                 s=6.0, marker='o', linewidths=0
             )
             cbar_if = fig.colorbar(
                 sc,
                 ax=ax_target,
-                ticks=disc_levels if (res_scale_mode == 'log' and disc_levels is not None) else None
+                ticks=if_levels if (res_scale_mode == 'log' and if_levels is not None) else None
             )
             if res_scale_mode == 'log':
                 cbar_if.ax.set_yscale('log')
