@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 
+
 class CollocationSampler:
     def __init__(self, electro_magnetic_pinn=None, device=None, seed=42, max_sampling_attempts=200):
         self.electro_magnetic_pinn = electro_magnetic_pinn
@@ -24,18 +25,18 @@ class CollocationSampler:
     def sample_domain_interior_points(self, domain_object, bounding_box, number_of_points):
         if number_of_points <= 0:
             return torch.empty((0, 2), dtype=torch.float32, device=self.device)
-            
+
         if domain_object.geometry_config.outline is None or len(domain_object.geometry_config.outline) < 3:
-            raise ValueError(f"Lỗi lấy mẫu: Domain '{domain_object.domain_name}' có outline không hợp lệ.")
+            raise ValueError(f"Sampling error: Domain '{domain_object.domain_name}' has an invalid outline.")
         if domain_object.section_area <= 1e-12:
-            raise ValueError(f"Lỗi lấy mẫu: Domain '{domain_object.domain_name}' có diện tích bằng 0.")
+            raise ValueError(f"Sampling error: Domain '{domain_object.domain_name}' has zero area.")
 
         outline = np.array(domain_object.geometry_config.outline)
         x_min, x_max = float(np.min(outline[:, 0])), float(np.max(outline[:, 0]))
         y_min, y_max = float(np.min(outline[:, 1])), float(np.max(outline[:, 1]))
 
         if x_max <= x_min or y_max <= y_min:
-            raise ValueError(f"Lỗi lấy mẫu: Bounding box của domain '{domain_object.domain_name}' suy biến.")
+            raise ValueError(f"Sampling error: Degenerate bounding box for domain '{domain_object.domain_name}'.")
 
         collected_points = []
         collected_count = 0
@@ -45,13 +46,13 @@ class CollocationSampler:
         while collected_count < number_of_points:
             if attempts >= self.max_sampling_attempts:
                 raise RuntimeError(
-                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho domain '{domain_object.domain_name}'."
+                    f"Sampling error: Exceeded {self.max_sampling_attempts} attempts for domain '{domain_object.domain_name}'."
                 )
             attempts += 1
             points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
             sdf = domain_object.compute_signed_distance_field(points_pool).view(-1)
             inside_mask = sdf <= 0.0
-            
+
             if inside_mask.any():
                 valid = points_pool[inside_mask]
                 collected_points.append(valid)
@@ -143,7 +144,7 @@ class CollocationSampler:
 
         mids = 0.5 * (sub_starts + sub_ends)
         mids_tensor = torch.tensor(mids, dtype=torch.float32, device=self.device)
-        
+
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         other_domains = [
             d for d in sim_domain.domains_list
@@ -175,7 +176,6 @@ class CollocationSampler:
         return self.sample_subsegments_points(shared_starts, shared_ends, number_of_points)
 
     def sample_domain_surface_points(self, domain_object, number_of_points):
-        # Tương thích ngược
         sub_starts, sub_ends = self._build_split_subsegments(domain_object)
         return self.sample_subsegments_points(sub_starts, sub_ends, number_of_points)
 
@@ -189,7 +189,7 @@ class CollocationSampler:
         while collected_count < target_count:
             if attempts >= self.max_sampling_attempts:
                 raise RuntimeError(
-                    f"Lỗi lấy mẫu: Vượt quá {self.max_sampling_attempts} lần thử cho miền background."
+                    f"Sampling error: Exceeded {self.max_sampling_attempts} attempts for background domain."
                 )
             attempts += 1
             points_pool = self._draw_sobol_box(pool_size, x_min, x_max, y_min, y_max)
@@ -208,11 +208,20 @@ class CollocationSampler:
         x_min, x_max = simulation_domain_object.x_boundaries_tuple
         y_min, y_max = simulation_domain_object.y_boundaries_tuple
         if x_max <= x_min or y_max <= y_min:
-            raise ValueError("Lỗi lấy mẫu: Khung biên của SimulationDomain không hợp lệ.")
+            raise ValueError("Sampling error: Invalid bounding box in SimulationDomain.")
 
-        # Lấy mẫu đồng đều (Sobol) toàn bộ miền không khí nền loại trừ phần thuộc vật liệu
         return self._sample_air_box(simulation_domain_object, number_of_points, x_min, x_max, y_min, y_max)
 
+    def sample_outer_boundary_points(self, simulation_domain_object):
+        boundary_obj = getattr(simulation_domain_object, 'boundary', None)
+        if boundary_obj is None:
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+
+        enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor')
+        if enforce_method != 'soft_loss':
+            return torch.empty((0, 2), dtype=torch.float32, device=self.device)
+
+        return boundary_obj.sample_boundary_points(device=self.device)
 
     def generate_all_domain_points(self, simulation_domain_object=None):
         if simulation_domain_object is None:
@@ -220,7 +229,8 @@ class CollocationSampler:
 
         domains_data = {
             "domains": {},
-            "shared_interfaces": {}
+            "shared_interfaces": {},
+            "boundary_points": self.sample_outer_boundary_points(simulation_domain_object)
         }
         bb = (simulation_domain_object.x_boundaries_tuple, simulation_domain_object.y_boundaries_tuple)
         mat_domains = [d for d in simulation_domain_object.domains_list if getattr(d, 'domain_name', '') != 'background']
@@ -248,7 +258,6 @@ class CollocationSampler:
                 "surface_points": outer_pts.detach().clone().requires_grad_(True)
             }
 
-        # Tạo điểm giao diện chia trước cho các cặp vật liệu giáp kề nhau
         for i in range(len(mat_domains)):
             for j in range(i + 1, len(mat_domains)):
                 dom_a, dom_b = mat_domains[i], mat_domains[j]
@@ -268,7 +277,6 @@ class CollocationSampler:
                     }
 
         return domains_data
-
 
     def get_training_points_count(self, domains_data=None):
         from physics_domain.get_training_points_count import get_training_points_count

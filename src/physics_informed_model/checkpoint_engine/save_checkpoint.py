@@ -49,6 +49,7 @@ def save_checkpoint(pinn_instance, filepath=None):
     tm = pinn_instance.training_manager_instance
     sim = pinn_instance.simulation_domain_engine_instance
     vis = pinn_instance.visualizer_instance
+    boundary_obj = getattr(sim, "boundary", None) if sim else None
 
     checkpoint_data = {
         "model_state_dict": arch.state_dict() if arch else None,
@@ -74,15 +75,20 @@ def save_checkpoint(pinn_instance, filepath=None):
         "physics_config": sim.physics_config if sim else None,
         "x_boundaries_tuple": sim.x_boundaries_tuple if sim else None,
         "y_boundaries_tuple": sim.y_boundaries_tuple if sim else None,
+        "boundary_geometry_config": boundary_obj.geometry_config if boundary_obj else None,
+        "boundary_physics_config": boundary_obj.physics_config if boundary_obj else None,
+        "boundary_training_config": boundary_obj.training_config if boundary_obj else None,
         "loss_history": vis.loss_history if vis else [],
         "epoch_history": vis.epoch_history if vis else [],
         "pde_loss_history": getattr(vis, "pde_loss_history", []) if vis else [],
         "az_loss_history": getattr(vis, "az_loss_history", []) if vis else [],
         "bn_loss_history": getattr(vis, "bn_loss_history", []) if vis else [],
         "ht_loss_history": getattr(vis, "ht_loss_history", []) if vis else [],
+        "bc_loss_history": getattr(vis, "bc_loss_history", []) if vis else [],
         "w_az_history": getattr(vis, "w_az_history", []) if vis else [],
         "w_bn_history": getattr(vis, "w_bn_history", []) if vis else [],
         "w_ht_history": getattr(vis, "w_ht_history", []) if vis else [],
+        "w_bc_history": getattr(vis, "w_bc_history", []) if vis else [],
     }
 
     checkpoint_data = _move_tensors_to_cpu(checkpoint_data)

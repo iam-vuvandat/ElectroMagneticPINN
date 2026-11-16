@@ -85,7 +85,7 @@ def main():
     fem_config.analysis.min_passes = 2
     fem_config.analysis.percent_error = 1.0
     fem_config.analysis.max_element_length = "0.025mm"
-    
+
     fld_path = Path(parent_directory) / "src" / "ansys_aedt" / "maxwell_2d" / "toy_model_1" / "flux_density.fld"
     fem_config.analysis.b_fld_path = str(fld_path)
     fem_config.analysis.grid_min = ["-120mm", "-120mm", "0mm"]
@@ -118,6 +118,11 @@ def main():
     sim_domain.physics_config.allow_overlapping_domains = False
     sim_domain.x_boundaries_tuple = (-0.12, 0.12)
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
+
+    sim_domain.boundary.physics_config.enforce_method = "soft_loss"
+    sim_domain.boundary.physics_config.potential_value = 0.0
+    sim_domain.boundary.training_config.number_of_boundary_points = 1000
+    sim_domain.boundary.training_config.boundary_loss_weight = 1.0
 
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 10
@@ -168,10 +173,6 @@ def main():
     pinn_model.training_config.number_of_lbfgs_iterations = 4000
     pinn_model.training_config.lbfgs_learning_rate = 0.5
 
-
-
-
-
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke",
         material_name=yoke_material_name,
@@ -201,10 +202,6 @@ def main():
     iron_yoke.nu_network_config.fourier_sigma = 1.0
     iron_yoke.nu_network_config.fourier_mapping_size = 32
     iron_yoke.build_domain()
-
-
-
-
 
     magnet_left = sim_domain.create_material_domain(
         domain_name="magnet_left",
@@ -267,7 +264,7 @@ def main():
         pinn_model.execute_training_process()
         print(f"[*] Saving PINN checkpoint: '{checkpoint_name}'...")
         pinn_model.save_checkpoint(checkpoint_name)
-        
+
         if "google.colab" in sys.modules:
             checkpoint_path = resolve_checkpoint_filepath(checkpoint_name)
             if checkpoint_path.exists():

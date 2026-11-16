@@ -73,6 +73,15 @@ def load_checkpoint(pinn_instance, filepath=None):
             sim.x_boundaries_tuple = checkpoint_data["x_boundaries_tuple"]
         if "y_boundaries_tuple" in checkpoint_data:
             sim.y_boundaries_tuple = checkpoint_data["y_boundaries_tuple"]
+        boundary_obj = getattr(sim, "boundary", None)
+        if boundary_obj:
+            if checkpoint_data.get("boundary_geometry_config") is not None:
+                boundary_obj.geometry_config = checkpoint_data["boundary_geometry_config"]
+                boundary_obj.build_boundary()
+            if checkpoint_data.get("boundary_physics_config") is not None:
+                boundary_obj.physics_config = checkpoint_data["boundary_physics_config"]
+            if checkpoint_data.get("boundary_training_config") is not None:
+                boundary_obj.training_config = checkpoint_data["boundary_training_config"]
 
     if pinn_instance.pinn_architecture_instance is None:
         pinn_instance._build_system()
@@ -122,9 +131,11 @@ def load_checkpoint(pinn_instance, filepath=None):
         vis.az_loss_history = checkpoint_data.get("az_loss_history", [])
         vis.bn_loss_history = checkpoint_data.get("bn_loss_history", [])
         vis.ht_loss_history = checkpoint_data.get("ht_loss_history", [])
+        vis.bc_loss_history = checkpoint_data.get("bc_loss_history", [])
         vis.w_az_history = checkpoint_data.get("w_az_history", [])
         vis.w_bn_history = checkpoint_data.get("w_bn_history", [])
         vis.w_ht_history = checkpoint_data.get("w_ht_history", [])
+        vis.w_bc_history = checkpoint_data.get("w_bc_history", [])
 
     print(
         f"[*] Successfully loaded single-file pickle checkpoint from: {path}"

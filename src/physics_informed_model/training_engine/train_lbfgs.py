@@ -24,7 +24,7 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
     )
 
     lbfgs_counter = [0]
-    
+
     def closure():
         training_manager_instance.optimizer_lbfgs.zero_grad(set_to_none=True)
         loss = training_manager_instance.compute_loss(
@@ -35,15 +35,17 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
         if not torch.isfinite(loss):
             return loss
         loss.backward()
-        
+
         lbfgs_counter[0] += 1
         if lbfgs_counter[0] == 1 or lbfgs_counter[0] % log_interval == 0:
             bd = training_manager_instance.last_loss_breakdown
+            lmb = bd.get('relobralo_lambdas', {})
+            bc_str = f" | BC = {bd.get('boundary_loss', 0.0):.2e}" if 'loss_bc' in lmb else ""
             print(
                 f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
-                f"PDE = {bd.get('pde_loss', 0.0):.3e}"
+                f"PDE = {bd.get('pde_loss', 0.0):.3e}{bc_str}"
             )
         return loss
-        
+
     training_manager_instance.optimizer_lbfgs.step(closure)
     return domains_data

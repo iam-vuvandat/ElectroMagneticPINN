@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 
+
 def plot_collocation_sampling(domains_data, save_path=None, show=True):
     plt.rcParams.update({
         "font.family": "serif",
@@ -24,7 +25,7 @@ def plot_collocation_sampling(domains_data, save_path=None, show=True):
         domain_obj = data.get("domain_object")
         d_name = getattr(domain_obj, "domain_name", domain_key)
         c_dom = domain_colors[idx % len(domain_colors)]
-        
+
         interior_pts = data.get("interior_points")
         surface_pts = data.get("outer_surface_points", data.get("surface_points"))
 
@@ -32,7 +33,7 @@ def plot_collocation_sampling(domains_data, save_path=None, show=True):
             if hasattr(interior_pts, "cpu"):
                 interior_pts = interior_pts.cpu().detach().numpy()
             ax.scatter(
-                interior_pts[:, 0], interior_pts[:, 1], 
+                interior_pts[:, 0], interior_pts[:, 1],
                 s=0.5, color=c_dom, marker='o', linewidths=0, alpha=0.55
             )
 
@@ -40,7 +41,7 @@ def plot_collocation_sampling(domains_data, save_path=None, show=True):
             if hasattr(surface_pts, "cpu"):
                 surface_pts = surface_pts.cpu().detach().numpy()
             ax.scatter(
-                surface_pts[:, 0], surface_pts[:, 1], 
+                surface_pts[:, 0], surface_pts[:, 1],
                 s=1.5, color=c_dom, marker='o', linewidths=0, alpha=0.75
             )
 
@@ -51,9 +52,18 @@ def plot_collocation_sampling(domains_data, save_path=None, show=True):
                 if_pts = if_pts.cpu().detach().numpy()
             c_pair = pair_colors[p_idx % len(pair_colors)]
             ax.scatter(
-                if_pts[:, 0], if_pts[:, 1], 
+                if_pts[:, 0], if_pts[:, 1],
                 s=1.0, color=c_pair, marker='o', linewidths=0, alpha=0.95
             )
+
+    bc_pts = domains_data.get("boundary_points")
+    if bc_pts is not None and bc_pts.shape[0] > 0:
+        if hasattr(bc_pts, "cpu"):
+            bc_pts = bc_pts.cpu().detach().numpy()
+        ax.scatter(
+            bc_pts[:, 0], bc_pts[:, 1],
+            s=2.0, color='#000000', marker='o', linewidths=0, alpha=0.9
+        )
 
     ax.set_title("Categorized Collocation Points", fontsize=13, fontweight="bold")
     ax.set_xlabel("x (m)", fontsize=11)

@@ -5,6 +5,7 @@ def get_training_points_count(collocation_sampler_instance, domains_data=None):
     total_interior = 0
     total_surface = 0
     total_interface = 0
+    total_boundary = 0
 
     domains_dict = domains_data.get("domains", {})
     for key, data in domains_dict.items():
@@ -21,15 +22,21 @@ def get_training_points_count(collocation_sampler_instance, domains_data=None):
         if if_pts is not None:
             total_interface += if_pts.shape[0]
 
-    total_points = total_interior + total_surface + total_interface
+    bc_pts = domains_data.get("boundary_points")
+    if bc_pts is not None:
+        total_boundary += bc_pts.shape[0]
+
+    total_points = total_interior + total_surface + total_interface + total_boundary
     print(f"[*] Interior Points : {total_interior}")
     print(f"[*] Surface Points  : {total_surface}")
     print(f"[*] Interface Points: {total_interface}")
+    print(f"[*] Boundary Points : {total_boundary}")
     print(f"[*] Total Training Points: {total_points}")
 
     return {
         "interior": total_interior,
         "surface": total_surface,
         "interface": total_interface,
+        "boundary": total_boundary,
         "total": total_points
     }

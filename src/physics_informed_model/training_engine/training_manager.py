@@ -14,9 +14,9 @@ from training_engine.relobralo_balancer import ReLoBRaLoBalancer
 class TrainingManager:
     def __init__(self, electro_magnetic_pinn):
         self.electro_magnetic_pinn = electro_magnetic_pinn
-        
+
         t_cfg = self.electro_magnetic_pinn.training_config
-        
+
         self.base_learning_rate_adam = getattr(t_cfg, 'adam_learning_rate', getattr(t_cfg, 'learning_rate_adam', 1e-3))
         self.target_loss_threshold = getattr(t_cfg, 'target_loss_threshold', getattr(t_cfg, 'target_loss', 1e-5))
         self.lbfgs_learning_rate = getattr(t_cfg, 'lbfgs_learning_rate', 0.5)
@@ -25,11 +25,11 @@ class TrainingManager:
         self.lbfgs_tolerance_gradient = getattr(t_cfg, 'lbfgs_tolerance_gradient', 1e-12)
         self.lbfgs_tolerance_change = getattr(t_cfg, 'lbfgs_tolerance_change', 1e-12)
         self.lbfgs_history_size = getattr(t_cfg, 'lbfgs_history_size', 50)
-        
+
         model = self.electro_magnetic_pinn.pinn_architecture_instance
-        
+
         self.optimizer_adam = optim.Adam(model.networks.parameters(), lr=self.base_learning_rate_adam)
-        
+
         self.optimizer_lbfgs = optim.LBFGS(
             model.networks.parameters(),
             lr=self.lbfgs_learning_rate,
@@ -41,11 +41,16 @@ class TrainingManager:
             line_search_fn="strong_wolfe"
         )
 
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        boundary_obj = getattr(sim_domain, 'boundary', None)
+        enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') if boundary_obj else 'hard_factor'
+        balancer_keys = ("loss_pde", "loss_a", "loss_bn", "loss_ht", "loss_bc") if enforce_method == 'soft_loss' else ("loss_pde", "loss_a", "loss_bn", "loss_ht")
+
         self.enable_relobralo = bool(getattr(t_cfg, 'enable_relobralo', False))
         self.relobralo_balancer = None
         if self.enable_relobralo:
             self.relobralo_balancer = ReLoBRaLoBalancer(
-                keys=("loss_pde", "loss_a", "loss_bn", "loss_ht"),
+                keys=balancer_keys,
                 alpha=float(getattr(t_cfg, 'relobralo_alpha', 0.999)),
                 temperature=float(getattr(t_cfg, 'relobralo_temperature', 0.1)),
                 rho=float(getattr(t_cfg, 'relobralo_rho', 0.999))
