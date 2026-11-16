@@ -12,6 +12,11 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     max_clip_norm = getattr(t_cfg, 'grad_clip_max_norm', 1.0)
     max_non_finite_streak = getattr(t_cfg, 'max_non_finite_streak', 5)
     log_interval = getattr(t_cfg, 'adam_log_interval', 100)
+    target_loss_threshold = getattr(
+        t_cfg,
+        'target_loss_threshold',
+        getattr(training_manager_instance, 'target_loss_threshold', None)
+    )
 
     for param_group in training_manager_instance.optimizer_adam.param_groups:
         param_group['initial_lr'] = training_manager_instance.base_learning_rate_adam
@@ -52,8 +57,12 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
 
         training_manager_instance.completed_adam_epochs = epoch + 1
         current_loss_value = loss.item()
+        reached_target = (
+            target_loss_threshold is not None
+            and current_loss_value <= float(target_loss_threshold)
+        )
 
-        if (epoch + 1) == 1 or (epoch + 1) % log_interval == 0:
+        if (epoch + 1) == 1 or (epoch + 1) % log_interval == 0 or reached_target:
             bd = training_manager_instance.last_loss_breakdown
             bc_val = bd.get('boundary_loss', 0.0)
             if getattr(training_manager_instance, 'relobralo_balancer', None) is not None:
@@ -77,7 +86,9 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
                     f"BC = {bc_val:.2e}"
                 )
 
-        if training_manager_instance.visualizer and (epoch + 1) % training_manager_instance.visualizer_update_interval == 0:
+        if training_manager_instance.visualizer and (
+            (epoch + 1) % training_manager_instance.visualizer_update_interval == 0 or reached_target
+        ):
             training_manager_instance.visualizer.save_frame(
                 training_manager_instance.global_step,
                 current_loss_value,
@@ -85,6 +96,10 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
                 loss_breakdown=training_manager_instance.last_loss_breakdown,
                 fpi_step=getattr(training_manager_instance, 'current_fpi_step', 0)
             )
+
+        if reached_target:
+            stop_reason = f"Early stop at epoch {epoch + 1}: Total loss ({current_loss_value:.4e}) <= target_loss_threshold ({float(target_loss_threshold):.4e})."
+            break
 
     print(f"[*] ADAM FINISHED. Reason: {stop_reason}")
     return domains_data
