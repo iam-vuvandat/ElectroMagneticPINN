@@ -132,7 +132,7 @@ def main():
     pinn_model.visualization_config.display_colab_frames = True
     pinn_model.visualization_config.update_interval = 50
 
-    pinn_model.training_config.enable_relobralo = True
+    pinn_model.training_config.enable_relobralo = False
     pinn_model.training_config.relobralo_alpha = 0.999
     pinn_model.training_config.relobralo_rho = 0.999
     pinn_model.training_config.relobralo_temperature = 1.0
