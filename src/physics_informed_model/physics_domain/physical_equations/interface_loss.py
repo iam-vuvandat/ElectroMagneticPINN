@@ -1,3 +1,4 @@
+# src/physics_informed_model/physics_domain/physical_equations/interface_loss.py
 import torch
 
 
@@ -7,6 +8,9 @@ class InterfaceLoss:
         self._L0 = L0
         self._H0 = H0
         self._nu0 = nu0
+        self._geom_cache = {}
+        self._cached_all_verts = None
+        self._cached_verts_device = None
 
     @property
     def L0(self):
@@ -26,42 +30,66 @@ class InterfaceLoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
+    def clear_cache(self):
+        self._geom_cache.clear()
+        self._cached_all_verts = None
+        self._cached_verts_device = None
+
+    def _get_all_material_vertices(self, device, dtype):
+        if self.electro_magnetic_pinn is None:
+            return None
+        if self._cached_all_verts is not None and self._cached_verts_device == (device, dtype):
+            return self._cached_all_verts
+
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        mat_verts = [
+            d.outline_tensor.to(device=device, dtype=dtype)
+            for d in sim_domain.domains_list
+            if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+        ]
+        if mat_verts:
+            self._cached_all_verts = torch.cat(mat_verts, dim=0)
+            self._cached_verts_device = (device, dtype)
+            return self._cached_all_verts
+        return None
+
     def _compute_normals_and_tangents_from_outline(self, domain, surf_pts):
-        start_pts = domain.precomputed_edge_starts.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        edge_vecs = domain.precomputed_edge_vecs.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        edge_lens = domain.precomputed_edge_lens.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        unit_tangents = domain.precomputed_unit_tangents.to(device=surf_pts.device, dtype=surf_pts.dtype)
-        unit_normals = domain.precomputed_unit_normals.to(device=surf_pts.device, dtype=surf_pts.dtype)
+        cache_key = (id(domain), surf_pts.data_ptr(), surf_pts.shape[0], surf_pts.device)
+        if cache_key in self._geom_cache:
+            return self._geom_cache[cache_key]
 
-        pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
-        denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
-        proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
-        closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
-        dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
-        edge_idx = torch.argmin(dist_sq, dim=1)
+        with torch.no_grad():
+            start_pts = domain.precomputed_edge_starts.to(device=surf_pts.device, dtype=surf_pts.dtype)
+            edge_vecs = domain.precomputed_edge_vecs.to(device=surf_pts.device, dtype=surf_pts.dtype)
+            edge_lens = domain.precomputed_edge_lens.to(device=surf_pts.device, dtype=surf_pts.dtype)
+            unit_tangents = domain.precomputed_unit_tangents.to(device=surf_pts.device, dtype=surf_pts.dtype)
+            unit_normals = domain.precomputed_unit_normals.to(device=surf_pts.device, dtype=surf_pts.dtype)
 
-        t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1)).detach()
-        corner_w = (torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))).detach()
+            pt_to_start = surf_pts.unsqueeze(1) - start_pts.unsqueeze(0)
+            denom = (edge_lens.squeeze(1) ** 2 + 1e-12).unsqueeze(0)
+            proj = torch.clamp(torch.sum(pt_to_start * edge_vecs.unsqueeze(0), dim=2) / denom, 0.0, 1.0)
+            closest = start_pts.unsqueeze(0) + proj.unsqueeze(-1) * edge_vecs.unsqueeze(0)
+            dist_sq = torch.sum((surf_pts.unsqueeze(1) - closest) ** 2, dim=2)
+            edge_idx = torch.argmin(dist_sq, dim=1)
 
-        if self.electro_magnetic_pinn is not None:
-            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-            mat_verts = [
-                d.outline_tensor.to(device=surf_pts.device, dtype=surf_pts.dtype)
-                for d in sim_domain.domains_list
-                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
-            ]
-            if mat_verts:
-                all_verts = torch.cat(mat_verts, dim=0)
-                v_dists = torch.cdist(surf_pts.detach(), all_verts, p=2.0)
+            t_edge = torch.gather(proj, 1, edge_idx.unsqueeze(1))
+            corner_w = torch.tanh(12.0 * t_edge) * torch.tanh(12.0 * (1.0 - t_edge))
+
+            all_verts = self._get_all_material_vertices(surf_pts.device, surf_pts.dtype)
+            if all_verts is not None:
+                v_dists = torch.cdist(surf_pts, all_verts, p=2.0)
                 min_v_dist, _ = torch.min(v_dists, dim=1, keepdim=True)
-                vertex_w = (torch.tanh(25.0 * (min_v_dist / self.L0)) ** 2).detach()
+                vertex_w = torch.tanh(25.0 * (min_v_dist / self.L0)) ** 2
                 corner_w = corner_w * vertex_w
 
-        nx = unit_normals[edge_idx, 0:1].detach()
-        ny = unit_normals[edge_idx, 1:2].detach()
-        tx = unit_tangents[edge_idx, 0:1].detach()
-        ty = unit_tangents[edge_idx, 1:2].detach()
-        return nx, ny, tx, ty, corner_w
+            nx = unit_normals[edge_idx, 0:1]
+            ny = unit_normals[edge_idx, 1:2]
+            tx = unit_tangents[edge_idx, 0:1]
+            ty = unit_tangents[edge_idx, 1:2]
+
+        result = (nx, ny, tx, ty, corner_w)
+        self._geom_cache[cache_key] = result
+        return result
 
     def compute_pointwise_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
         if pts.shape[0] == 0:

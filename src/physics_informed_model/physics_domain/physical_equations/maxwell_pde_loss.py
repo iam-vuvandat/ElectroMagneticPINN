@@ -1,3 +1,4 @@
+# src/physics_informed_model/physics_domain/physical_equations/maxwell_pde_loss.py
 import torch
 
 class MaxwellPDELoss:
@@ -6,6 +7,8 @@ class MaxwellPDELoss:
         self._L0 = L0
         self._H0 = H0
         self._nu0 = nu0
+        self._cached_all_verts = None
+        self._cached_verts_device = None
 
     @property
     def L0(self):
@@ -25,6 +28,24 @@ class MaxwellPDELoss:
             return self.electro_magnetic_pinn.simulation_domain_engine_instance.nu0
         return self._nu0
 
+    def _get_all_material_vertices(self, device, dtype):
+        if self.electro_magnetic_pinn is None:
+            return None
+        if self._cached_all_verts is not None and self._cached_verts_device == (device, dtype):
+            return self._cached_all_verts
+
+        sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
+        mat_verts = [
+            d.outline_tensor.to(device=device, dtype=dtype)
+            for d in sim_domain.domains_list
+            if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
+        ]
+        if mat_verts:
+            self._cached_all_verts = torch.cat(mat_verts, dim=0)
+            self._cached_verts_device = (device, dtype)
+            return self._cached_all_verts
+        return None
+
     def compute_linear_pde_residual(self, xy, A_z_star, nu_phys, J_z, H_cx, H_cy, nu_star_net=None):
         if nu_star_net is not None:
             nu_star = nu_star_net
@@ -35,7 +56,6 @@ class MaxwellPDELoss:
         H_cy_star = H_cy / self.H0
         J_z_star = J_z / (self.H0 / self.L0)
 
-        # 1. Gradient của Az* -> B*
         grad_A_star = torch.autograd.grad(
             outputs=A_z_star,
             inputs=xy,
@@ -46,11 +66,9 @@ class MaxwellPDELoss:
         dAz_dx_star = grad_A_star[:, 0:1] * self.L0
         dAz_dy_star = grad_A_star[:, 1:2] * self.L0
 
-        # 2. H* = nu* * B* - Hc*
         Hx_star = nu_star * dAz_dy_star - H_cx_star
         Hy_star = -nu_star * dAz_dx_star - H_cy_star
 
-        # 3. curl(H*) = dHy*/dx* - dHx*/dy*
         grad_Hx = torch.autograd.grad(outputs=Hx_star, inputs=xy, grad_outputs=torch.ones_like(Hx_star), create_graph=True)[0]
         grad_Hy = torch.autograd.grad(outputs=Hy_star, inputs=xy, grad_outputs=torch.ones_like(Hy_star), create_graph=True)[0]
 
@@ -66,20 +84,14 @@ class MaxwellPDELoss:
         if beta <= 0.0:
             return torch.ones((xy.shape[0], 1), dtype=xy.dtype, device=xy.device)
 
-        if self.electro_magnetic_pinn is not None:
-            sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
-            mat_verts = [
-                d.outline_tensor.to(device=xy.device, dtype=xy.dtype)
-                for d in sim_domain.domains_list
-                if getattr(d, 'domain_name', '') != 'background' and d.outline_tensor is not None
-            ]
-            if mat_verts:
-                all_verts = torch.cat(mat_verts, dim=0)
-                dists = torch.cdist(xy.detach(), all_verts, p=2.0)
+        with torch.no_grad():
+            all_verts = self._get_all_material_vertices(xy.device, xy.dtype)
+            if all_verts is not None:
+                dists = torch.cdist(xy, all_verts, p=2.0)
                 min_corner_dist, _ = torch.min(dists, dim=1, keepdim=True)
                 corner_dist_star = min_corner_dist / self.L0
                 return 1.0 - torch.exp(-beta * corner_dist_star)
 
-        sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
-        abs_sdf_star = torch.abs(sdf.detach()) / self.L0
-        return 1.0 - torch.exp(-beta * abs_sdf_star)
+            sdf = domain.compute_signed_distance_field(xy).view(-1, 1)
+            abs_sdf_star = torch.abs(sdf) / self.L0
+            return 1.0 - torch.exp(-beta * abs_sdf_star)

@@ -1,3 +1,4 @@
+# src/physics_informed_model/electro_magnetic_pinn_engine/plot_fields.py
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,7 +7,6 @@ from matplotlib.colors import LogNorm, Normalize
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
 
-# 20 mã màu chuẩn FEM Ansys Maxwell
 ANSYS_FEM_HEX_COLORS = [
     '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
     '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
@@ -28,7 +28,7 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     eval_pts = torch.tensor(
         np.column_stack((X_grid.ravel(), Y_grid.ravel())),
         dtype=torch.float32, device=device
-    ).requires_grad_(True)
+    )
     
     A_z_np, B_x_np, B_y_np = pinn_instance.evaluate_fields(eval_pts, return_numpy=True)
 
@@ -37,7 +37,6 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     B_y_grid = B_y_np.reshape(resolution, resolution)
     B_mag_grid = np.sqrt(B_x_grid ** 2 + B_y_grid ** 2)
 
-    # --- CHUYỂN ĐỔI ĐƠN VỊ CỦA B ---
     b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
     if b_unit == "mTesla":
         B_mag_grid = B_mag_grid * 1000.0
@@ -45,38 +44,37 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     else:
         unit_str = "T"
 
-    props = sim_domain.evaluate_global_physical_properties(eval_pts)
-    mat_ids = props["material_classification"].squeeze()
-    
-    mu_r_tensor = torch.ones_like(mat_ids, device=device)
-    B_mag_pts = torch.tensor((B_mag_grid / (1000.0 if b_unit == "mTesla" else 1.0)).ravel(), dtype=torch.float32, device=device).unsqueeze(1)
+    with torch.no_grad():
+        props = sim_domain.evaluate_global_physical_properties(eval_pts)
+        mat_ids = props["material_classification"].squeeze()
+        
+        mu_r_tensor = torch.ones_like(mat_ids, device=device)
+        B_mag_pts = torch.tensor((B_mag_grid / (1000.0 if b_unit == "mTesla" else 1.0)).ravel(), dtype=torch.float32, device=device).unsqueeze(1)
 
-    for domain in sim_domain.domains_list:
-        if getattr(domain, 'domain_name', '') != 'background':
-            d_id = domain.domain_id
-            net_key = resolve_domain_net_key(domain, pinn_arch)
-            mask = (mat_ids == float(d_id))
-            if mask.any():
-                if getattr(domain.physics_config, 'is_nonlinear', False):
-                    if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
-                        with torch.no_grad():
+        for domain in sim_domain.domains_list:
+            if getattr(domain, 'domain_name', '') != 'background':
+                d_id = domain.domain_id
+                net_key = resolve_domain_net_key(domain, pinn_arch)
+                mask = (mat_ids == float(d_id))
+                if mask.any():
+                    if getattr(domain.physics_config, 'is_nonlinear', False):
+                        if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
                             nu_star_pred = pinn_arch.forward_nu_network(net_key, eval_pts[mask])
                             mu_r_vals = (1.0 / torch.clamp(nu_star_pred, min=1e-6)).view(-1)
                             mu_r_tensor[mask] = mu_r_vals
+                        else:
+                            nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
+                            mu_r_vals = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys, min=1e-6)).view(-1)
+                            mu_r_tensor[mask] = mu_r_vals
                     else:
-                        nu_phys = domain.evaluate_reluctivity(eval_pts[mask], B_magnitude_tensor=B_mag_pts[mask], is_nonlinear=True)
-                        mu_r_vals = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys, min=1e-6)).view(-1)
-                        mu_r_tensor[mask] = mu_r_vals
-                else:
-                    mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
-                    mu_r_tensor[mask] = mu_val
+                        mu_val = float(getattr(domain.physics_config, 'relative_permeability', 1.0))
+                        mu_r_tensor[mask] = mu_val
 
-    mu_r_grid = mu_r_tensor.detach().cpu().numpy().reshape(resolution, resolution)
+    mu_r_grid = mu_r_tensor.cpu().numpy().reshape(resolution, resolution)
 
     fig, axs = plt.subplots(2, 2, figsize=figsize)
     n_levels = getattr(vis_cfg, 'contour_levels', 60)
     
-    # --- 1. A_z Plot ---
     az_vmin = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_grid))
     az_vmax = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_grid))
     levels_az = np.linspace(az_vmin, az_vmax, n_levels) if az_vmin != az_vmax else n_levels
@@ -85,7 +83,6 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     axs[0, 0].set_title(r"Magnetic Vector Potential ($A_z$)")
     axs[0, 0].set_aspect('equal')
 
-    # --- 2. |B| Magnitude Plot (NỘI SUY MÃ MÀU FEM) ---
     b_min = vis_cfg.b_mag_vmin if vis_cfg.b_mag_vmin is not None else 0.0
     b_max = vis_cfg.b_mag_vmax if vis_cfg.b_mag_vmax is not None else (1800.0 if b_unit == "mTesla" else 1.8)
     b_mag_clamped = np.clip(B_mag_grid, b_min, b_max)
@@ -111,7 +108,6 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     axs[0, 1].set_title(f"Magnetic Flux Density Magnitude ($|B|$)")
     axs[0, 1].set_aspect('equal')
 
-    # --- 3. Relative Permeability \mu_r Plot ---
     v_min_mur = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
     v_max_mur = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
     mu_r_clamped = np.clip(mu_r_grid, v_min_mur, v_max_mur)
@@ -130,7 +126,6 @@ def plot_fields(pinn_instance, resolution=180, save_path=None, show=False, figsi
     axs[1, 0].set_title(r"Relative Permeability Distribution ($\mu_r$)")
     axs[1, 0].set_aspect('equal')
 
-    # --- 4. B_y Component Plot ---
     by_vmin = vis_cfg.by_vmin if vis_cfg.by_vmin is not None else float(np.min(B_y_grid))
     by_vmax = vis_cfg.by_vmax if vis_cfg.by_vmax is not None else float(np.max(B_y_grid))
     levels_by = np.linspace(by_vmin, by_vmax, n_levels) if by_vmin != by_vmax else n_levels

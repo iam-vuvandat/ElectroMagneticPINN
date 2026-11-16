@@ -1,3 +1,4 @@
+# src/physics_informed_model/simulation_domain_engine/domain_visualizer.py
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -25,26 +26,27 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     ]
 
     X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
-    xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
-    physical_properties = simulation_domain_instance.evaluate_global_physical_properties(xy_points_tensor)
-    
-    mat_id_tensor = physical_properties["material_classification"]
-    mat_id_grid = mat_id_tensor.numpy().reshape(resolution, resolution)
-    
-    reluctivity_tensor = physical_properties["reluctivity"]
-    mu_r_tensor = VACUUM_RELUCTIVITY / reluctivity_tensor
-    mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
-    mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
-    
-    hx_tensor = physical_properties["coercive_field_x"]
-    hy_tensor = physical_properties["coercive_field_y"]
-    hx_grid = hx_tensor.numpy().reshape(resolution, resolution)
-    hy_grid = hy_tensor.numpy().reshape(resolution, resolution)
-    hc_mag_grid = np.sqrt(hx_grid**2 + hy_grid**2)
-    
-    jz_tensor = physical_properties["current_density_z"]
-    jz_grid = jz_tensor.numpy().reshape(resolution, resolution)
-    jz_mag_grid = np.abs(jz_grid)
+    with torch.no_grad():
+        xy_points_tensor = torch.tensor(np.column_stack((X_grid.ravel(), Y_grid.ravel())), dtype=torch.float32)
+        physical_properties = simulation_domain_instance.evaluate_global_physical_properties(xy_points_tensor)
+        
+        mat_id_tensor = physical_properties["material_classification"]
+        mat_id_grid = mat_id_tensor.numpy().reshape(resolution, resolution)
+        
+        reluctivity_tensor = physical_properties["reluctivity"]
+        mu_r_tensor = VACUUM_RELUCTIVITY / reluctivity_tensor
+        mu_r_grid = mu_r_tensor.numpy().reshape(resolution, resolution)
+        mu_r_clamped = np.clip(mu_r_grid, 1.0, None)
+        
+        hx_tensor = physical_properties["coercive_field_x"]
+        hy_tensor = physical_properties["coercive_field_y"]
+        hx_grid = hx_tensor.numpy().reshape(resolution, resolution)
+        hy_grid = hy_tensor.numpy().reshape(resolution, resolution)
+        hc_mag_grid = np.sqrt(hx_grid**2 + hy_grid**2)
+        
+        jz_tensor = physical_properties["current_density_z"]
+        jz_grid = jz_tensor.numpy().reshape(resolution, resolution)
+        jz_mag_grid = np.abs(jz_grid)
     
     total_domains = simulation_domain_instance.get_domain_count()
     
@@ -90,7 +92,6 @@ def display_simulation_domain(simulation_domain_instance, x_boundaries_tuple=Non
     axs[0, 0].set_aspect('equal')
     axs[0, 0].grid(True, linestyle=':', alpha=0.4)
 
-    # Relative Permeability trên thang Loga
     v_max_mur = max(float(np.max(mu_r_clamped)), 10.0)
     im_mur = axs[0, 1].imshow(
         mu_r_clamped, extent=exact_extent, origin='lower', interpolation='nearest',

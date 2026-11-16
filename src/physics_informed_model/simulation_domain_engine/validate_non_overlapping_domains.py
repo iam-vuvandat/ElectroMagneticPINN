@@ -1,3 +1,4 @@
+# src/physics_informed_model/simulation_domain_engine/validate_non_overlapping_domains.py
 import torch
 
 def validate_non_overlapping_domains(self, candidate_domain=None, check_resolution=80):
@@ -10,18 +11,19 @@ def validate_non_overlapping_domains(self, candidate_domain=None, check_resoluti
     if len(mat_domains) < 2:
         return True
 
-    x_min, x_max = self.x_boundaries_tuple
-    y_min, y_max = self.y_boundaries_tuple
-    xs = torch.linspace(x_min, x_max, check_resolution)
-    ys = torch.linspace(y_min, y_max, check_resolution)
-    Xg, Yg = torch.meshgrid(xs, ys, indexing='ij')
-    test_pts = torch.column_stack([Xg.reshape(-1), Yg.reshape(-1)])
+    with torch.no_grad():
+        x_min, x_max = self.x_boundaries_tuple
+        y_min, y_max = self.y_boundaries_tuple
+        xs = torch.linspace(x_min, x_max, check_resolution)
+        ys = torch.linspace(y_min, y_max, check_resolution)
+        Xg, Yg = torch.meshgrid(xs, ys, indexing='ij')
+        test_pts = torch.column_stack([Xg.reshape(-1), Yg.reshape(-1)])
 
-    strict_inside_counts = torch.zeros(test_pts.shape[0], dtype=torch.int32)
-    for d in mat_domains:
-        sdf = d.compute_signed_distance_field(test_pts).view(-1)
-        strict_inside_counts += (sdf < -1e-6).int()
+        strict_inside_counts = torch.zeros(test_pts.shape[0], dtype=torch.int32)
+        for d in mat_domains:
+            sdf = d.compute_signed_distance_field(test_pts).view(-1)
+            strict_inside_counts += (sdf < -1e-6).int()
 
-    if torch.any(strict_inside_counts > 1):
-        raise ValueError("Lỗi hình học: Phát hiện các miền vật liệu chồng lấn lên nhau.")
+        if torch.any(strict_inside_counts > 1):
+            raise ValueError("Geometry error: Overlapping material domains detected.")
     return True
