@@ -1,3 +1,4 @@
+# src/physics_informed_model/physics_domain/collocation_sampler.py
 import torch
 import numpy as np
 
@@ -14,6 +15,13 @@ class CollocationSampler:
             self.device = electro_magnetic_pinn.computation_device
         else:
             self.device = torch.device('cpu')
+
+        self._cached_static_surfaces = {}
+        self._cached_shared_interfaces = None
+
+    def clear_cache(self):
+        self._cached_static_surfaces.clear()
+        self._cached_shared_interfaces = None
 
     def _draw_sobol_box(self, count, x_min, x_max, y_min, y_max):
         uv = self.sobol_engine.draw(count).to(device=self.device, dtype=torch.float32)
@@ -223,6 +231,35 @@ class CollocationSampler:
 
         return boundary_obj.sample_boundary_points(device=self.device)
 
+    def _precompute_point_cache(self, domain, pts):
+        if pts.shape[0] == 0:
+            empty = torch.empty((0, 1), dtype=torch.float32, device=self.device)
+            return {
+                "nu_linear": empty,
+                "hx": empty,
+                "hy": empty,
+                "jz": empty,
+                "fading_w": empty
+            }
+        with torch.no_grad():
+            nu_linear = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(self.device)
+            hx, hy = domain.evaluate_magnetization_vector(pts)
+            hx, hy = hx.to(self.device), hy.to(self.device)
+            jz = domain.evaluate_current_density(pts).to(self.device)
+            pde_eval = getattr(self.electro_magnetic_pinn, 'maxwell_pde_loss_instance', None)
+            if pde_eval is not None:
+                fading_w = pde_eval.compute_fading_weight(domain, pts).to(self.device)
+            else:
+                fading_w = torch.ones((pts.shape[0], 1), dtype=torch.float32, device=self.device)
+
+        return {
+            "nu_linear": nu_linear,
+            "hx": hx,
+            "hy": hy,
+            "jz": jz,
+            "fading_w": fading_w
+        }
+
     def generate_all_domain_points(self, simulation_domain_object=None):
         if simulation_domain_object is None:
             simulation_domain_object = self.electro_magnetic_pinn.simulation_domain_engine_instance
@@ -243,38 +280,57 @@ class CollocationSampler:
             actual_interior = int(round(base_interior * mult)) if base_interior > 0 else 0
             actual_surface = int(round(base_surface * mult)) if base_surface > 0 else 0
 
+            key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{domain.domain_id}'
+
             if getattr(domain, 'domain_name', '') == 'background':
                 interior_pts = self.sample_background_interior_points(simulation_domain_object, actual_interior)
                 outer_pts = torch.empty((0, 2), dtype=torch.float32, device=self.device)
             else:
                 interior_pts = self.sample_domain_interior_points(domain, bb, actual_interior)
-                outer_pts = self.sample_domain_outer_surface_points(domain, actual_surface)
+                cache_key = (key, actual_surface)
+                if cache_key not in self._cached_static_surfaces:
+                    self._cached_static_surfaces[cache_key] = self.sample_domain_outer_surface_points(domain, actual_surface)
+                outer_pts = self._cached_static_surfaces[cache_key]
 
-            key = 'background' if getattr(domain, 'domain_name', '') == 'background' else f'domain_{domain.domain_id}'
+            cached_props = self._precompute_point_cache(domain, interior_pts)
+            outer_req = outer_pts.detach().clone().requires_grad_(True)
+
             domains_data["domains"][key] = {
                 "domain_object": domain,
                 "interior_points": interior_pts.detach().clone().requires_grad_(True),
-                "outer_surface_points": outer_pts.detach().clone().requires_grad_(True),
-                "surface_points": outer_pts.detach().clone().requires_grad_(True)
+                "outer_surface_points": outer_req,
+                "surface_points": outer_req,
+                "cached_props": cached_props
             }
 
-        for i in range(len(mat_domains)):
-            for j in range(i + 1, len(mat_domains)):
-                dom_a, dom_b = mat_domains[i], mat_domains[j]
-                avg_surf_pts = int(round(0.5 * (dom_a.training_config.number_of_surface_points + dom_b.training_config.number_of_surface_points)))
-                mult = 0.5 * (float(getattr(dom_a.training_config, 'sampling_density_multiplier', 1.0)) + float(getattr(dom_b.training_config, 'sampling_density_multiplier', 1.0)))
-                actual_pts = int(round(avg_surf_pts * mult))
+        if self._cached_shared_interfaces is None:
+            self._cached_shared_interfaces = {}
+            for i in range(len(mat_domains)):
+                for j in range(i + 1, len(mat_domains)):
+                    dom_a, dom_b = mat_domains[i], mat_domains[j]
+                    avg_surf_pts = int(round(0.5 * (dom_a.training_config.number_of_surface_points + dom_b.training_config.number_of_surface_points)))
+                    mult = 0.5 * (float(getattr(dom_a.training_config, 'sampling_density_multiplier', 1.0)) + float(getattr(dom_b.training_config, 'sampling_density_multiplier', 1.0)))
+                    actual_pts = int(round(avg_surf_pts * mult))
 
-                shared_pts = self.sample_shared_interface_points(dom_a, dom_b, actual_pts)
-                if shared_pts.shape[0] > 0:
-                    pair_key = f"domain_{dom_a.domain_id}_vs_domain_{dom_b.domain_id}"
-                    domains_data["shared_interfaces"][pair_key] = {
-                        "domain_a": dom_a,
-                        "domain_b": dom_b,
-                        "key_a": f"domain_{dom_a.domain_id}",
-                        "key_b": f"domain_{dom_b.domain_id}",
-                        "interface_points": shared_pts.detach().clone().requires_grad_(True)
-                    }
+                    shared_pts = self.sample_shared_interface_points(dom_a, dom_b, actual_pts)
+                    if shared_pts.shape[0] > 0:
+                        pair_key = f"domain_{dom_a.domain_id}_vs_domain_{dom_b.domain_id}"
+                        self._cached_shared_interfaces[pair_key] = {
+                            "domain_a": dom_a,
+                            "domain_b": dom_b,
+                            "key_a": f"domain_{dom_a.domain_id}",
+                            "key_b": f"domain_{dom_b.domain_id}",
+                            "base_points": shared_pts
+                        }
+
+        for pair_key, cached_pair in self._cached_shared_interfaces.items():
+            domains_data["shared_interfaces"][pair_key] = {
+                "domain_a": cached_pair["domain_a"],
+                "domain_b": cached_pair["domain_b"],
+                "key_a": cached_pair["key_a"],
+                "key_b": cached_pair["key_b"],
+                "interface_points": cached_pair["base_points"].detach().clone().requires_grad_(True)
+            }
 
         return domains_data
 

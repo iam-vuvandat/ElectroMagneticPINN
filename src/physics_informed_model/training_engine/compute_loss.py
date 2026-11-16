@@ -1,3 +1,4 @@
+# src/physics_informed_model/training_engine/compute_loss.py
 import torch
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
 
@@ -42,15 +43,23 @@ def compute_loss(training_manager_instance, domains_data, update_relobralo=True,
             else:
                 nu_star_net = None
 
-            nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
-            hx, hy = domain.evaluate_magnetization_vector(pts)
-            hx, hy = hx.to(device), hy.to(device)
-            jz = domain.evaluate_current_density(pts).to(device)
+            cached = data.get("cached_props")
+            if cached is not None:
+                nu_phys = cached["nu_linear"]
+                hx = cached["hx"]
+                hy = cached["hy"]
+                jz = cached["jz"]
+                fading_w = cached["fading_w"]
+            else:
+                nu_phys = domain.evaluate_reluctivity(pts, is_nonlinear=False).to(device)
+                hx, hy = domain.evaluate_magnetization_vector(pts)
+                hx, hy = hx.to(device), hy.to(device)
+                jz = domain.evaluate_current_density(pts).to(device)
+                fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
 
             res_pde = training_manager_instance.pde_evaluator.compute_linear_pde_residual(
                 xy=pts, A_z_star=A_z_star, nu_phys=nu_phys, J_z=jz, H_cx=hx, H_cy=hy, nu_star_net=nu_star_net
             )
-            fading_w = training_manager_instance.pde_evaluator.compute_fading_weight(domain, pts)
 
             loss_pde_domain = torch.mean((res_pde ** 2) * fading_w)
             w_pde = float(getattr(domain.training_config, 'pde_weight', 1.0))

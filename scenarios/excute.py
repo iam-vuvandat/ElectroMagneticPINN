@@ -1,3 +1,4 @@
+# scenarios/excute.py
 import os
 import sys
 import subprocess
@@ -125,12 +126,12 @@ def main():
     sim_domain.boundary.training_config.boundary_loss_weight = 1.0
 
     pinn_model.sampler_config.dynamic_resampling = True
-    pinn_model.sampler_config.resample_interval = 10
+    pinn_model.sampler_config.resample_interval = 100
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
 
     pinn_model.visualization_config.active = True
     pinn_model.visualization_config.display_colab_frames = True
-    pinn_model.visualization_config.update_interval = 50
+    pinn_model.visualization_config.update_interval = 250
 
     pinn_model.training_config.enable_relobralo = True
     pinn_model.training_config.relobralo_alpha = 0.999
@@ -142,10 +143,10 @@ def main():
     pinn_model.training_config.enable_lbfgs_refinement_stage = True
 
     pinn_model.training_config.enable_lbfgs_after_warmup = True
-    pinn_model.training_config.lbfgs_warmup_iterations = 1000
+    pinn_model.training_config.lbfgs_warmup_iterations = 500
 
     pinn_model.training_config.enable_lbfgs_after_fpi_step = True
-    pinn_model.training_config.lbfgs_fpi_step_iterations = 1000
+    pinn_model.training_config.lbfgs_fpi_step_iterations = 300
 
     epochs_warmup_target = 5000
     fpi_iterations = 10
@@ -163,7 +164,7 @@ def main():
     pinn_model.training_config.adam_eta_min = 1e-6
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
-    pinn_model.training_config.adam_log_interval = 10
+    pinn_model.training_config.adam_log_interval = 100
 
     pinn_model.training_config.pretrain_nu_epochs = 3000
     pinn_model.training_config.pretrain_nu_lr = 5e-3
@@ -290,7 +291,7 @@ def main():
         np.column_stack((X_m.ravel(), Y_m.ravel())),
         dtype=torch.float32,
         device=pinn_model.computation_device
-    ).requires_grad_(True)
+    )
 
     _, B_x_pinn, B_y_pinn = pinn_model.evaluate_fields(eval_pts, return_numpy=True)
     pinn_b_mag = np.sqrt(B_x_pinn**2 + B_y_pinn**2).reshape(res_y, res_x)
