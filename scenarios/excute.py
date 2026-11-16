@@ -125,12 +125,12 @@ def main():
     sim_domain.boundary.training_config.boundary_loss_weight = 1.0
 
     pinn_model.sampler_config.dynamic_resampling = True
-    pinn_model.sampler_config.resample_interval = 5
+    pinn_model.sampler_config.resample_interval = 100
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
 
     pinn_model.visualization_config.active = True
     pinn_model.visualization_config.display_colab_frames = True
-    pinn_model.visualization_config.update_interval = 1
+    pinn_model.visualization_config.update_interval = 500
 
     pinn_model.training_config.enable_relobralo = True
     pinn_model.training_config.relobralo_alpha = 0.999
@@ -158,7 +158,7 @@ def main():
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     pinn_model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / pinn_model.training_config.number_of_adam_epochs
 
-    pinn_model.training_config.adam_learning_rate = 1e-4
+    pinn_model.training_config.adam_learning_rate = 1e-2
     pinn_model.training_config.target_loss_threshold = 5e-3
     pinn_model.training_config.adam_eta_min = 1e-6
     pinn_model.training_config.grad_clip_max_norm = 1.0
