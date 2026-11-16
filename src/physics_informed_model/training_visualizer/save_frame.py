@@ -455,3 +455,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             display(Image(filename=frame_name))
         except Exception:
             pass
+
+
+        
