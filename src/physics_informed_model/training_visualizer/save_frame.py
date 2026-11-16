@@ -8,9 +8,9 @@ from simulation_domain_engine.global_physical_properties_evaluation import VACUU
 from training_visualizer.resolve_domain_net_key import resolve_domain_net_key
 
 ANSYS_FEM_HEX_COLORS = [
-    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF',
-    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B',
-    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00',
+    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
+    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
+    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00', 
     '#FFD700', '#FFA100', '#FF6B00', '#FF3600', '#FF0000'
 ]
 
@@ -44,7 +44,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     visualizer_instance.w_bn_history.append(float(lmb.get('loss_bn', 1.0)))
     visualizer_instance.w_ht_history.append(float(lmb.get('loss_ht', 1.0)))
     visualizer_instance.w_bc_history.append(float(lmb.get('loss_bc', 1.0)))
-
+    
     model = visualizer_instance.electro_magnetic_pinn.pinn_architecture_instance
     pde_evaluator = visualizer_instance.electro_magnetic_pinn.maxwell_pde_loss_instance
     interface_evaluator = visualizer_instance.electro_magnetic_pinn.interface_loss_instance
@@ -54,10 +54,10 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     model.eval()
     computation_device = next(model.parameters()).device
     eval_points = visualizer_instance.eval_points_tensor.to(computation_device).detach().clone().requires_grad_(True)
-
+    
     phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
     mat_id = phys_props["material_classification"]
-
+    
     A_z_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     B_x_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     B_y_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
@@ -102,8 +102,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
             nu_phys_all = torch.where(mask_bool, nu_dom.detach(), nu_phys_all)
             residual_total = torch.where(mask_bool, torch.abs(res_pde.detach()), residual_total)
-
-    mat_id_grid = mat_id.detach().cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
+    
     A_z_numpy = A_z_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     B_x_numpy = B_x_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     B_y_numpy = B_y_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
@@ -159,6 +158,34 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         err_bn_all = np.empty((0,))
         err_ht_all = np.empty((0,))
 
+    # Lấy mẫu & Đánh giá sai số Boundary Points để vẽ "Boundary loss map"
+    bc_pts = domains_data.get("boundary_points")
+    bc_coords_np = np.empty((0, 2))
+    err_bc_all = np.empty((0,))
+    boundary_obj = getattr(sim_domain, 'boundary', None)
+    enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') if boundary_obj else 'hard_factor'
+
+    if bc_pts is not None and bc_pts.shape[0] > 0:
+        bc_pts_dev = bc_pts.to(computation_device)
+        bc_coords_np = bc_pts.cpu().detach().numpy()
+        pot_val_star = float(getattr(boundary_obj.physics_config, 'potential_value', 0.0)) / max(sim_domain.A0, 1e-12)
+        bc_phys_props = sim_domain.evaluate_global_physical_properties(bc_pts_dev)
+        bc_mat_id = bc_phys_props["material_classification"].view(-1)
+        
+        err_bc_list = []
+        for domain in sim_domain.domains_list:
+            d_id = domain.domain_id
+            net_key = resolve_domain_net_key(domain, model)
+            mask = (bc_mat_id == float(d_id))
+            if mask.any():
+                sub_pts = bc_pts_dev[mask]
+                with torch.no_grad():
+                    Az_bc_pred = model.forward_network(net_key, sub_pts)
+                    sq_err = (Az_bc_pred - pot_val_star) ** 2
+                err_bc_list.append(sq_err.cpu().view(-1).numpy())
+        if err_bc_list:
+            err_bc_all = np.concatenate(err_bc_list)
+
     fig, axs = plt.subplots(3, 4, figsize=(24, 15))
     n_levels = getattr(vis_cfg, 'contour_levels', 60)
 
@@ -172,34 +199,9 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
                     color=color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=5
                 )
 
-    ax_geo = axs[0, 0]
-    total_domains = sim_domain.get_domain_count()
-    palette = ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F', '#EDC948', '#B07AA1']
-    color_list = [palette[(i - 1) % len(palette)] for i in range(1, total_domains)]
-    color_list.append('#F2F4F7')
-    cmap_discrete = ListedColormap(color_list)
-    bounds_discrete = np.arange(0.5, total_domains + 1.5, 1.0)
-    norm_discrete = BoundaryNorm(bounds_discrete, cmap_discrete.N)
-
-    exact_extent = [
-        visualizer_instance.x_bounds[0], visualizer_instance.x_bounds[1],
-        visualizer_instance.y_bounds[0], visualizer_instance.y_bounds[1]
-    ]
-    im_geo = ax_geo.imshow(
-        mat_id_grid, extent=exact_extent, origin='lower', interpolation='nearest',
-        cmap=cmap_discrete, norm=norm_discrete
-    )
-    cbar_geo = fig.colorbar(im_geo, ax=ax_geo, ticks=np.arange(1, total_domains + 1))
-    labels = [d.domain_name for d in sim_domain.domains_list]
-    cbar_geo.set_ticklabels([f"{i+1}: {labels[i]}" for i in range(total_domains)])
-    draw_domain_outlines(ax_geo, color='#111111', linestyle='-', linewidth=1.2, alpha=0.95)
-    ax_geo.set_xlim(visualizer_instance.x_bounds)
-    ax_geo.set_ylim(visualizer_instance.y_bounds)
-    ax_geo.set_title("Geometry outline")
-    ax_geo.set_aspect('equal')
-
-    ax_pts = axs[0, 1]
-    ax_pts.set_title("Collocation point")
+    # axs[0, 0]: Collocation point
+    ax_pts = axs[0, 0]
+    ax_pts.set_title("Collocation point", fontsize=11, fontweight='bold')
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
     pair_colors = ['#800000', '#004080', '#004d40', '#4a148c', '#bf360c']
 
@@ -221,47 +223,15 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             c_pair = pair_colors[p_idx % len(pair_colors)]
             ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=1.2, color=c_pair, marker='o', linewidths=0, alpha=0.95)
 
-    bc_pts = domains_data.get("boundary_points")
     if bc_pts is not None and bc_pts.shape[0] > 0:
-        pts_np = bc_pts.detach().cpu().numpy()
-        ax_pts.scatter(pts_np[:, 0], pts_np[:, 1], s=1.5, color='#000000', marker='o', linewidths=0, alpha=0.9)
+        ax_pts.scatter(bc_coords_np[:, 0], bc_coords_np[:, 1], s=1.5, color='#000000', marker='o', linewidths=0, alpha=0.9)
 
     draw_domain_outlines(ax_pts, color='#555555', linestyle='--', linewidth=0.8, alpha=0.6)
     ax_pts.set_xlim(visualizer_instance.x_bounds)
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
 
-    boundary_obj = getattr(sim_domain, 'boundary', None)
-    enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') if boundary_obj else 'hard_factor'
-    has_bc_plot = (enforce_method == 'soft_loss') or ('loss_bc' in lmb)
-
-    ax_loss = axs[0, 2]
-    steps = visualizer_instance.epoch_history
-    ax_loss.plot(steps, visualizer_instance.pde_loss_history, label="PDE loss", linewidth=1.4)
-    ax_loss.plot(steps, visualizer_instance.az_loss_history, label=r"$A_z$ loss", linewidth=1.4)
-    ax_loss.plot(steps, visualizer_instance.bn_loss_history, label=r"$B_n$ loss", linewidth=1.4)
-    ax_loss.plot(steps, visualizer_instance.ht_loss_history, label=r"$H_t$ loss", linewidth=1.4)
-    if has_bc_plot:
-        ax_loss.plot(steps, visualizer_instance.bc_loss_history, label="BC loss", linewidth=1.4)
-    ax_loss.set_yscale('log')
-    ax_loss.set_title("Loss optimization")
-    ax_loss.set_xlabel("Step")
-    ax_loss.set_ylabel("Loss")
-    ax_loss.grid(True, which="both", ls="--", alpha=0.25)
-    ax_loss.legend(loc="upper right", fontsize=8.5)
-
-    ax_w = axs[0, 3]
-    ax_w.plot(steps, visualizer_instance.w_az_history, label=r"$A_z$", linewidth=1.4)
-    ax_w.plot(steps, visualizer_instance.w_bn_history, label=r"$B_n$", linewidth=1.4)
-    ax_w.plot(steps, visualizer_instance.w_ht_history, label=r"$H_t$", linewidth=1.4)
-    if has_bc_plot:
-        ax_w.plot(steps, visualizer_instance.w_bc_history, label="BC", linewidth=1.4)
-    ax_w.set_title("Loss weight")
-    ax_w.set_xlabel("Step")
-    ax_w.set_ylabel("Weight")
-    ax_w.grid(True, which="both", ls="--", alpha=0.25)
-    ax_w.legend(loc="upper right", fontsize=8.5)
-
+    # axs[0, 1]: PDE residual map
     disc_levels = getattr(vis_cfg, 'res_discrete_levels', [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0])
     res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else float(disc_levels[0])
     res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else float(disc_levels[-1])
@@ -281,22 +251,53 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         norm_res = Normalize(vmin=res_min, vmax=res_max, clip=True)
 
     res_abs = np.clip(np.abs(residual_numpy), res_min, res_max)
-    contour_res = axs[1, 0].contourf(
+    contour_res = axs[0, 1].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, res_abs,
         levels=levels_res, cmap=base_cmap, norm=norm_res
     )
     cbar_res = fig.colorbar(
         contour_res,
-        ax=axs[1, 0],
+        ax=axs[0, 1],
         ticks=disc_levels if (res_scale_mode == 'log' and disc_levels is not None) else None
     )
     if res_scale_mode == 'log':
         cbar_res.ax.set_yscale('log')
     cbar_res.set_label("Residual Magnitude", fontsize=9)
-    draw_domain_outlines(axs[1, 0], color='#FFFFFF', linestyle='--', linewidth=0.7, alpha=0.5)
-    axs[1, 0].set_title("PDE residual map")
-    axs[1, 0].set_aspect('equal')
+    draw_domain_outlines(axs[0, 1], color='#FFFFFF', linestyle='--', linewidth=0.7, alpha=0.5)
+    axs[0, 1].set_title("PDE residual map", fontsize=11, fontweight='bold')
+    axs[0, 1].set_aspect('equal')
 
+    # axs[0, 2]: Loss optimization
+    has_bc_plot = (enforce_method == 'soft_loss') or ('loss_bc' in lmb)
+    ax_loss = axs[0, 2]
+    steps = visualizer_instance.epoch_history
+    ax_loss.plot(steps, visualizer_instance.pde_loss_history, label="PDE loss", linewidth=1.4)
+    ax_loss.plot(steps, visualizer_instance.az_loss_history, label=r"$A_z$ loss", linewidth=1.4)
+    ax_loss.plot(steps, visualizer_instance.bn_loss_history, label=r"$B_n$ loss", linewidth=1.4)
+    ax_loss.plot(steps, visualizer_instance.ht_loss_history, label=r"$H_t$ loss", linewidth=1.4)
+    if has_bc_plot:
+        ax_loss.plot(steps, visualizer_instance.bc_loss_history, label="BC loss", linewidth=1.4)
+    ax_loss.set_yscale('log')
+    ax_loss.set_title("Loss optimization", fontsize=11, fontweight='bold')
+    ax_loss.set_xlabel("Step")
+    ax_loss.set_ylabel("Loss")
+    ax_loss.grid(True, which="both", ls="--", alpha=0.25)
+    ax_loss.legend(loc="upper right", fontsize=8.5)
+
+    # axs[0, 3]: Loss weight
+    ax_w = axs[0, 3]
+    ax_w.plot(steps, visualizer_instance.w_az_history, label=r"$A_z$", linewidth=1.4)
+    ax_w.plot(steps, visualizer_instance.w_bn_history, label=r"$B_n$", linewidth=1.4)
+    ax_w.plot(steps, visualizer_instance.w_ht_history, label=r"$H_t$", linewidth=1.4)
+    if has_bc_plot:
+        ax_w.plot(steps, visualizer_instance.w_bc_history, label="BC", linewidth=1.4)
+    ax_w.set_title("Loss weight", fontsize=11, fontweight='bold')
+    ax_w.set_xlabel("Step")
+    ax_w.set_ylabel("Weight")
+    ax_w.grid(True, which="both", ls="--", alpha=0.25)
+    ax_w.legend(loc="upper right", fontsize=8.5)
+
+    # Cấu hình biên cho bản đồ lỗi boundary / interface
     if_levels = getattr(vis_cfg, 'if_discrete_levels', [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2])
     if_min = getattr(vis_cfg, 'if_vmin', None)
     if_min = float(if_min) if if_min is not None else float(if_levels[0])
@@ -313,12 +314,12 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         if_cmap = plt.get_cmap(vis_cfg.res_cmap)
         norm_if = Normalize(vmin=if_min, vmax=if_max, clip=True)
 
-    def plot_interface_loss_map(ax_target, err_vals, title_str, cbar_label):
+    def plot_scatter_loss_map(ax_target, coords, err_vals, title_str, cbar_label):
         draw_domain_outlines(ax_target, color='#888888', linestyle='--', linewidth=0.8, alpha=0.7)
-        if if_coords_all.shape[0] > 0 and err_vals.shape[0] > 0:
+        if coords.shape[0] > 0 and err_vals.shape[0] > 0:
             err_clamped = np.clip(err_vals, if_min, if_max)
             sc = ax_target.scatter(
-                if_coords_all[:, 0], if_coords_all[:, 1],
+                coords[:, 0], coords[:, 1],
                 c=err_clamped, cmap=if_cmap, norm=norm_if,
                 s=6.0, marker='o', linewidths=0
             )
@@ -332,13 +333,22 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             cbar_if.set_label(cbar_label, fontsize=9)
         ax_target.set_xlim(visualizer_instance.x_bounds)
         ax_target.set_ylim(visualizer_instance.y_bounds)
-        ax_target.set_title(title_str)
+        ax_target.set_title(title_str, fontsize=11, fontweight='bold')
         ax_target.set_aspect('equal')
 
-    plot_interface_loss_map(axs[1, 1], err_az_all, r"$A_z$ interface loss map", r"$(A_{z,a}^* - A_{z,b}^*)^2$")
-    plot_interface_loss_map(axs[1, 2], err_bn_all, r"$B_n$ interface loss map", r"$w_c (B_{n,a}^* - B_{n,b}^*)^2$")
-    plot_interface_loss_map(axs[1, 3], err_ht_all, r"$H_t$ interface loss map", r"$w_c (\Delta H_t^* / \nu)^2$")
+    # axs[1, 0]: Boundary loss map
+    plot_scatter_loss_map(axs[1, 0], bc_coords_np, err_bc_all, r"Boundary loss map", r"$(A_{z}^* - A_{z,\mathrm{bc}}^*)^2$")
 
+    # axs[1, 1]: Az interface loss map
+    plot_scatter_loss_map(axs[1, 1], if_coords_all, err_az_all, r"$A_z$ interface loss map", r"$(A_{z,a}^* - A_{z,b}^*)^2$")
+
+    # axs[1, 2]: Bn interface loss map
+    plot_scatter_loss_map(axs[1, 2], if_coords_all, err_bn_all, r"$B_n$ interface loss map", r"$w_c (B_{n,a}^* - B_{n,b}^*)^2$")
+
+    # axs[1, 3]: Ht interface loss map
+    plot_scatter_loss_map(axs[1, 3], if_coords_all, err_ht_all, r"$H_t$ interface loss map", r"$w_c (\Delta H_t^* / \nu)^2$")
+
+    # axs[2, 0]: Permeability map
     mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
     mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
     mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -360,9 +370,10 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     )
     fig.colorbar(contour_mur, ax=axs[2, 0], label=lbl_mur)
     draw_domain_outlines(axs[2, 0], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)
-    axs[2, 0].set_title("Permeability map")
+    axs[2, 0].set_title("Permeability map", fontsize=11, fontweight='bold')
     axs[2, 0].set_aspect('equal')
 
+    # axs[2, 1]: Az map
     az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
     az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
     levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
@@ -372,9 +383,10 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     )
     fig.colorbar(contour_az, ax=axs[2, 1], label=r"$A_z$ (Wb/m)")
     draw_domain_outlines(axs[2, 1], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)
-    axs[2, 1].set_title(r"$A_z$ map")
+    axs[2, 1].set_title(r"Az map", fontsize=11, fontweight='bold')
     axs[2, 1].set_aspect('equal')
 
+    # axs[2, 2]: |B| map
     b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
     b_scale = 1000.0 if b_unit == "mTesla" else 1.0
     B_mag_plot = B_mag_numpy * b_scale
@@ -405,9 +417,10 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     )
     fig.colorbar(contour_b, ax=axs[2, 2], label=f"|B| ({unit_str})")
     draw_domain_outlines(axs[2, 2], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)
-    axs[2, 2].set_title(r"Flux density $|B|$ map")
+    axs[2, 2].set_title(r"|B| map", fontsize=11, fontweight='bold')
     axs[2, 2].set_aspect('equal')
 
+    # axs[2, 3]: B vector map
     contour_b_bg = axs[2, 3].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, b_mag_clamped, levels=levels_b,
         cmap=cmap_b, norm=norm_b, alpha=0.3
@@ -416,21 +429,21 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     step = max(1, visualizer_instance.resolution // 20)
     B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
     axs[2, 3].quiver(
-        visualizer_instance.X_grid[::step, ::step], visualizer_instance.Y_grid[::step, ::step],
-        B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub,
+        visualizer_instance.X_grid[::step, ::step], visualizer_instance.Y_grid[::step, ::step], 
+        B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub, 
         scale=30.0, color='black', pivot='mid'
     )
     draw_domain_outlines(axs[2, 3], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)
-    axs[2, 3].set_title("B vector map")
+    axs[2, 3].set_title("B vector map", fontsize=11, fontweight='bold')
     axs[2, 3].set_aspect('equal')
 
     fig.suptitle(f"Training process: Step {epoch}; FPI step {fpi_step}", fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-
+    
     frame_name = os.path.join(visualizer_instance.output_directory, f"frame_{len(visualizer_instance.frame_paths) + 1:05d}.png")
     plt.savefig(frame_name, dpi=100)
     plt.close(fig)
-
+    
     visualizer_instance.frame_paths.append(frame_name)
     model.train()
 
