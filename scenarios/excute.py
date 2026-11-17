@@ -108,7 +108,7 @@ def main():
     fem_y_mm = field_record.y
     fem_b_mag = field_record.b_mag
 
-    print("[2/4] PINN MODEL SETUP (ELECTROMAGNETIC PINN WITH GLOBAL RELOBRALO)")
+    print("[2/4] PINN MODEL SETUP (ELECTROMAGNETIC PINN WITH FIXED INTERFACE SCALING)")
     pinn_model = ElectroMagneticPINN()
     sim_domain = pinn_model.simulation_domain_engine_instance
 
@@ -122,7 +122,7 @@ def main():
     sim_domain.boundary.physics_config.enforce_method = "soft_loss"
     sim_domain.boundary.physics_config.potential_value = 0.0
     sim_domain.boundary.training_config.number_of_boundary_points = 3000
-    sim_domain.boundary.training_config.boundary_loss_weight = 10.0
+    sim_domain.boundary.training_config.boundary_loss_weight = 1000.0
 
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 250
@@ -132,7 +132,7 @@ def main():
     pinn_model.visualization_config.display_colab_frames = True
     pinn_model.visualization_config.update_interval = 250
 
-    pinn_model.training_config.enable_relobralo = True
+    pinn_model.training_config.enable_relobralo = False
     pinn_model.training_config.relobralo_alpha = 0.995
     pinn_model.training_config.relobralo_rho = 0.99
     pinn_model.training_config.relobralo_temperature = 0.5
@@ -187,7 +187,7 @@ def main():
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 10000
     iron_yoke.training_config.number_of_surface_points = 3600
-    iron_yoke.training_config.interface_weight = 20.0
+    iron_yoke.training_config.interface_weight = 2000.0
     iron_yoke.training_config.interface_bn_weight = 2.0
     iron_yoke.training_config.interface_ht_weight = 1.0
 
@@ -213,7 +213,7 @@ def main():
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 4000
     magnet_left.training_config.number_of_surface_points = 1800
-    magnet_left.training_config.interface_weight = 20.0
+    magnet_left.training_config.interface_weight = 2000.0
     magnet_left.training_config.interface_bn_weight = 2.0
     magnet_left.training_config.interface_ht_weight = 1.0
     magnet_left.network_config.hidden_layers = 3
@@ -233,7 +233,7 @@ def main():
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 4000
     magnet_right.training_config.number_of_surface_points = 1800
-    magnet_right.training_config.interface_weight = 20.0
+    magnet_right.training_config.interface_weight = 2000.0
     magnet_right.training_config.interface_bn_weight = 2.0
     magnet_right.training_config.interface_ht_weight = 1.0
     magnet_right.network_config.hidden_layers = 3
@@ -267,7 +267,7 @@ def main():
     pinn_model.update_electromagnetic_pinn()
 
     if re_train_pinn:
-        print("[*] re_train_pinn = True: Training PINN model with global ReLoBRaLo...")
+        print("[*] re_train_pinn = True: Training PINN model...")
         pinn_model.execute_training_process()
         print(f"[*] Saving PINN checkpoint: '{checkpoint_name}'...")
         pinn_model.save_checkpoint(checkpoint_name)
