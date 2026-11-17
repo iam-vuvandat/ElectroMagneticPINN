@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.optim as optim
 
@@ -28,6 +29,7 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     training_manager_instance.completed_adam_epochs = 0
 
     for epoch in range(epochs):
+        epoch_start_time = time.perf_counter()
         training_manager_instance.global_step += 1
         is_resampling_step = False
         if dynamic_resampling and resample_fn and epoch > 0 and epoch % resample_interval == 0:
@@ -55,6 +57,8 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
         training_manager_instance.optimizer_adam.step()
         scheduler_adam.step()
 
+        epoch_elapsed = time.perf_counter() - epoch_start_time
+
         training_manager_instance.completed_adam_epochs = epoch + 1
         current_loss_value = loss.item()
         reached_target = (
@@ -76,14 +80,16 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
                     f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
                     f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
                     f"{bc_str} | "
-                    f"{lmb_keys_label} = {lmb.get('loss_pde', 1.0):.2f}/{lmb.get('loss_a', 1.0):.2f}/{lmb.get('loss_bn', 1.0):.2f}/{lmb.get('loss_ht', 1.0):.2f}{lmb_bc_str}"
+                    f"{lmb_keys_label} = {lmb.get('loss_pde', 1.0):.2f}/{lmb.get('loss_a', 1.0):.2f}/{lmb.get('loss_bn', 1.0):.2f}/{lmb.get('loss_ht', 1.0):.2f}{lmb_bc_str} | "
+                    f"Time = {epoch_elapsed * 1000.0:.2f}ms"
                 )
             else:
                 print(
                     f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
                     f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
                     f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e} | "
-                    f"BC = {bc_val:.2e}"
+                    f"BC = {bc_val:.2e} | "
+                    f"Time = {epoch_elapsed * 1000.0:.2f}ms"
                 )
 
         if training_manager_instance.visualizer and (

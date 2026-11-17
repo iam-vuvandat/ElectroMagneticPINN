@@ -186,7 +186,7 @@ def main():
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 8000
-    iron_yoke.training_config.number_of_surface_points = 2400
+    iron_yoke.training_config.number_of_surface_points = 3000
 
     iron_yoke.network_config.hidden_layers = 5
     iron_yoke.network_config.hidden_neurons = 128
@@ -211,7 +211,7 @@ def main():
     )
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 3000
-    magnet_left.training_config.number_of_surface_points = 1200
+    magnet_left.training_config.number_of_surface_points = 1500
     magnet_left.network_config.hidden_layers = 5
     magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.Mish()
@@ -228,7 +228,7 @@ def main():
     )
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 3000
-    magnet_right.training_config.number_of_surface_points = 1200
+    magnet_right.training_config.number_of_surface_points = 1500
     magnet_right.network_config.hidden_layers = 5
     magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.Mish()
@@ -240,7 +240,7 @@ def main():
     bg_training_cfg = SimpleNamespace(
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=13000,
+        number_of_interior_points=16500,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(

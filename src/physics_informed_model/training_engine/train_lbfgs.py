@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.optim as optim
 
@@ -24,8 +25,10 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
     )
 
     lbfgs_counter = [0]
+    closure_start_time = [time.perf_counter()]
 
     def closure():
+        iter_start = time.perf_counter()
         training_manager_instance.optimizer_lbfgs.zero_grad(set_to_none=True)
         loss = training_manager_instance.compute_loss(
             domains_data,
@@ -36,6 +39,7 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
             return loss
         loss.backward()
 
+        iter_elapsed = time.perf_counter() - iter_start
         lbfgs_counter[0] += 1
         if lbfgs_counter[0] == 1 or lbfgs_counter[0] % log_interval == 0:
             bd = training_manager_instance.last_loss_breakdown
@@ -43,7 +47,8 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
             bc_str = f" | BC = {bd.get('boundary_loss', 0.0):.2e}" if 'loss_bc' in lmb else ""
             print(
                 f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
-                f"PDE = {bd.get('pde_loss', 0.0):.3e}{bc_str}"
+                f"PDE = {bd.get('pde_loss', 0.0):.3e}{bc_str} | "
+                f"Time = {iter_elapsed * 1000.0:.2f}ms"
             )
         return loss
 
