@@ -3,14 +3,14 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.colors import LogNorm, Normalize, ListedColormap, BoundaryNorm
+from matplotlib.colors import LogNorm, Normalize
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from training_visualizer.resolve_domain_net_key import resolve_domain_net_key
 
 ANSYS_FEM_HEX_COLORS = [
-    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
-    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
-    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00', 
+    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF',
+    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B',
+    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00',
     '#FFD700', '#FFA100', '#FF6B00', '#FF3600', '#FF0000'
 ]
 
@@ -24,27 +24,11 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     if fpi_step is None:
         fpi_step = getattr(tm, 'current_fpi_step', 0) if tm is not None else 0
 
-    visualizer_instance.loss_history.append(loss_value)
-    visualizer_instance.epoch_history.append(epoch)
-
-    pde_val = max(float(loss_breakdown.get('pde_loss', loss_value)), 1e-16)
-    az_val = max(float(loss_breakdown.get('interface_Az', 1e-16)), 1e-16)
-    bn_val = max(float(loss_breakdown.get('interface_Bn', 1e-16)), 1e-16)
-    ht_val = max(float(loss_breakdown.get('interface_Ht', 1e-16)), 1e-16)
-    bc_val = max(float(loss_breakdown.get('boundary_loss', 1e-16)), 1e-16)
-
-    visualizer_instance.pde_loss_history.append(pde_val)
-    visualizer_instance.az_loss_history.append(az_val)
-    visualizer_instance.bn_loss_history.append(bn_val)
-    visualizer_instance.ht_loss_history.append(ht_val)
-    visualizer_instance.bc_loss_history.append(bc_val)
+    if not visualizer_instance.epoch_history or visualizer_instance.epoch_history[-1] != int(epoch):
+        visualizer_instance.record_history(epoch, loss_value, loss_breakdown=loss_breakdown)
 
     lmb = loss_breakdown.get('relobralo_lambdas', {})
-    visualizer_instance.w_az_history.append(float(lmb.get('loss_a', 1.0)))
-    visualizer_instance.w_bn_history.append(float(lmb.get('loss_bn', 1.0)))
-    visualizer_instance.w_ht_history.append(float(lmb.get('loss_ht', 1.0)))
-    visualizer_instance.w_bc_history.append(float(lmb.get('loss_bc', 1.0)))
-    
+
     model = visualizer_instance.electro_magnetic_pinn.pinn_architecture_instance
     pde_evaluator = visualizer_instance.electro_magnetic_pinn.maxwell_pde_loss_instance
     interface_evaluator = visualizer_instance.electro_magnetic_pinn.interface_loss_instance
@@ -54,10 +38,10 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     model.eval()
     computation_device = next(model.parameters()).device
     eval_points = visualizer_instance.eval_points_tensor.to(computation_device).detach().clone().requires_grad_(True)
-    
+
     phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
     mat_id = phys_props["material_classification"]
-    
+
     A_z_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     B_x_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     B_y_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
@@ -102,7 +86,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
             nu_phys_all = torch.where(mask_bool, nu_dom.detach(), nu_phys_all)
             residual_total = torch.where(mask_bool, torch.abs(res_pde.detach()), residual_total)
-    
+
     A_z_numpy = A_z_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     B_x_numpy = B_x_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     B_y_numpy = B_y_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
@@ -158,7 +142,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         err_bn_all = np.empty((0,))
         err_ht_all = np.empty((0,))
 
-    # Lấy mẫu & Đánh giá sai số Boundary Points để vẽ "Boundary loss map"
     bc_pts = domains_data.get("boundary_points")
     bc_coords_np = np.empty((0, 2))
     err_bc_all = np.empty((0,))
@@ -171,7 +154,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         pot_val_star = float(getattr(boundary_obj.physics_config, 'potential_value', 0.0)) / max(sim_domain.A0, 1e-12)
         bc_phys_props = sim_domain.evaluate_global_physical_properties(bc_pts_dev)
         bc_mat_id = bc_phys_props["material_classification"].view(-1)
-        
+
         err_bc_list = []
         for domain in sim_domain.domains_list:
             d_id = domain.domain_id
@@ -199,7 +182,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
                     color=color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=5
                 )
 
-    # axs[0, 0]: Collocation point
     ax_pts = axs[0, 0]
     ax_pts.set_title("Collocation point", fontsize=11, fontweight='bold')
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
@@ -231,7 +213,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
 
-    # axs[0, 1]: PDE residual map
     disc_levels = getattr(vis_cfg, 'res_discrete_levels', [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0])
     res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else float(disc_levels[0])
     res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else float(disc_levels[-1])
@@ -267,16 +248,15 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[0, 1].set_title("PDE residual map", fontsize=11, fontweight='bold')
     axs[0, 1].set_aspect('equal')
 
-    # axs[0, 2]: Loss optimization
     has_bc_plot = (enforce_method == 'soft_loss') or ('loss_bc' in lmb)
     ax_loss = axs[0, 2]
     steps = visualizer_instance.epoch_history
-    ax_loss.plot(steps, visualizer_instance.pde_loss_history, label="PDE loss", linewidth=1.4)
-    ax_loss.plot(steps, visualizer_instance.az_loss_history, label=r"$A_z$ loss", linewidth=1.4)
-    ax_loss.plot(steps, visualizer_instance.bn_loss_history, label=r"$B_n$ loss", linewidth=1.4)
-    ax_loss.plot(steps, visualizer_instance.ht_loss_history, label=r"$H_t$ loss", linewidth=1.4)
+    ax_loss.plot(steps, visualizer_instance.pde_loss_history, label="PDE loss", linewidth=1.2)
+    ax_loss.plot(steps, visualizer_instance.az_loss_history, label=r"$A_z$ loss", linewidth=1.2)
+    ax_loss.plot(steps, visualizer_instance.bn_loss_history, label=r"$B_n$ loss", linewidth=1.2)
+    ax_loss.plot(steps, visualizer_instance.ht_loss_history, label=r"$H_t$ loss", linewidth=1.2)
     if has_bc_plot:
-        ax_loss.plot(steps, visualizer_instance.bc_loss_history, label="BC loss", linewidth=1.4)
+        ax_loss.plot(steps, visualizer_instance.bc_loss_history, label="BC loss", linewidth=1.2)
     ax_loss.set_yscale('log')
     ax_loss.set_title("Loss optimization", fontsize=11, fontweight='bold')
     ax_loss.set_xlabel("Step")
@@ -284,20 +264,18 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_loss.grid(True, which="both", ls="--", alpha=0.25)
     ax_loss.legend(loc="upper right", fontsize=8.5)
 
-    # axs[0, 3]: Loss weight
     ax_w = axs[0, 3]
-    ax_w.plot(steps, visualizer_instance.w_az_history, label=r"$A_z$", linewidth=1.4)
-    ax_w.plot(steps, visualizer_instance.w_bn_history, label=r"$B_n$", linewidth=1.4)
-    ax_w.plot(steps, visualizer_instance.w_ht_history, label=r"$H_t$", linewidth=1.4)
+    ax_w.plot(steps, visualizer_instance.w_az_history, label=r"$A_z$", linewidth=1.2)
+    ax_w.plot(steps, visualizer_instance.w_bn_history, label=r"$B_n$", linewidth=1.2)
+    ax_w.plot(steps, visualizer_instance.w_ht_history, label=r"$H_t$", linewidth=1.2)
     if has_bc_plot:
-        ax_w.plot(steps, visualizer_instance.w_bc_history, label="BC", linewidth=1.4)
+        ax_w.plot(steps, visualizer_instance.w_bc_history, label="BC", linewidth=1.2)
     ax_w.set_title("Loss weight", fontsize=11, fontweight='bold')
     ax_w.set_xlabel("Step")
     ax_w.set_ylabel("Weight")
     ax_w.grid(True, which="both", ls="--", alpha=0.25)
     ax_w.legend(loc="upper right", fontsize=8.5)
 
-    # Cấu hình biên cho bản đồ lỗi boundary / interface
     if_levels = getattr(vis_cfg, 'if_discrete_levels', [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2])
     if_min = getattr(vis_cfg, 'if_vmin', None)
     if_min = float(if_min) if if_min is not None else float(if_levels[0])
@@ -336,19 +314,11 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         ax_target.set_title(title_str, fontsize=11, fontweight='bold')
         ax_target.set_aspect('equal')
 
-    # axs[1, 0]: Boundary loss map
     plot_scatter_loss_map(axs[1, 0], bc_coords_np, err_bc_all, r"Boundary loss map", r"$(A_{z}^* - A_{z,\mathrm{bc}}^*)^2$")
-
-    # axs[1, 1]: Az interface loss map
     plot_scatter_loss_map(axs[1, 1], if_coords_all, err_az_all, r"$A_z$ interface loss map", r"$(A_{z,a}^* - A_{z,b}^*)^2$")
-
-    # axs[1, 2]: Bn interface loss map
     plot_scatter_loss_map(axs[1, 2], if_coords_all, err_bn_all, r"$B_n$ interface loss map", r"$w_c (B_{n,a}^* - B_{n,b}^*)^2$")
-
-    # axs[1, 3]: Ht interface loss map
     plot_scatter_loss_map(axs[1, 3], if_coords_all, err_ht_all, r"$H_t$ interface loss map", r"$w_c (\Delta H_t^* / \nu)^2$")
 
-    # axs[2, 0]: Permeability map
     mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
     mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
     mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -373,7 +343,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 0].set_title("Permeability map", fontsize=11, fontweight='bold')
     axs[2, 0].set_aspect('equal')
 
-    # axs[2, 1]: Az map
     az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
     az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
     levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
@@ -386,7 +355,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 1].set_title(r"Az map", fontsize=11, fontweight='bold')
     axs[2, 1].set_aspect('equal')
 
-    # axs[2, 2]: |B| map
     b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
     b_scale = 1000.0 if b_unit == "mTesla" else 1.0
     B_mag_plot = B_mag_numpy * b_scale
@@ -420,7 +388,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 2].set_title(r"|B| map", fontsize=11, fontweight='bold')
     axs[2, 2].set_aspect('equal')
 
-    # axs[2, 3]: B vector map
     contour_b_bg = axs[2, 3].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, b_mag_clamped, levels=levels_b,
         cmap=cmap_b, norm=norm_b, alpha=0.3
@@ -429,8 +396,8 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     step = max(1, visualizer_instance.resolution // 20)
     B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
     axs[2, 3].quiver(
-        visualizer_instance.X_grid[::step, ::step], visualizer_instance.Y_grid[::step, ::step], 
-        B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub, 
+        visualizer_instance.X_grid[::step, ::step], visualizer_instance.Y_grid[::step, ::step],
+        B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub,
         scale=30.0, color='black', pivot='mid'
     )
     draw_domain_outlines(axs[2, 3], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)
@@ -439,11 +406,11 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
 
     fig.suptitle(f"Training process: Step {epoch}; FPI step {fpi_step}", fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    
+
     frame_name = os.path.join(visualizer_instance.output_directory, f"frame_{len(visualizer_instance.frame_paths) + 1:05d}.png")
     plt.savefig(frame_name, dpi=100)
     plt.close(fig)
-    
+
     visualizer_instance.frame_paths.append(frame_name)
     model.train()
 
@@ -455,6 +422,3 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             display(Image(filename=frame_name))
         except Exception:
             pass
-
-
-        

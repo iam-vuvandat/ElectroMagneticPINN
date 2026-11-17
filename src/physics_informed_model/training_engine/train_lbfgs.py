@@ -25,7 +25,8 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
     )
 
     lbfgs_counter = [0]
-    closure_start_time = [time.perf_counter()]
+    last_loss_val = [None]
+    last_saved_counter = [0]
 
     def closure():
         iter_start = time.perf_counter()
@@ -41,16 +42,55 @@ def train_lbfgs(training_manager_instance, max_iterations, domains_data):
 
         iter_elapsed = time.perf_counter() - iter_start
         lbfgs_counter[0] += 1
+        training_manager_instance.global_step += 1
+        current_loss_value = loss.item()
+        last_loss_val[0] = current_loss_value
+
+        if training_manager_instance.visualizer:
+            training_manager_instance.visualizer.record_history(
+                training_manager_instance.global_step,
+                current_loss_value,
+                loss_breakdown=training_manager_instance.last_loss_breakdown
+            )
+
         if lbfgs_counter[0] == 1 or lbfgs_counter[0] % log_interval == 0:
             bd = training_manager_instance.last_loss_breakdown
             lmb = bd.get('relobralo_lambdas', {})
             bc_str = f" | BC = {bd.get('boundary_loss', 0.0):.2e}" if 'loss_bc' in lmb else ""
             print(
-                f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {loss.item():.4e} | "
+                f"L-BFGS Closure {lbfgs_counter[0]:05d} | Total = {current_loss_value:.4e} | "
                 f"PDE = {bd.get('pde_loss', 0.0):.3e}{bc_str} | "
                 f"Time = {iter_elapsed * 1000.0:.2f}ms"
             )
+
+        if training_manager_instance.visualizer and (
+            lbfgs_counter[0] % training_manager_instance.visualizer_update_interval == 0
+        ):
+            last_saved_counter[0] = lbfgs_counter[0]
+            training_manager_instance.visualizer.save_frame(
+                training_manager_instance.global_step,
+                current_loss_value,
+                domains_data,
+                loss_breakdown=training_manager_instance.last_loss_breakdown,
+                fpi_step=getattr(training_manager_instance, 'current_fpi_step', 0)
+            )
+
         return loss
 
     training_manager_instance.optimizer_lbfgs.step(closure)
+
+    if (
+        training_manager_instance.visualizer
+        and last_loss_val[0] is not None
+        and lbfgs_counter[0] > 0
+        and last_saved_counter[0] != lbfgs_counter[0]
+    ):
+        training_manager_instance.visualizer.save_frame(
+            training_manager_instance.global_step,
+            last_loss_val[0],
+            domains_data,
+            loss_breakdown=training_manager_instance.last_loss_breakdown,
+            fpi_step=getattr(training_manager_instance, 'current_fpi_step', 0)
+        )
+
     return domains_data

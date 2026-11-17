@@ -61,6 +61,14 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
 
         training_manager_instance.completed_adam_epochs = epoch + 1
         current_loss_value = loss.item()
+
+        if training_manager_instance.visualizer:
+            training_manager_instance.visualizer.record_history(
+                training_manager_instance.global_step,
+                current_loss_value,
+                loss_breakdown=training_manager_instance.last_loss_breakdown
+            )
+
         reached_target = (
             target_loss_threshold is not None
             and current_loss_value <= float(target_loss_threshold)

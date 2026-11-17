@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
@@ -150,12 +151,12 @@ def main():
     pinn_model.training_config.enable_lbfgs_after_fpi_step = True
     pinn_model.training_config.lbfgs_fpi_step_iterations = 300
 
-    epochs_warmup_target = 3000
-    fpi_iterations = 6
-    epochs_per_fpi = 1500
+    epochs_warmup_target = 6000
+    fpi_iterations = 20
+    epochs_per_fpi = 3000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
-    pinn_model.training_config.fpi_alpha_damping = 0.5
+    pinn_model.training_config.fpi_alpha_damping = 0.3
     pinn_model.training_config.fpi_tolerance = 1e-6
 
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
@@ -168,9 +169,9 @@ def main():
     pinn_model.training_config.max_non_finite_streak = 5
     pinn_model.training_config.adam_log_interval = 100
 
-    pinn_model.training_config.pretrain_nu_epochs = 1000
+    pinn_model.training_config.pretrain_nu_epochs = 2000
     pinn_model.training_config.pretrain_nu_lr = 3e-3
-    pinn_model.training_config.fit_nu_epochs = 800
+    pinn_model.training_config.fit_nu_epochs = 1600
     pinn_model.training_config.fit_nu_lr = 2e-3
 
     pinn_model.training_config.number_of_lbfgs_iterations = 1000
@@ -195,14 +196,14 @@ def main():
     iron_yoke.network_config.hidden_neurons = 96
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.2
+    iron_yoke.network_config.fourier_sigma = 0.9
     iron_yoke.network_config.fourier_mapping_size = 64
 
     iron_yoke.nu_network_config.hidden_layers = 2
     iron_yoke.nu_network_config.hidden_neurons = 64
     iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
-    iron_yoke.nu_network_config.fourier_sigma = 1.0
+    iron_yoke.nu_network_config.fourier_sigma = 0.75
     iron_yoke.nu_network_config.fourier_mapping_size = 16
     iron_yoke.build_domain()
 
@@ -219,7 +220,7 @@ def main():
     magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = True
-    magnet_left.network_config.fourier_sigma = 1.0
+    magnet_left.network_config.fourier_sigma = 0.75
     magnet_left.network_config.fourier_mapping_size = 32
     magnet_left.build_domain()
 
@@ -236,7 +237,7 @@ def main():
     magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = True
-    magnet_right.network_config.fourier_sigma = 1.0
+    magnet_right.network_config.fourier_sigma = 0.75
     magnet_right.network_config.fourier_mapping_size = 32
     magnet_right.build_domain()
 
@@ -251,7 +252,7 @@ def main():
         hidden_neurons=128,
         activation_function=nn.Mish(),
         fourier_features=True,
-        fourier_sigma=1.0,
+        fourier_sigma=0.75,
         fourier_mapping_size=64
     )
     sim_domain.build_background_domain(
@@ -267,15 +268,6 @@ def main():
         pinn_model.execute_training_process()
         print(f"[*] Saving PINN checkpoint: '{checkpoint_name}'...")
         pinn_model.save_checkpoint(checkpoint_name)
-
-        if "google.colab" in sys.modules:
-            checkpoint_path = resolve_checkpoint_filepath(checkpoint_name)
-            if checkpoint_path.exists():
-                print(f"[*] Google Colab environment detected. Preparing download: {checkpoint_path}...")
-                from google.colab import files
-                files.download(str(checkpoint_path))
-            else:
-                print(f"[!] Checkpoint file not found for download: {checkpoint_path}")
     else:
         print(f"[*] re_train_pinn = False: Loading existing PINN checkpoint '{checkpoint_name}'...")
         pinn_model.load_checkpoint(checkpoint_name)
@@ -362,6 +354,35 @@ def main():
 
     print("[*] Displaying figure...")
     plt.show()
+
+    if "google.colab" in sys.modules:
+        zip_path = Path(parent_directory) / f"{checkpoint_name}_results.zip"
+        checkpoint_path = resolve_checkpoint_filepath(checkpoint_name)
+        if not checkpoint_path.exists() and Path(f"{checkpoint_path}.pkl").exists():
+            checkpoint_path = Path(f"{checkpoint_path}.pkl")
+
+        vis_dir = Path(pinn_model.visualization_config.output_directory)
+        if not vis_dir.is_absolute() and not vis_dir.exists():
+            alt_vis_dir = Path(parent_directory) / vis_dir
+            if alt_vis_dir.exists():
+                vis_dir = alt_vis_dir
+
+        print(f"[*] Google Colab environment detected. Archiving all results to: {zip_path}...")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            if checkpoint_path.exists():
+                zf.write(checkpoint_path, arcname=f"checkpoints/{checkpoint_path.name}")
+            if output_dir.exists():
+                for file_item in output_dir.rglob("*"):
+                    if file_item.is_file():
+                        zf.write(file_item, arcname=f"{output_dir.name}/{file_item.relative_to(output_dir)}")
+            if vis_dir.exists():
+                for file_item in vis_dir.rglob("*"):
+                    if file_item.is_file():
+                        zf.write(file_item, arcname=f"{vis_dir.name}/{file_item.relative_to(vis_dir)}")
+
+        print(f"[*] Preparing download: {zip_path}...")
+        from google.colab import files
+        files.download(str(zip_path))
 
 
 if __name__ == "__main__":

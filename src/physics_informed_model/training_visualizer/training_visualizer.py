@@ -46,6 +46,34 @@ class TrainingVisualizer:
             dtype=torch.float32
         )
 
+    def record_history(self, epoch, loss_value, loss_breakdown=None):
+        if loss_breakdown is None:
+            tm = getattr(self.electro_magnetic_pinn, 'training_manager_instance', None)
+            loss_breakdown = getattr(tm, 'last_loss_breakdown', {}) if tm is not None else {}
+        if loss_breakdown is None:
+            loss_breakdown = {}
+
+        self.loss_history.append(float(loss_value))
+        self.epoch_history.append(int(epoch))
+
+        pde_val = max(float(loss_breakdown.get('pde_loss', loss_value)), 1e-16)
+        az_val = max(float(loss_breakdown.get('interface_Az', 1e-16)), 1e-16)
+        bn_val = max(float(loss_breakdown.get('interface_Bn', 1e-16)), 1e-16)
+        ht_val = max(float(loss_breakdown.get('interface_Ht', 1e-16)), 1e-16)
+        bc_val = max(float(loss_breakdown.get('boundary_loss', 1e-16)), 1e-16)
+
+        self.pde_loss_history.append(pde_val)
+        self.az_loss_history.append(az_val)
+        self.bn_loss_history.append(bn_val)
+        self.ht_loss_history.append(ht_val)
+        self.bc_loss_history.append(bc_val)
+
+        lmb = loss_breakdown.get('relobralo_lambdas', {})
+        self.w_az_history.append(float(lmb.get('loss_a', 1.0)))
+        self.w_bn_history.append(float(lmb.get('loss_bn', 1.0)))
+        self.w_ht_history.append(float(lmb.get('loss_ht', 1.0)))
+        self.w_bc_history.append(float(lmb.get('loss_bc', 1.0)))
+
     def save_frame(self, epoch, loss_value, domains_data, loss_breakdown=None, fpi_step=None):
         return save_frame(
             self,
