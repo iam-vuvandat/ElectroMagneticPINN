@@ -120,12 +120,12 @@ def main():
     sim_domain.y_boundaries_tuple = (-0.12, 0.12)
 
     sim_domain.boundary.physics_config.enforce_method = "soft_loss"
-    sim_domain.boundary.physics_config.potential_value = 0.0 
-    sim_domain.boundary.training_config.number_of_boundary_points = 1000
+    sim_domain.boundary.physics_config.potential_value = 0.0
+    sim_domain.boundary.training_config.number_of_boundary_points = 2400
     sim_domain.boundary.training_config.boundary_loss_weight = 1.0
 
     pinn_model.sampler_config.dynamic_resampling = True
-    pinn_model.sampler_config.resample_interval = 100
+    pinn_model.sampler_config.resample_interval = 250
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
 
     pinn_model.visualization_config.active = True
@@ -158,7 +158,7 @@ def main():
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     pinn_model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / pinn_model.training_config.number_of_adam_epochs
 
-    pinn_model.training_config.adam_learning_rate = 2e-3
+    pinn_model.training_config.adam_learning_rate = 1e-3
     pinn_model.training_config.target_loss_threshold = 1e-4
     pinn_model.training_config.adam_eta_min = 1e-6
     pinn_model.training_config.grad_clip_max_norm = 1.0
@@ -185,8 +185,8 @@ def main():
 
     iron_yoke.training_config.pde_fading_beta = 80.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
-    iron_yoke.training_config.number_of_interior_points = 1200
-    iron_yoke.training_config.number_of_surface_points = 900
+    iron_yoke.training_config.number_of_interior_points = 8000
+    iron_yoke.training_config.number_of_surface_points = 2400
 
     iron_yoke.network_config.hidden_layers = 5
     iron_yoke.network_config.hidden_neurons = 128
@@ -210,8 +210,8 @@ def main():
         coercive_direction=magnet_left_coercive_dir
     )
     magnet_left.physics_config.is_nonlinear = False
-    magnet_left.training_config.number_of_interior_points = 280
-    magnet_left.training_config.number_of_surface_points = 210
+    magnet_left.training_config.number_of_interior_points = 3000
+    magnet_left.training_config.number_of_surface_points = 1200
     magnet_left.network_config.hidden_layers = 5
     magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.Mish()
@@ -227,8 +227,8 @@ def main():
         coercive_direction=magnet_right_coercive_dir
     )
     magnet_right.physics_config.is_nonlinear = False
-    magnet_right.training_config.number_of_interior_points = 280
-    magnet_right.training_config.number_of_surface_points = 210
+    magnet_right.training_config.number_of_interior_points = 3000
+    magnet_right.training_config.number_of_surface_points = 1200
     magnet_right.network_config.hidden_layers = 5
     magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.Mish()
@@ -240,7 +240,7 @@ def main():
     bg_training_cfg = SimpleNamespace(
         pde_fading_beta=80.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=1400,
+        number_of_interior_points=13000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
