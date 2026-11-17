@@ -66,7 +66,7 @@ class InterfaceLoss:
     def compute_pointwise_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
         if pts.shape[0] == 0:
             empty = torch.empty((0, 1), device=pts.device, dtype=pts.dtype)
-            return empty, empty, empty
+            return empty, empty
 
         model = self.electro_magnetic_pinn.pinn_architecture_instance
         nx, ny, tx, ty, corner_w = self._compute_normals_and_tangents_from_outline(domain_a, pts)
@@ -75,29 +75,14 @@ class InterfaceLoss:
             _, _, _, _, corner_w_b = self._compute_normals_and_tangents_from_outline(domain_b, pts)
             corner_w = torch.minimum(corner_w, corner_w_b)
 
-        Az_a = model.forward_network(key_a, pts)
-        Az_b = model.forward_network(key_b, pts)
+        field_a = model.forward_network(key_a, pts)
+        field_b = model.forward_network(key_b, pts)
 
-        err_val = (Az_a - Az_b) ** 2
+        Bx_a_star, By_a_star = field_a[:, 0:1], field_a[:, 1:2]
+        Hx_a_star, Hy_a_star = field_a[:, 2:3], field_a[:, 3:4]
 
-        grad_a = torch.autograd.grad(
-            outputs=Az_a,
-            inputs=pts,
-            grad_outputs=torch.ones_like(Az_a),
-            create_graph=True
-        )[0]
-
-        grad_b = torch.autograd.grad(
-            outputs=Az_b,
-            inputs=pts,
-            grad_outputs=torch.ones_like(Az_b),
-            create_graph=True
-        )[0]
-
-        Bx_a_star = grad_a[:, 1:2] * self.L0
-        By_a_star = -grad_a[:, 0:1] * self.L0
-        Bx_b_star = grad_b[:, 1:2] * self.L0
-        By_b_star = -grad_b[:, 0:1] * self.L0
+        Bx_b_star, By_b_star = field_b[:, 0:1], field_b[:, 1:2]
+        Hx_b_star, Hy_b_star = field_b[:, 2:3], field_b[:, 3:4]
 
         Bn_a_star = Bx_a_star * nx + By_a_star * ny
         Bn_b_star = Bx_b_star * nx + By_b_star * ny
@@ -109,28 +94,14 @@ class InterfaceLoss:
             B_mag_a_phys = torch.sqrt(Bx_a_star**2 + By_a_star**2 + 1e-12) * (self.H0 / self.nu0)
             nu_a_star = domain_a.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_a_phys, is_nonlinear=True) / self.nu0
 
-        hx_a, hy_a = domain_a.evaluate_magnetization_vector(pts)
-        hx_a_star = hx_a / self.H0
-        hy_a_star = hy_a / self.H0
-
         if domain_b is not None and getattr(domain_b, 'domain_name', '') != 'background':
             if hasattr(model, 'nu_networks') and key_b in model.nu_networks:
                 nu_b_star = model.forward_nu_network(key_b, pts)
             else:
                 B_mag_b_phys = torch.sqrt(Bx_b_star**2 + By_b_star**2 + 1e-12) * (self.H0 / self.nu0)
                 nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys, is_nonlinear=True) / self.nu0
-            hx_b, hy_b = domain_b.evaluate_magnetization_vector(pts)
-            hx_b_star = hx_b / self.H0
-            hy_b_star = hy_b / self.H0
         else:
             nu_b_star = torch.ones_like(nu_a_star)
-            hx_b_star = torch.zeros_like(hx_a_star)
-            hy_b_star = torch.zeros_like(hy_a_star)
-
-        Hx_a_star = nu_a_star * Bx_a_star - hx_a_star
-        Hy_a_star = nu_a_star * By_a_star - hy_a_star
-        Hx_b_star = nu_b_star * Bx_b_star - hx_b_star
-        Hy_b_star = nu_b_star * By_b_star - hy_b_star
 
         Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
@@ -138,32 +109,30 @@ class InterfaceLoss:
         ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
         err_Ht = corner_w * (ht_diff_normalized ** 2)
 
-        return err_val, err_Bn, err_Ht
+        return err_Bn, err_Ht
 
     def _compute_pair_components(self, key_a, domain_a, key_b, domain_b, pts):
         if pts.shape[0] == 0:
             zero = torch.tensor(0.0, device=pts.device)
-            return zero, zero, zero, zero
+            return zero, zero, zero
 
-        err_val, err_Bn, err_Ht = self.compute_pointwise_pair_components(
+        err_Bn, err_Ht = self.compute_pointwise_pair_components(
             key_a, domain_a, key_b, domain_b, pts
         )
 
-        loss_val = torch.mean(err_val)
         loss_Bn = torch.mean(err_Bn)
         loss_Ht = torch.mean(err_Ht)
 
-        w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1.0))
         w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 1.0))
         w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 1.0))
 
-        weighted_interface = w_az * loss_val + w_bn * loss_Bn + w_ht * loss_Ht
-        return weighted_interface, loss_val, loss_Bn, loss_Ht
+        weighted_interface = w_bn * loss_Bn + w_ht * loss_Ht
+        return weighted_interface, loss_Bn, loss_Ht
 
     def compute_loss_components(self, network_key, domain, surf_pts, background_key='background'):
         bg_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance.background_domain
         return self._compute_pair_components(network_key, domain, background_key, bg_domain, surf_pts)
 
     def compute_loss(self, network_key, domain, surf_pts, background_key='background'):
-        weighted_interface, _, _, _ = self.compute_loss_components(network_key, domain, surf_pts, background_key)
+        weighted_interface, _, _ = self.compute_loss_components(network_key, domain, surf_pts, background_key)
         return weighted_interface

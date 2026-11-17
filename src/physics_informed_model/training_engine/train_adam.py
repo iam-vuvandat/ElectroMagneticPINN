@@ -73,21 +73,21 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
                 lmb = bd.get('relobralo_lambdas', {})
                 has_bc = 'loss_bc' in lmb
                 bc_str = f" | BC = {bc_val:.2e}" if has_bc else ""
-                lmb_keys_label = "Lambda(pde/a/bn/ht/bc)" if has_bc else "Lambda(pde/a/bn/ht)"
+                lmb_keys_label = "Lambda(pde/bn/ht/bc)" if has_bc else "Lambda(pde/bn/ht)"
                 lmb_bc_str = f"/{lmb.get('loss_bc', 1.0):.2f}" if has_bc else ""
                 print(
                     f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
                     f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
-                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
+                    f"IF(Bn/Ht) = {bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
                     f"{bc_str} | "
-                    f"{lmb_keys_label} = {lmb.get('loss_pde', 1.0):.2f}/{lmb.get('loss_a', 1.0):.2f}/{lmb.get('loss_bn', 1.0):.2f}/{lmb.get('loss_ht', 1.0):.2f}{lmb_bc_str} | "
+                    f"{lmb_keys_label} = {lmb.get('loss_pde', 1.0):.2f}/{lmb.get('loss_bn', 1.0):.2f}/{lmb.get('loss_ht', 1.0):.2f}{lmb_bc_str} | "
                     f"Time = {epoch_elapsed * 1000.0:.2f}ms"
                 )
             else:
                 print(
                     f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
                     f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
-                    f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e} | "
+                    f"IF(Bn/Ht) = {bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e} | "
                     f"BC = {bc_val:.2e} | "
                     f"Time = {epoch_elapsed * 1000.0:.2f}ms"
                 )

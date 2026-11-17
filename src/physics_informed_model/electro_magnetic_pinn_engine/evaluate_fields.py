@@ -9,35 +9,35 @@ def evaluate_fields(pinn_instance, points_tensor, return_numpy=False):
     phys_props = sim_domain.evaluate_global_physical_properties(points_tensor)
     mat_id = phys_props["material_classification"]
 
-    A_z_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
     B_x_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
     B_y_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+    H_x_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
+    H_y_phys = torch.zeros((points_tensor.shape[0], 1), device=device)
 
-    for domain in sim_domain.domains_list:
-        d_id = domain.domain_id
-        net_key = resolve_domain_net_key(domain, pinn_arch)
-        mask_bool = (mat_id == float(d_id))
-        
-        if mask_bool.any():
-            Az_star = pinn_arch.forward_network(net_key, points_tensor)
-            grad_star = torch.autograd.grad(
-                outputs=Az_star, inputs=points_tensor,
-                grad_outputs=torch.ones_like(Az_star), create_graph=False
-            )[0]
+    with torch.no_grad():
+        for domain in sim_domain.domains_list:
+            d_id = domain.domain_id
+            net_key = resolve_domain_net_key(domain, pinn_arch)
+            mask_bool = (mat_id == float(d_id))
 
-            Az_phys = Az_star * pinn_instance.A0
-            Bx_phys = grad_star[:, 1:2] * pinn_instance.A0
-            By_phys = -grad_star[:, 0:1] * pinn_instance.A0
+            if mask_bool.any():
+                field_star = pinn_arch.forward_network(net_key, points_tensor)
+                Bx_phys = field_star[:, 0:1] * sim_domain.B0
+                By_phys = field_star[:, 1:2] * sim_domain.B0
+                Hx_phys = field_star[:, 2:3] * sim_domain.H0
+                Hy_phys = field_star[:, 3:4] * sim_domain.H0
 
-            A_z_phys = torch.where(mask_bool, Az_phys, A_z_phys)
-            B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
-            B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
+                B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
+                B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
+                H_x_phys = torch.where(mask_bool, Hx_phys, H_x_phys)
+                H_y_phys = torch.where(mask_bool, Hy_phys, H_y_phys)
 
     if return_numpy:
         return (
-            A_z_phys.detach().cpu().numpy(),
             B_x_phys.detach().cpu().numpy(),
-            B_y_phys.detach().cpu().numpy()
+            B_y_phys.detach().cpu().numpy(),
+            H_x_phys.detach().cpu().numpy(),
+            H_y_phys.detach().cpu().numpy()
         )
 
-    return A_z_phys.detach(), B_x_phys.detach(), B_y_phys.detach()
+    return B_x_phys.detach(), B_y_phys.detach(), H_x_phys.detach(), H_y_phys.detach()

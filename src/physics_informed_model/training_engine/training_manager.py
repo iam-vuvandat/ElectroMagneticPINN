@@ -44,7 +44,7 @@ class TrainingManager:
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         boundary_obj = getattr(sim_domain, 'boundary', None)
         enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') if boundary_obj else 'hard_factor'
-        balancer_keys = ("loss_pde", "loss_a", "loss_bn", "loss_ht", "loss_bc") if enforce_method == 'soft_loss' else ("loss_pde", "loss_a", "loss_bn", "loss_ht")
+        balancer_keys = ("loss_pde", "loss_bn", "loss_ht", "loss_bc") if enforce_method == 'soft_loss' else ("loss_pde", "loss_bn", "loss_ht")
 
         self.enable_relobralo = bool(getattr(t_cfg, 'enable_relobralo', False))
         self.relobralo_balancer = None

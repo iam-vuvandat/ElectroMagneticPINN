@@ -290,9 +290,9 @@ def main():
         np.column_stack((X_m.ravel(), Y_m.ravel())),
         dtype=torch.float32,
         device=pinn_model.computation_device
-    ).requires_grad_(True)
+    )
 
-    _, B_x_pinn, B_y_pinn = pinn_model.evaluate_fields(eval_pts, return_numpy=True)
+    B_x_pinn, B_y_pinn, _, _ = pinn_model.evaluate_fields(eval_pts, return_numpy=True)
     pinn_b_mag = np.sqrt(B_x_pinn**2 + B_y_pinn**2).reshape(res_y, res_x)
 
     delta_b_mag = np.abs(pinn_b_mag - fem_b_mag)

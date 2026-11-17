@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 import numpy as np
 
 def forward_network(self, network_key, xy):
@@ -18,22 +17,22 @@ def forward_network(self, network_key, xy):
                     break
 
     if actual_key not in self.networks:
-        raise ValueError(f"Lỗi: Không tìm thấy mạng con '{network_key}' trong XPINNArchitecture.")
-        
+        raise ValueError(f"Error: Sub-network '{network_key}' not found in XPINNArchitecture.")
+
     sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
     xy_normalized = xy / sim_domain.L0
-    
+
     target_domain = None
     for domain in sim_domain.domains_list:
         if getattr(domain, 'domain_name', '') == actual_key or f"domain_{domain.domain_id}" == actual_key:
             target_domain = domain
             break
-            
+
     if target_domain is None:
-        raise ValueError(f"Lỗi: Không tìm thấy domain tương ứng với network_key '{actual_key}'.")
+        raise ValueError(f"Error: Domain corresponding to network_key '{actual_key}' not found.")
 
     config = target_domain.network_config
-    
+
     if config.fourier_features:
         B_matrix = getattr(self, f'B_matrix_{actual_key}', None)
         if B_matrix is not None:
@@ -45,28 +44,27 @@ def forward_network(self, network_key, xy):
             x_input = xy_normalized
     else:
         x_input = xy_normalized
-        
+
     raw_output = self.networks[actual_key](x_input)
-    
+
     if actual_key == 'background' or getattr(target_domain, 'domain_name', '') == 'background':
         boundary_obj = sim_domain.boundary
         enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor')
-        pot_val_star = float(getattr(boundary_obj.physics_config, 'potential_value', 0.0)) / max(sim_domain.A0, 1e-12)
         if enforce_method == 'hard_factor':
-            A_z_star = raw_output * self.boundary_factor(xy) + pot_val_star
-        else:
-            A_z_star = raw_output
-    else:
-        A_z_star = raw_output
-        
-    return A_z_star
+            x_min, x_max = boundary_obj.geometry_config.x_boundaries_tuple
+            y_min, y_max = boundary_obj.geometry_config.y_boundaries_tuple
+            x_norm = 2.0 * (xy[:, 0:1] - x_min) / (x_max - x_min) - 1.0
+            y_norm = 2.0 * (xy[:, 1:2] - y_min) / (y_max - y_min) - 1.0
+            bx_star = raw_output[:, 0:1] * (1.0 - x_norm ** 2)
+            by_star = raw_output[:, 1:2] * (1.0 - y_norm ** 2)
+            hx_star = raw_output[:, 2:3]
+            hy_star = raw_output[:, 3:4]
+            return torch.cat([bx_star, by_star, hx_star, hy_star], dim=-1)
+
+    return raw_output
 
 
 def forward_nu_network(self, network_key, xy):
-    """
-    Tra cứu độ từ kháng nu* = nu / nu0 từ Mạng phụ Net_nu.
-    Hỗ trợ đối chiếu tự động giữa tên domain và domain_id.
-    """
     actual_key = network_key
     if actual_key not in self.nu_networks:
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
@@ -86,7 +84,7 @@ def forward_nu_network(self, network_key, xy):
 
     sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
     xy_normalized = xy / sim_domain.L0
-    
+
     target_domain = None
     for domain in sim_domain.domains_list:
         if getattr(domain, 'domain_name', '') == actual_key or f"domain_{domain.domain_id}" == actual_key:
@@ -108,6 +106,5 @@ def forward_nu_network(self, network_key, xy):
         x_input = xy_normalized
 
     raw_nu = self.nu_networks[actual_key](x_input)
-    # Softplus + 1e-6 đảm bảo nu* luôn dương
     nu_star = torch.nn.functional.softplus(raw_nu) + 1e-6
     return nu_star

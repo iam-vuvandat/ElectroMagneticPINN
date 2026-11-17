@@ -3,14 +3,15 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.colors import LogNorm, Normalize, ListedColormap, BoundaryNorm
+from matplotlib.colors import LogNorm, Normalize
 from simulation_domain_engine.global_physical_properties_evaluation import VACUUM_RELUCTIVITY
 from training_visualizer.resolve_domain_net_key import resolve_domain_net_key
+from training_engine.compute_loss import _compute_outer_box_normals
 
 ANSYS_FEM_HEX_COLORS = [
-    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF', 
-    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B', 
-    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00', 
+    '#0000FF', '#0036FF', '#006BFF', '#00A1FF', '#00D7FF',
+    '#00FFF2', '#00FFBC', '#00FF86', '#00FF51', '#00FF1B',
+    '#1BFF00', '#51FF00', '#86FF00', '#BCFF00', '#F2FF00',
     '#FFD700', '#FFA100', '#FF6B00', '#FF3600', '#FF0000'
 ]
 
@@ -28,23 +29,22 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     visualizer_instance.epoch_history.append(epoch)
 
     pde_val = max(float(loss_breakdown.get('pde_loss', loss_value)), 1e-16)
-    az_val = max(float(loss_breakdown.get('interface_Az', 1e-16)), 1e-16)
+    const_val = max(float(loss_breakdown.get('const_loss', 1e-16)), 1e-16)
     bn_val = max(float(loss_breakdown.get('interface_Bn', 1e-16)), 1e-16)
     ht_val = max(float(loss_breakdown.get('interface_Ht', 1e-16)), 1e-16)
     bc_val = max(float(loss_breakdown.get('boundary_loss', 1e-16)), 1e-16)
 
     visualizer_instance.pde_loss_history.append(pde_val)
-    visualizer_instance.az_loss_history.append(az_val)
+    visualizer_instance.const_loss_history.append(const_val)
     visualizer_instance.bn_loss_history.append(bn_val)
     visualizer_instance.ht_loss_history.append(ht_val)
     visualizer_instance.bc_loss_history.append(bc_val)
 
     lmb = loss_breakdown.get('relobralo_lambdas', {})
-    visualizer_instance.w_az_history.append(float(lmb.get('loss_a', 1.0)))
     visualizer_instance.w_bn_history.append(float(lmb.get('loss_bn', 1.0)))
     visualizer_instance.w_ht_history.append(float(lmb.get('loss_ht', 1.0)))
     visualizer_instance.w_bc_history.append(float(lmb.get('loss_bc', 1.0)))
-    
+
     model = visualizer_instance.electro_magnetic_pinn.pinn_architecture_instance
     pde_evaluator = visualizer_instance.electro_magnetic_pinn.maxwell_pde_loss_instance
     interface_evaluator = visualizer_instance.electro_magnetic_pinn.interface_loss_instance
@@ -54,29 +54,28 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     model.eval()
     computation_device = next(model.parameters()).device
     eval_points = visualizer_instance.eval_points_tensor.to(computation_device).detach().clone().requires_grad_(True)
-    
+
     phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
     mat_id = phys_props["material_classification"]
-    
-    A_z_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+
     B_x_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     B_y_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+    H_x_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+    H_y_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     nu_phys_all = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     residual_total = torch.zeros((eval_points.shape[0], 1), device=computation_device)
+    const_residual_total = torch.zeros((eval_points.shape[0], 1), device=computation_device)
 
     for domain in sim_domain.domains_list:
         d_id = domain.domain_id
         net_key = resolve_domain_net_key(domain, model)
         mask_bool = (mat_id == float(d_id))
         if mask_bool.any():
-            Az_sub_star = model.forward_network(net_key, eval_points)
-            grad_sub_star = torch.autograd.grad(
-                outputs=Az_sub_star, inputs=eval_points,
-                grad_outputs=torch.ones_like(Az_sub_star), create_graph=True
-            )[0]
-            Az_sub_phys = Az_sub_star * sim_domain.A0
-            Bx_sub_phys = grad_sub_star[:, 1:2] * sim_domain.A0
-            By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
+            field_star = model.forward_network(net_key, eval_points)
+            Bx_sub_phys = field_star[:, 0:1] * sim_domain.B0
+            By_sub_phys = field_star[:, 1:2] * sim_domain.B0
+            Hx_sub_phys = field_star[:, 2:3] * sim_domain.H0
+            Hy_sub_phys = field_star[:, 3:4] * sim_domain.H0
 
             if getattr(domain.physics_config, 'is_nonlinear', False):
                 if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
@@ -93,72 +92,76 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
             jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
 
-            res_pde = pde_evaluator.compute_linear_pde_residual(
-                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
+            res_div, res_curl, res_const_x, res_const_y = pde_evaluator.compute_first_order_pde_residuals(
+                eval_points, field_star, nu_dom, jz_dom, hx_dom, hy_dom
             )
+            res_mag = torch.sqrt((res_div ** 2) + (res_curl ** 2) + (res_const_x ** 2) + (res_const_y ** 2))
+            const_mag = torch.sqrt((res_const_x ** 2) + (res_const_y ** 2))
 
-            A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
             B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
             B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
+            H_x_phys = torch.where(mask_bool, Hx_sub_phys.detach(), H_x_phys)
+            H_y_phys = torch.where(mask_bool, Hy_sub_phys.detach(), H_y_phys)
             nu_phys_all = torch.where(mask_bool, nu_dom.detach(), nu_phys_all)
-            residual_total = torch.where(mask_bool, torch.abs(res_pde.detach()), residual_total)
-    
-    A_z_numpy = A_z_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
+            residual_total = torch.where(mask_bool, res_mag.detach(), residual_total)
+            const_residual_total = torch.where(mask_bool, const_mag.detach(), const_residual_total)
+
     B_x_numpy = B_x_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     B_y_numpy = B_y_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     B_mag_numpy = np.sqrt(B_x_numpy ** 2 + B_y_numpy ** 2)
+
+    H_x_numpy = H_x_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
+    H_y_numpy = H_y_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
+    H_mag_numpy = np.sqrt(H_x_numpy ** 2 + H_y_numpy ** 2)
+
     mu_r_numpy = (VACUUM_RELUCTIVITY / torch.clamp(nu_phys_all, min=1e-6)).cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     residual_numpy = residual_total.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
+    const_residual_numpy = const_residual_total.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
 
     domains_dict = domains_data.get("domains", domains_data)
     shared_dict = domains_data.get("shared_interfaces", {})
     bg_domain = sim_domain.background_domain
 
     if_coords_list = []
-    err_az_list = []
     err_bn_list = []
     err_ht_list = []
 
     if interface_evaluator is not None:
-        for key, d in domains_dict.items():
-            domain = d["domain_object"]
-            net_key = resolve_domain_net_key(domain, model)
-            outer_pts = d.get("outer_surface_points", d.get("surface_points"))
-            if outer_pts is not None and outer_pts.shape[0] > 0 and net_key != 'background':
-                pts_req = outer_pts.to(computation_device).detach().clone().requires_grad_(True)
-                e_az, e_bn, e_ht = interface_evaluator.compute_pointwise_pair_components(
-                    key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=pts_req
-                )
-                if_coords_list.append(pts_req.detach().cpu().numpy())
-                err_az_list.append(e_az.detach().cpu().numpy().ravel())
-                err_bn_list.append(e_bn.detach().cpu().numpy().ravel())
-                err_ht_list.append(e_ht.detach().cpu().numpy().ravel())
+        with torch.no_grad():
+            for key, d in domains_dict.items():
+                domain = d["domain_object"]
+                net_key = resolve_domain_net_key(domain, model)
+                outer_pts = d.get("outer_surface_points", d.get("surface_points"))
+                if outer_pts is not None and outer_pts.shape[0] > 0 and net_key != 'background':
+                    pts_req = outer_pts.to(computation_device)
+                    e_bn, e_ht = interface_evaluator.compute_pointwise_pair_components(
+                        key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=pts_req
+                    )
+                    if_coords_list.append(pts_req.cpu().numpy())
+                    err_bn_list.append(e_bn.cpu().numpy().ravel())
+                    err_ht_list.append(e_ht.cpu().numpy().ravel())
 
-        for pair_key, pair_data in shared_dict.items():
-            s_pts = pair_data.get("interface_points")
-            if s_pts is not None and s_pts.shape[0] > 0:
-                pts_req = s_pts.to(computation_device).detach().clone().requires_grad_(True)
-                e_az, e_bn, e_ht = interface_evaluator.compute_pointwise_pair_components(
-                    key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
-                    key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts_req
-                )
-                if_coords_list.append(pts_req.detach().cpu().numpy())
-                err_az_list.append(e_az.detach().cpu().numpy().ravel())
-                err_bn_list.append(e_bn.detach().cpu().numpy().ravel())
-                err_ht_list.append(e_ht.detach().cpu().numpy().ravel())
+            for pair_key, pair_data in shared_dict.items():
+                s_pts = pair_data.get("interface_points")
+                if s_pts is not None and s_pts.shape[0] > 0:
+                    pts_req = s_pts.to(computation_device)
+                    e_bn, e_ht = interface_evaluator.compute_pointwise_pair_components(
+                        key_a=pair_data["key_a"], domain_a=pair_data["domain_a"],
+                        key_b=pair_data["key_b"], domain_b=pair_data["domain_b"], pts=pts_req
+                    )
+                    if_coords_list.append(pts_req.cpu().numpy())
+                    err_bn_list.append(e_bn.cpu().numpy().ravel())
+                    err_ht_list.append(e_ht.cpu().numpy().ravel())
 
     if if_coords_list:
         if_coords_all = np.vstack(if_coords_list)
-        err_az_all = np.concatenate(err_az_list)
         err_bn_all = np.concatenate(err_bn_list)
         err_ht_all = np.concatenate(err_ht_list)
     else:
         if_coords_all = np.empty((0, 2))
-        err_az_all = np.empty((0,))
         err_bn_all = np.empty((0,))
         err_ht_all = np.empty((0,))
 
-    # Lấy mẫu & Đánh giá sai số Boundary Points để vẽ "Boundary loss map"
     bc_pts = domains_data.get("boundary_points")
     bc_coords_np = np.empty((0, 2))
     err_bc_all = np.empty((0,))
@@ -168,10 +171,12 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     if bc_pts is not None and bc_pts.shape[0] > 0:
         bc_pts_dev = bc_pts.to(computation_device)
         bc_coords_np = bc_pts.cpu().detach().numpy()
-        pot_val_star = float(getattr(boundary_obj.physics_config, 'potential_value', 0.0)) / max(sim_domain.A0, 1e-12)
+        nx_bc, ny_bc = _compute_outer_box_normals(
+            bc_pts_dev, sim_domain.x_boundaries_tuple, sim_domain.y_boundaries_tuple
+        )
         bc_phys_props = sim_domain.evaluate_global_physical_properties(bc_pts_dev)
         bc_mat_id = bc_phys_props["material_classification"].view(-1)
-        
+
         err_bc_list = []
         for domain in sim_domain.domains_list:
             d_id = domain.domain_id
@@ -180,8 +185,9 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             if mask.any():
                 sub_pts = bc_pts_dev[mask]
                 with torch.no_grad():
-                    Az_bc_pred = model.forward_network(net_key, sub_pts)
-                    sq_err = (Az_bc_pred - pot_val_star) ** 2
+                    field_bc_pred = model.forward_network(net_key, sub_pts)
+                    bn_bc_pred = field_bc_pred[:, 0:1] * nx_bc[mask] + field_bc_pred[:, 1:2] * ny_bc[mask]
+                    sq_err = bn_bc_pred ** 2
                 err_bc_list.append(sq_err.cpu().view(-1).numpy())
         if err_bc_list:
             err_bc_all = np.concatenate(err_bc_list)
@@ -199,7 +205,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
                     color=color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=5
                 )
 
-    # axs[0, 0]: Collocation point
     ax_pts = axs[0, 0]
     ax_pts.set_title("Collocation point", fontsize=11, fontweight='bold')
     domain_colors = ['#1a365d', '#742a2a', '#1c4532', '#4a5568', '#44337a', '#7b341e']
@@ -231,7 +236,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_pts.set_ylim(visualizer_instance.y_bounds)
     ax_pts.set_aspect('equal')
 
-    # axs[0, 1]: PDE residual map
     disc_levels = getattr(vis_cfg, 'res_discrete_levels', [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0])
     res_min = vis_cfg.res_vmin if vis_cfg.res_vmin is not None else float(disc_levels[0])
     res_max = vis_cfg.res_vmax if vis_cfg.res_vmax is not None else float(disc_levels[-1])
@@ -267,12 +271,11 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[0, 1].set_title("PDE residual map", fontsize=11, fontweight='bold')
     axs[0, 1].set_aspect('equal')
 
-    # axs[0, 2]: Loss optimization
     has_bc_plot = (enforce_method == 'soft_loss') or ('loss_bc' in lmb)
     ax_loss = axs[0, 2]
     steps = visualizer_instance.epoch_history
     ax_loss.plot(steps, visualizer_instance.pde_loss_history, label="PDE loss", linewidth=1.4)
-    ax_loss.plot(steps, visualizer_instance.az_loss_history, label=r"$A_z$ loss", linewidth=1.4)
+    ax_loss.plot(steps, visualizer_instance.const_loss_history, label="Constitutive loss", linewidth=1.4)
     ax_loss.plot(steps, visualizer_instance.bn_loss_history, label=r"$B_n$ loss", linewidth=1.4)
     ax_loss.plot(steps, visualizer_instance.ht_loss_history, label=r"$H_t$ loss", linewidth=1.4)
     if has_bc_plot:
@@ -284,9 +287,7 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_loss.grid(True, which="both", ls="--", alpha=0.25)
     ax_loss.legend(loc="upper right", fontsize=8.5)
 
-    # axs[0, 3]: Loss weight
     ax_w = axs[0, 3]
-    ax_w.plot(steps, visualizer_instance.w_az_history, label=r"$A_z$", linewidth=1.4)
     ax_w.plot(steps, visualizer_instance.w_bn_history, label=r"$B_n$", linewidth=1.4)
     ax_w.plot(steps, visualizer_instance.w_ht_history, label=r"$H_t$", linewidth=1.4)
     if has_bc_plot:
@@ -297,7 +298,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_w.grid(True, which="both", ls="--", alpha=0.25)
     ax_w.legend(loc="upper right", fontsize=8.5)
 
-    # Cấu hình biên cho bản đồ lỗi boundary / interface
     if_levels = getattr(vis_cfg, 'if_discrete_levels', [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2])
     if_min = getattr(vis_cfg, 'if_vmin', None)
     if_min = float(if_min) if if_min is not None else float(if_levels[0])
@@ -336,19 +336,29 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         ax_target.set_title(title_str, fontsize=11, fontweight='bold')
         ax_target.set_aspect('equal')
 
-    # axs[1, 0]: Boundary loss map
-    plot_scatter_loss_map(axs[1, 0], bc_coords_np, err_bc_all, r"Boundary loss map", r"$(A_{z}^* - A_{z,\mathrm{bc}}^*)^2$")
+    plot_scatter_loss_map(axs[1, 0], bc_coords_np, err_bc_all, r"Boundary loss map", r"$(B_{n}^*)^2$")
 
-    # axs[1, 1]: Az interface loss map
-    plot_scatter_loss_map(axs[1, 1], if_coords_all, err_az_all, r"$A_z$ interface loss map", r"$(A_{z,a}^* - A_{z,b}^*)^2$")
+    const_abs = np.clip(np.abs(const_residual_numpy), res_min, res_max)
+    contour_const = axs[1, 1].contourf(
+        visualizer_instance.X_grid, visualizer_instance.Y_grid, const_abs,
+        levels=levels_res, cmap=base_cmap, norm=norm_res
+    )
+    cbar_const = fig.colorbar(
+        contour_const,
+        ax=axs[1, 1],
+        ticks=disc_levels if (res_scale_mode == 'log' and disc_levels is not None) else None
+    )
+    if res_scale_mode == 'log':
+        cbar_const.ax.set_yscale('log')
+    cbar_const.set_label("Constitutive Residual", fontsize=9)
+    draw_domain_outlines(axs[1, 1], color='#FFFFFF', linestyle='--', linewidth=0.7, alpha=0.5)
+    axs[1, 1].set_title("Constitutive residual map", fontsize=11, fontweight='bold')
+    axs[1, 1].set_aspect('equal')
 
-    # axs[1, 2]: Bn interface loss map
     plot_scatter_loss_map(axs[1, 2], if_coords_all, err_bn_all, r"$B_n$ interface loss map", r"$w_c (B_{n,a}^* - B_{n,b}^*)^2$")
 
-    # axs[1, 3]: Ht interface loss map
     plot_scatter_loss_map(axs[1, 3], if_coords_all, err_ht_all, r"$H_t$ interface loss map", r"$w_c (\Delta H_t^* / \nu)^2$")
 
-    # axs[2, 0]: Permeability map
     mur_min = vis_cfg.mur_vmin if vis_cfg.mur_vmin is not None else 0.0
     mur_max = vis_cfg.mur_vmax if vis_cfg.mur_vmax is not None else 3000.0
     mu_r_clamped = np.clip(mu_r_numpy, mur_min, mur_max)
@@ -373,20 +383,18 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 0].set_title("Permeability map", fontsize=11, fontweight='bold')
     axs[2, 0].set_aspect('equal')
 
-    # axs[2, 1]: Az map
-    az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
-    az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
-    levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
+    h_min = float(np.min(H_mag_numpy))
+    h_max = float(np.max(H_mag_numpy))
+    levels_h = np.linspace(h_min, h_max, n_levels) if h_min != h_max else n_levels
 
-    contour_az = axs[2, 1].contourf(
-        visualizer_instance.X_grid, visualizer_instance.Y_grid, A_z_numpy, levels=levels_az, cmap=vis_cfg.az_cmap
+    contour_h = axs[2, 1].contourf(
+        visualizer_instance.X_grid, visualizer_instance.Y_grid, H_mag_numpy, levels=levels_h, cmap=vis_cfg.az_cmap
     )
-    fig.colorbar(contour_az, ax=axs[2, 1], label=r"$A_z$ (Wb/m)")
+    fig.colorbar(contour_h, ax=axs[2, 1], label=r"$|H|$ (A/m)")
     draw_domain_outlines(axs[2, 1], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)
-    axs[2, 1].set_title(r"Az map", fontsize=11, fontweight='bold')
+    axs[2, 1].set_title(r"|H| map", fontsize=11, fontweight='bold')
     axs[2, 1].set_aspect('equal')
 
-    # axs[2, 2]: |B| map
     b_unit = getattr(vis_cfg, 'b_mag_unit', 'Tesla')
     b_scale = 1000.0 if b_unit == "mTesla" else 1.0
     B_mag_plot = B_mag_numpy * b_scale
@@ -420,7 +428,6 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 2].set_title(r"|B| map", fontsize=11, fontweight='bold')
     axs[2, 2].set_aspect('equal')
 
-    # axs[2, 3]: B vector map
     contour_b_bg = axs[2, 3].contourf(
         visualizer_instance.X_grid, visualizer_instance.Y_grid, b_mag_clamped, levels=levels_b,
         cmap=cmap_b, norm=norm_b, alpha=0.3
@@ -429,8 +436,8 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     step = max(1, visualizer_instance.resolution // 20)
     B_sub = np.maximum(B_mag_numpy[::step, ::step], 1e-12)
     axs[2, 3].quiver(
-        visualizer_instance.X_grid[::step, ::step], visualizer_instance.Y_grid[::step, ::step], 
-        B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub, 
+        visualizer_instance.X_grid[::step, ::step], visualizer_instance.Y_grid[::step, ::step],
+        B_x_numpy[::step, ::step] / B_sub, B_y_numpy[::step, ::step] / B_sub,
         scale=30.0, color='black', pivot='mid'
     )
     draw_domain_outlines(axs[2, 3], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)
@@ -439,11 +446,11 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
 
     fig.suptitle(f"Training process: Step {epoch}; FPI step {fpi_step}", fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    
+
     frame_name = os.path.join(visualizer_instance.output_directory, f"frame_{len(visualizer_instance.frame_paths) + 1:05d}.png")
     plt.savefig(frame_name, dpi=100)
     plt.close(fig)
-    
+
     visualizer_instance.frame_paths.append(frame_name)
     model.train()
 
@@ -455,6 +462,3 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             display(Image(filename=frame_name))
         except Exception:
             pass
-
-
-        
