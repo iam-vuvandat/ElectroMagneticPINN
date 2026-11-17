@@ -152,7 +152,7 @@ def main():
     pinn_model.training_config.lbfgs_fpi_step_iterations = 300
 
     epochs_warmup_target = 6000
-    fpi_iterations = 20
+    fpi_iterations = 7
     epochs_per_fpi = 3000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
