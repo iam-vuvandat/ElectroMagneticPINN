@@ -37,7 +37,8 @@ def execute_training_process(pinn_instance):
 
     if getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True) and epochs_adaptation > 0:
         fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 10))
-        alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 1.0))
+        initial_alpha_damp = float(getattr(t_cfg, 'fpi_initial_alpha_damping', 1.0))
+        alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 0.3))
         fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
         epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
 
@@ -47,7 +48,8 @@ def execute_training_process(pinn_instance):
         print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
         for f_iter in range(fpi_iters):
             tm.current_fpi_step = f_iter + 1
-            print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters}] <<<")
+            current_alpha_damp = initial_alpha_damp if f_iter == 0 else alpha_damp
+            print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters} | damping={current_alpha_damp}] <<<")
             if getattr(tm, 'relobralo_balancer', None) is not None:
                 tm.relobralo_balancer.reset_anchors(reset_weights=False)
             domains_data = tm.train_adam(
@@ -56,9 +58,9 @@ def execute_training_process(pinn_instance):
                 resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
             )
             max_diff = tm.fit_nu_network_step(
-                domains_data, alpha_damping=alpha_damp, epochs=fit_ep, lr=fit_lr
+                domains_data, alpha_damping=current_alpha_damp, epochs=fit_ep, lr=fit_lr
             )
-            print(f"[*] Outer FPI Iter {f_iter + 1}: Max Nu Diff = {max_diff:.4e}")
+            print(f"[*] Outer FPI Iter {f_iter + 1} (alpha={current_alpha_damp}): Max Nu Diff = {max_diff:.4e}")
 
             if getattr(t_cfg, 'enable_lbfgs_after_fpi_step', False):
                 lbfgs_fpi_iters = int(getattr(t_cfg, 'lbfgs_fpi_step_iterations', getattr(t_cfg, 'number_of_lbfgs_iterations', 1500)))
@@ -66,7 +68,7 @@ def execute_training_process(pinn_instance):
                     print(f"\n--- [STAGE 1B-LBFGS] L-BFGS FPI Step Refinement ({lbfgs_fpi_iters} Iterations) ---")
                     domains_data = tm.train_lbfgs(max_iterations=lbfgs_fpi_iters, domains_data=domains_data)
 
-            if max_diff < fpi_tol:
+            if f_iter > 0 and max_diff < fpi_tol:
                 print(f"[OK] FPI Early convergence at iteration {f_iter + 1}!")
                 break
 

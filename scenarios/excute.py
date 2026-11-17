@@ -156,6 +156,7 @@ def main():
     epochs_per_fpi = 3000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
+    pinn_model.training_config.fpi_initial_alpha_damping = 1.0
     pinn_model.training_config.fpi_alpha_damping = 0.3
     pinn_model.training_config.fpi_tolerance = 1e-6
 

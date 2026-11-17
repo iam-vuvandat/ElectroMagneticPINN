@@ -44,7 +44,8 @@ class ElectroMagneticPINN:
             target_loss_threshold=1e-5,
 
             fpi_outer_iterations=10,
-            fpi_alpha_damping=1.0,
+            fpi_initial_alpha_damping=1.0,
+            fpi_alpha_damping=0.3,
             fpi_tolerance=1e-5,
 
             pretrain_nu_epochs=300,
