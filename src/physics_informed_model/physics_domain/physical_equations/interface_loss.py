@@ -79,10 +79,7 @@ class InterfaceLoss:
         field_b = model.forward_network(key_b, pts)
 
         Bx_a_star, By_a_star = field_a[:, 0:1], field_a[:, 1:2]
-        Hx_a_star, Hy_a_star = field_a[:, 2:3], field_a[:, 3:4]
-
         Bx_b_star, By_b_star = field_b[:, 0:1], field_b[:, 1:2]
-        Hx_b_star, Hy_b_star = field_b[:, 2:3], field_b[:, 3:4]
 
         Bn_a_star = Bx_a_star * nx + By_a_star * ny
         Bn_b_star = Bx_b_star * nx + By_b_star * ny
@@ -102,6 +99,22 @@ class InterfaceLoss:
                 nu_b_star = domain_b.evaluate_reluctivity(pts, B_magnitude_tensor=B_mag_b_phys, is_nonlinear=True) / self.nu0
         else:
             nu_b_star = torch.ones_like(nu_a_star)
+
+        H_cx_a, H_cy_a = domain_a.evaluate_magnetization_vector(pts)
+        H_cx_a_star = H_cx_a.to(device=pts.device, dtype=pts.dtype) / self.H0
+        H_cy_a_star = H_cy_a.to(device=pts.device, dtype=pts.dtype) / self.H0
+        Hx_a_star = nu_a_star * Bx_a_star - H_cx_a_star
+        Hy_a_star = nu_a_star * By_a_star - H_cy_a_star
+
+        if domain_b is not None:
+            H_cx_b, H_cy_b = domain_b.evaluate_magnetization_vector(pts)
+            H_cx_b_star = H_cx_b.to(device=pts.device, dtype=pts.dtype) / self.H0
+            H_cy_b_star = H_cy_b.to(device=pts.device, dtype=pts.dtype) / self.H0
+        else:
+            H_cx_b_star = torch.zeros_like(H_cx_a_star)
+            H_cy_b_star = torch.zeros_like(H_cy_a_star)
+        Hx_b_star = nu_b_star * Bx_b_star - H_cx_b_star
+        Hy_b_star = nu_b_star * By_b_star - H_cy_b_star
 
         Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty

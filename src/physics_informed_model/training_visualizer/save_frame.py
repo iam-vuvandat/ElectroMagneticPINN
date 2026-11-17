@@ -74,14 +74,13 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
             field_star = model.forward_network(net_key, eval_points)
             Bx_sub_phys = field_star[:, 0:1] * sim_domain.B0
             By_sub_phys = field_star[:, 1:2] * sim_domain.B0
-            Hx_sub_phys = field_star[:, 2:3] * sim_domain.H0
-            Hy_sub_phys = field_star[:, 3:4] * sim_domain.H0
 
+            nu_star_net = None
             if getattr(domain.physics_config, 'is_nonlinear', False):
                 if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
-                    with torch.no_grad():
-                        nu_star_pred = model.forward_nu_network(net_key, eval_points)
-                        nu_dom = nu_star_pred * sim_domain.nu0
+                    nu_star_pred = model.forward_nu_network(net_key, eval_points)
+                    nu_star_net = nu_star_pred
+                    nu_dom = nu_star_pred * sim_domain.nu0
                 else:
                     B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
                     nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
@@ -90,10 +89,12 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
 
             hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
             hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
+            Hx_sub_phys = nu_dom * Bx_sub_phys - hx_dom
+            Hy_sub_phys = nu_dom * By_sub_phys - hy_dom
             jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
 
             res_div, res_curl, res_const_x, res_const_y = pde_evaluator.compute_first_order_pde_residuals(
-                eval_points, field_star, nu_dom, jz_dom, hx_dom, hy_dom
+                eval_points, field_star, nu_dom, jz_dom, hx_dom, hy_dom, nu_star_net=nu_star_net
             )
             res_mag = torch.sqrt((res_div ** 2) + (res_curl ** 2) + (res_const_x ** 2) + (res_const_y ** 2))
             const_mag = torch.sqrt((res_const_x ** 2) + (res_const_y ** 2))

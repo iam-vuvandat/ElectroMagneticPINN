@@ -17,7 +17,7 @@ class XPINNArchitecture(nn.Module):
     forward_nu_network = forward_nu_network
     forward = forward
 
-    def __init__(self, electro_magnetic_pinn, input_dim=2, output_dim=4, domain_scale=None):
+    def __init__(self, electro_magnetic_pinn, input_dim=2, output_dim=2, domain_scale=None):
         super().__init__()
 
         self.electro_magnetic_pinn = electro_magnetic_pinn

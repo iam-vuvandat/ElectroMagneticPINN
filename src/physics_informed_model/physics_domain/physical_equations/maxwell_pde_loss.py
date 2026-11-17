@@ -37,8 +37,8 @@ class MaxwellPDELoss:
 
         Bx_star = field_star[:, 0:1]
         By_star = field_star[:, 1:2]
-        Hx_star = field_star[:, 2:3]
-        Hy_star = field_star[:, 3:4]
+        Hx_star = nu_star * Bx_star - H_cx_star
+        Hy_star = nu_star * By_star - H_cy_star
 
         grad_Bx = torch.autograd.grad(
             outputs=Bx_star,
@@ -74,8 +74,8 @@ class MaxwellPDELoss:
 
         res_div = dBx_dx_star + dBy_dy_star
         res_curl = (dHy_dx_star - dHx_dy_star - J_z_star) / nu_scale
-        res_const_x = (Hx_star - nu_star * Bx_star + H_cx_star) / nu_scale
-        res_const_y = (Hy_star - nu_star * By_star + H_cy_star) / nu_scale
+        res_const_x = torch.zeros_like(res_div)
+        res_const_y = torch.zeros_like(res_div)
 
         return res_div, res_curl, res_const_x, res_const_y
 

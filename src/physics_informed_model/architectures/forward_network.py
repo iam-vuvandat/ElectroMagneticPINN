@@ -57,9 +57,7 @@ def forward_network(self, network_key, xy):
             y_norm = 2.0 * (xy[:, 1:2] - y_min) / (y_max - y_min) - 1.0
             bx_star = raw_output[:, 0:1] * (1.0 - x_norm ** 2)
             by_star = raw_output[:, 1:2] * (1.0 - y_norm ** 2)
-            hx_star = raw_output[:, 2:3]
-            hy_star = raw_output[:, 3:4]
-            return torch.cat([bx_star, by_star, hx_star, hy_star], dim=-1)
+            return torch.cat([bx_star, by_star], dim=-1)
 
     return raw_output
 

@@ -24,8 +24,21 @@ def evaluate_fields(pinn_instance, points_tensor, return_numpy=False):
                 field_star = pinn_arch.forward_network(net_key, points_tensor)
                 Bx_phys = field_star[:, 0:1] * sim_domain.B0
                 By_phys = field_star[:, 1:2] * sim_domain.B0
-                Hx_phys = field_star[:, 2:3] * sim_domain.H0
-                Hy_phys = field_star[:, 3:4] * sim_domain.H0
+
+                if getattr(domain.physics_config, 'is_nonlinear', False):
+                    if hasattr(pinn_arch, 'nu_networks') and net_key in pinn_arch.nu_networks:
+                        nu_star_pred = pinn_arch.forward_nu_network(net_key, points_tensor)
+                        nu_phys = nu_star_pred * sim_domain.nu0
+                    else:
+                        B_mag_sub = torch.sqrt(Bx_phys**2 + By_phys**2 + 1e-12)
+                        nu_phys = domain.evaluate_reluctivity(points_tensor, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(device)
+                else:
+                    nu_phys = domain.evaluate_reluctivity(points_tensor, is_nonlinear=False).to(device)
+
+                hx_c, hy_c = domain.evaluate_magnetization_vector(points_tensor)
+                hx_c, hy_c = hx_c.to(device), hy_c.to(device)
+                Hx_phys = nu_phys * Bx_phys - hx_c
+                Hy_phys = nu_phys * By_phys - hy_c
 
                 B_x_phys = torch.where(mask_bool, Bx_phys, B_x_phys)
                 B_y_phys = torch.where(mask_bool, By_phys, B_y_phys)
