@@ -122,7 +122,7 @@ def main():
     sim_domain.boundary.physics_config.enforce_method = "soft_loss"
     sim_domain.boundary.physics_config.potential_value = 0.0
     sim_domain.boundary.training_config.number_of_boundary_points = 3000
-    sim_domain.boundary.training_config.boundary_loss_weight = 1.0
+    sim_domain.boundary.training_config.boundary_loss_weight = 10.0
 
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 250
@@ -130,48 +130,48 @@ def main():
 
     pinn_model.visualization_config.active = True
     pinn_model.visualization_config.display_colab_frames = True
-    pinn_model.visualization_config.update_interval = 50
+    pinn_model.visualization_config.update_interval = 250
 
-    pinn_model.training_config.enable_relobralo = False
-    pinn_model.training_config.relobralo_alpha = 0.999
-    pinn_model.training_config.relobralo_rho = 0.999
-    pinn_model.training_config.relobralo_temperature = 1.0
+    pinn_model.training_config.enable_relobralo = True
+    pinn_model.training_config.relobralo_alpha = 0.995
+    pinn_model.training_config.relobralo_rho = 0.99
+    pinn_model.training_config.relobralo_temperature = 0.5
 
     pinn_model.training_config.enable_linear_warmup_stage = True
     pinn_model.training_config.enable_nonlinear_adaptation_stage = True
     pinn_model.training_config.enable_lbfgs_refinement_stage = True
 
     pinn_model.training_config.enable_lbfgs_after_warmup = True
-    pinn_model.training_config.lbfgs_warmup_iterations = 1000
+    pinn_model.training_config.lbfgs_warmup_iterations = 500
 
     pinn_model.training_config.enable_lbfgs_after_fpi_step = True
-    pinn_model.training_config.lbfgs_fpi_step_iterations = 1000
+    pinn_model.training_config.lbfgs_fpi_step_iterations = 400
 
-    epochs_warmup_target = 5000
-    fpi_iterations = 10
-    epochs_per_fpi = 5000
+    epochs_warmup_target = 9000
+    fpi_iterations = 6
+    epochs_per_fpi = 4500
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
-    pinn_model.training_config.fpi_alpha_damping = 0.5
-    pinn_model.training_config.fpi_tolerance = 1e-6
+    pinn_model.training_config.fpi_alpha_damping = 0.35
+    pinn_model.training_config.fpi_tolerance = 1e-5
 
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     pinn_model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / pinn_model.training_config.number_of_adam_epochs
 
-    pinn_model.training_config.adam_learning_rate = 7e-4
+    pinn_model.training_config.adam_learning_rate = 5e-4
     pinn_model.training_config.target_loss_threshold = 1e-4
-    pinn_model.training_config.adam_eta_min = 1e-6
+    pinn_model.training_config.adam_eta_min = 1e-5
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
-    pinn_model.training_config.adam_log_interval = 1
+    pinn_model.training_config.adam_log_interval = 50
 
     pinn_model.training_config.pretrain_nu_epochs = 3000
     pinn_model.training_config.pretrain_nu_lr = 3e-3
-    pinn_model.training_config.fit_nu_epochs = 3000
+    pinn_model.training_config.fit_nu_epochs = 1500
     pinn_model.training_config.fit_nu_lr = 2e-3
 
-    pinn_model.training_config.number_of_lbfgs_iterations = 4000
-    pinn_model.training_config.lbfgs_learning_rate = 0.35
+    pinn_model.training_config.number_of_lbfgs_iterations = 2000
+    pinn_model.training_config.lbfgs_learning_rate = 0.5
 
     iron_yoke = sim_domain.create_material_domain(
         domain_name="iron_yoke",
@@ -187,20 +187,21 @@ def main():
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 10000
     iron_yoke.training_config.number_of_surface_points = 3600
+    iron_yoke.training_config.interface_weight = 20.0
+    iron_yoke.training_config.interface_bn_weight = 2.0
+    iron_yoke.training_config.interface_ht_weight = 1.0
 
-    iron_yoke.network_config.hidden_layers = 3
+    iron_yoke.network_config.hidden_layers = 4
     iron_yoke.network_config.hidden_neurons = 128
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.3
-    iron_yoke.network_config.fourier_mapping_size = 128
+    iron_yoke.network_config.fourier_sigma = 1.2
+    iron_yoke.network_config.fourier_mapping_size = 64
 
     iron_yoke.nu_network_config.hidden_layers = 3
-    iron_yoke.nu_network_config.hidden_neurons = 128
+    iron_yoke.nu_network_config.hidden_neurons = 64
     iron_yoke.nu_network_config.activation_function = nn.Mish()
-    iron_yoke.nu_network_config.fourier_features = True
-    iron_yoke.nu_network_config.fourier_sigma = 1.0
-    iron_yoke.nu_network_config.fourier_mapping_size = 32
+    iron_yoke.nu_network_config.fourier_features = False
     iron_yoke.build_domain()
 
     magnet_left = sim_domain.create_material_domain(
@@ -212,6 +213,9 @@ def main():
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 4000
     magnet_left.training_config.number_of_surface_points = 1800
+    magnet_left.training_config.interface_weight = 20.0
+    magnet_left.training_config.interface_bn_weight = 2.0
+    magnet_left.training_config.interface_ht_weight = 1.0
     magnet_left.network_config.hidden_layers = 3
     magnet_left.network_config.hidden_neurons = 128
     magnet_left.network_config.activation_function = nn.Mish()
@@ -229,6 +233,9 @@ def main():
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 4000
     magnet_right.training_config.number_of_surface_points = 1800
+    magnet_right.training_config.interface_weight = 20.0
+    magnet_right.training_config.interface_bn_weight = 2.0
+    magnet_right.training_config.interface_ht_weight = 1.0
     magnet_right.network_config.hidden_layers = 3
     magnet_right.network_config.hidden_neurons = 128
     magnet_right.network_config.activation_function = nn.Mish()
