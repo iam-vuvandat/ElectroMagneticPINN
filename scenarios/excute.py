@@ -124,15 +124,15 @@ def main():
     sim_domain.boundary.physics_config.enforce_method = "soft_loss"
     sim_domain.boundary.physics_config.potential_value = 0.0
     sim_domain.boundary.training_config.number_of_boundary_points = 800
-    sim_domain.boundary.training_config.boundary_loss_weight = 1000.0
+    sim_domain.boundary.training_config.boundary_loss_weight = 100.0
 
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 1000
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
 
     pinn_model.visualization_config.active = True
-    pinn_model.visualization_config.display_colab_frames = False
-    pinn_model.visualization_config.update_interval = 1500
+    pinn_model.visualization_config.display_colab_frames = True
+    pinn_model.visualization_config.update_interval = 1000
     pinn_model.visualization_config.resolution = 120
 
     pinn_model.training_config.enable_relobralo = False
@@ -190,12 +190,12 @@ def main():
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 2500
     iron_yoke.training_config.number_of_surface_points = 1000
-    iron_yoke.training_config.interface_weight = 2000.0
+    iron_yoke.training_config.interface_weight = 150.0
     iron_yoke.training_config.interface_bn_weight = 2.0
     iron_yoke.training_config.interface_ht_weight = 1.0
 
     iron_yoke.network_config.hidden_layers = 4
-    iron_yoke.network_config.hidden_neurons = 64
+    iron_yoke.network_config.hidden_neurons = 128
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = False
     iron_yoke.network_config.fourier_sigma = 1.2
@@ -216,11 +216,11 @@ def main():
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 1000
     magnet_left.training_config.number_of_surface_points = 600
-    magnet_left.training_config.interface_weight = 2000.0
+    magnet_left.training_config.interface_weight = 150.0
     magnet_left.training_config.interface_bn_weight = 2.0
     magnet_left.training_config.interface_ht_weight = 1.0
     magnet_left.network_config.hidden_layers = 3
-    magnet_left.network_config.hidden_neurons = 64
+    magnet_left.network_config.hidden_neurons = 128
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = False
     magnet_left.network_config.fourier_sigma = 1.0
@@ -236,11 +236,11 @@ def main():
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 1000
     magnet_right.training_config.number_of_surface_points = 600
-    magnet_right.training_config.interface_weight = 2000.0
+    magnet_right.training_config.interface_weight = 150.0
     magnet_right.training_config.interface_bn_weight = 2.0
     magnet_right.training_config.interface_ht_weight = 1.0
     magnet_right.network_config.hidden_layers = 3
-    magnet_right.network_config.hidden_neurons = 64
+    magnet_right.network_config.hidden_neurons = 128
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = False
     magnet_right.network_config.fourier_sigma = 1.0
