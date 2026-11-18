@@ -153,7 +153,7 @@ def main():
 
     epochs_warmup_target = 10000
     fpi_iterations = 8
-    epochs_per_fpi = 1000
+    epochs_per_fpi = 5000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
     pinn_model.training_config.fpi_initial_alpha_damping = 1.0
