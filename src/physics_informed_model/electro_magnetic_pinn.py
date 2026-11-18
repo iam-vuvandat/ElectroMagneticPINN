@@ -40,6 +40,7 @@ class ElectroMagneticPINN:
             relobralo_rho=0.999,
 
             adam_learning_rate=1e-3,
+            fpi_adam_learning_rate=None,
             number_of_adam_epochs=2500,
             target_loss_threshold=1e-5,
 
