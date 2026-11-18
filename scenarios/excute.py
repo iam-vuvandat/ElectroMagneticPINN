@@ -253,8 +253,8 @@ def main():
         hidden_neurons=128,
         activation_function=nn.Mish(),
         fourier_features=True,
-        fourier_sigma=0.75,
-        fourier_mapping_size=128
+        fourier_sigma=1.5,
+        fourier_mapping_size=256
     )
     sim_domain.build_background_domain(
         domain_name="background",
