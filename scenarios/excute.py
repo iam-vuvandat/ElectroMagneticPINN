@@ -152,7 +152,7 @@ def main():
     pinn_model.training_config.lbfgs_fpi_step_iterations = 300
 
     epochs_warmup_target = 6000
-    fpi_iterations = 7
+    fpi_iterations = 20
     epochs_per_fpi = 3000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
@@ -196,14 +196,14 @@ def main():
     iron_yoke.network_config.hidden_layers = 3
     iron_yoke.network_config.hidden_neurons = 96
     iron_yoke.network_config.activation_function = nn.Mish()
-    iron_yoke.network_config.fourier_features = True
+    iron_yoke.network_config.fourier_features = False
     iron_yoke.network_config.fourier_sigma = 0.9
     iron_yoke.network_config.fourier_mapping_size = 64
 
     iron_yoke.nu_network_config.hidden_layers = 2
     iron_yoke.nu_network_config.hidden_neurons = 64
     iron_yoke.nu_network_config.activation_function = nn.Mish()
-    iron_yoke.nu_network_config.fourier_features = True
+    iron_yoke.nu_network_config.fourier_features = False
     iron_yoke.nu_network_config.fourier_sigma = 0.75
     iron_yoke.nu_network_config.fourier_mapping_size = 16
     iron_yoke.build_domain()
@@ -220,7 +220,7 @@ def main():
     magnet_left.network_config.hidden_layers = 3
     magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.Mish()
-    magnet_left.network_config.fourier_features = True
+    magnet_left.network_config.fourier_features = False
     magnet_left.network_config.fourier_sigma = 0.75
     magnet_left.network_config.fourier_mapping_size = 32
     magnet_left.build_domain()
@@ -237,7 +237,7 @@ def main():
     magnet_right.network_config.hidden_layers = 3
     magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.Mish()
-    magnet_right.network_config.fourier_features = True
+    magnet_right.network_config.fourier_features = False
     magnet_right.network_config.fourier_sigma = 0.75
     magnet_right.network_config.fourier_mapping_size = 32
     magnet_right.build_domain()
@@ -252,7 +252,7 @@ def main():
         hidden_layers=3,
         hidden_neurons=128,
         activation_function=nn.Mish(),
-        fourier_features=True,
+        fourier_features=False,
         fourier_sigma=0.75,
         fourier_mapping_size=64
     )
