@@ -129,6 +129,7 @@ def main():
 
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 1000
+    pinn_model.sampler_config.resample_points_before_fpi_step = True
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = False
 
     pinn_model.visualization_config.active = True

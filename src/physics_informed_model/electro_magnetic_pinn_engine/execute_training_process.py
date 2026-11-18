@@ -88,6 +88,9 @@ def execute_training_process(pinn_instance):
         print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter, continuous LR) ---")
         for f_iter in range(fpi_iters):
             tm.current_fpi_step = f_iter + 1
+            if getattr(pinn_instance.sampler_config, 'resample_points_before_fpi_step', True):
+                domains_data = resample_data_fn()
+
             current_alpha_damp = initial_alpha_damp if f_iter == 0 else alpha_damp
             current_lr = tm.optimizer_adam.param_groups[0]['lr']
             print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters} | damping={current_alpha_damp} | lr={current_lr:.3e}] <<<")

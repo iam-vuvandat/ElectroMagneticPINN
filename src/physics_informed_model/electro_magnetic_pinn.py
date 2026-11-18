@@ -23,6 +23,7 @@ class ElectroMagneticPINN:
         self.sampler_config = SimpleNamespace(
             dynamic_resampling=True,
             resample_interval=100,
+            resample_points_before_fpi_step=True,
             resample_points_before_lbfgs_stage=True
         )
         
