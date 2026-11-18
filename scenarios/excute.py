@@ -193,7 +193,7 @@ def main():
     iron_yoke.training_config.number_of_interior_points = 3000
     iron_yoke.training_config.number_of_surface_points = 1200
 
-    iron_yoke.network_config.hidden_layers = 3
+    iron_yoke.network_config.hidden_layers = 5
     iron_yoke.network_config.hidden_neurons = 96
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = False
@@ -217,7 +217,7 @@ def main():
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 1200
     magnet_left.training_config.number_of_surface_points = 600
-    magnet_left.network_config.hidden_layers = 3
+    magnet_left.network_config.hidden_layers = 5
     magnet_left.network_config.hidden_neurons = 64
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = False
@@ -234,7 +234,7 @@ def main():
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 1200
     magnet_right.training_config.number_of_surface_points = 600
-    magnet_right.network_config.hidden_layers = 3
+    magnet_right.network_config.hidden_layers = 5
     magnet_right.network_config.hidden_neurons = 64
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = False
@@ -249,7 +249,7 @@ def main():
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
-        hidden_layers=3,
+        hidden_layers=5,
         hidden_neurons=128,
         activation_function=nn.Mish(),
         fourier_features=False,
