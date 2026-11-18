@@ -129,7 +129,7 @@ def main():
 
     pinn_model.sampler_config.dynamic_resampling = True
     pinn_model.sampler_config.resample_interval = 1000
-    pinn_model.sampler_config.resample_points_before_lbfgs_stage = True
+    pinn_model.sampler_config.resample_points_before_lbfgs_stage = False
 
     pinn_model.visualization_config.active = True
     pinn_model.visualization_config.display_colab_frames = True
@@ -143,17 +143,17 @@ def main():
 
     pinn_model.training_config.enable_linear_warmup_stage = True
     pinn_model.training_config.enable_nonlinear_adaptation_stage = True
-    pinn_model.training_config.enable_lbfgs_refinement_stage = True
+    pinn_model.training_config.enable_lbfgs_refinement_stage = False
 
-    pinn_model.training_config.enable_lbfgs_after_warmup = True
-    pinn_model.training_config.lbfgs_warmup_iterations = 400
+    pinn_model.training_config.enable_lbfgs_after_warmup = False
+    pinn_model.training_config.lbfgs_warmup_iterations = 0
 
-    pinn_model.training_config.enable_lbfgs_after_fpi_step = True
-    pinn_model.training_config.lbfgs_fpi_step_iterations = 300
+    pinn_model.training_config.enable_lbfgs_after_fpi_step = False
+    pinn_model.training_config.lbfgs_fpi_step_iterations = 0
 
-    epochs_warmup_target = 6000
-    fpi_iterations = 20
-    epochs_per_fpi = 3000
+    epochs_warmup_target = 10000
+    fpi_iterations = 8
+    epochs_per_fpi = 1000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
     pinn_model.training_config.fpi_initial_alpha_damping = 1.0
@@ -175,7 +175,7 @@ def main():
     pinn_model.training_config.fit_nu_epochs = 1600
     pinn_model.training_config.fit_nu_lr = 2e-3
 
-    pinn_model.training_config.number_of_lbfgs_iterations = 1000
+    pinn_model.training_config.number_of_lbfgs_iterations = 0
     pinn_model.training_config.lbfgs_learning_rate = 0.5
 
     iron_yoke = sim_domain.create_material_domain(
