@@ -352,12 +352,15 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     axs[2, 0].set_title("Permeability map", fontsize=11, fontweight='bold')
     axs[2, 0].set_aspect('equal')
 
-    az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else float(np.min(A_z_numpy))
-    az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else float(np.max(A_z_numpy))
+    az_min = vis_cfg.az_vmin if vis_cfg.az_vmin is not None else -0.04
+    az_max = vis_cfg.az_vmax if vis_cfg.az_vmax is not None else 0.005
+    A_z_clamped = np.clip(A_z_numpy, az_min, az_max)
     levels_az = np.linspace(az_min, az_max, n_levels) if az_min != az_max else n_levels
+    norm_az = Normalize(vmin=az_min, vmax=az_max)
 
     contour_az = axs[2, 1].contourf(
-        visualizer_instance.X_grid, visualizer_instance.Y_grid, A_z_numpy, levels=levels_az, cmap=vis_cfg.az_cmap
+        visualizer_instance.X_grid, visualizer_instance.Y_grid, A_z_clamped,
+        levels=levels_az, cmap=vis_cfg.az_cmap, norm=norm_az
     )
     fig.colorbar(contour_az, ax=axs[2, 1], label=r"$A_z$ (Wb/m)")
     draw_domain_outlines(axs[2, 1], color='#111111', linestyle='--', linewidth=0.7, alpha=0.6)

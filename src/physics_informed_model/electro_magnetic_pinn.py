@@ -98,8 +98,8 @@ class ElectroMagneticPINN:
             mur_cmap="turbo",         
 
             az_scale="linear",        
-            az_vmin=None,             
-            az_vmax=None,             
+            az_vmin=-0.04,             
+            az_vmax=0.005,             
             az_cmap="jet",
 
             b_mag_scale="linear",     
