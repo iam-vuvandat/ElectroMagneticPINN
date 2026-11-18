@@ -37,10 +37,10 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
 
     model.eval()
     computation_device = next(model.parameters()).device
-    eval_points = visualizer_instance.eval_points_tensor.to(computation_device).detach().clone().requires_grad_(True)
+    eval_points = visualizer_instance.eval_points_tensor.to(computation_device)
 
     phys_props = sim_domain.evaluate_global_physical_properties(eval_points)
-    mat_id = phys_props["material_classification"]
+    mat_id = phys_props["material_classification"].view(-1)
 
     A_z_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
     B_x_phys = torch.zeros((eval_points.shape[0], 1), device=computation_device)
@@ -53,39 +53,48 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
         net_key = resolve_domain_net_key(domain, model)
         mask_bool = (mat_id == float(d_id))
         if mask_bool.any():
-            Az_sub_star = model.forward_network(net_key, eval_points)
+            sub_pts = eval_points[mask_bool].detach().clone().requires_grad_(True)
+            Az_sub_star = model.forward_network(net_key, sub_pts)
             grad_sub_star = torch.autograd.grad(
-                outputs=Az_sub_star, inputs=eval_points,
-                grad_outputs=torch.ones_like(Az_sub_star), create_graph=True
+                outputs=Az_sub_star,
+                inputs=sub_pts,
+                grad_outputs=torch.ones_like(Az_sub_star),
+                create_graph=True
             )[0]
             Az_sub_phys = Az_sub_star * sim_domain.A0
             Bx_sub_phys = grad_sub_star[:, 1:2] * sim_domain.A0
             By_sub_phys = -grad_sub_star[:, 0:1] * sim_domain.A0
 
+            nu_star_net = None
             if getattr(domain.physics_config, 'is_nonlinear', False):
                 if hasattr(model, 'nu_networks') and net_key in model.nu_networks:
-                    with torch.no_grad():
-                        nu_star_pred = model.forward_nu_network(net_key, eval_points)
-                        nu_dom = nu_star_pred * sim_domain.nu0
+                    nu_star_net = model.forward_nu_network(net_key, sub_pts)
+                    nu_dom = nu_star_net * sim_domain.nu0
                 else:
                     B_mag_sub = torch.sqrt(Bx_sub_phys**2 + By_sub_phys**2 + 1e-12)
-                    nu_dom = domain.evaluate_reluctivity(eval_points, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
+                    nu_dom = domain.evaluate_reluctivity(sub_pts, B_magnitude_tensor=B_mag_sub, is_nonlinear=True).to(computation_device)
             else:
-                nu_dom = domain.evaluate_reluctivity(eval_points, is_nonlinear=False).to(computation_device)
+                nu_dom = domain.evaluate_reluctivity(sub_pts, is_nonlinear=False).to(computation_device)
 
-            hx_dom, hy_dom = domain.evaluate_magnetization_vector(eval_points)
+            hx_dom, hy_dom = domain.evaluate_magnetization_vector(sub_pts)
             hx_dom, hy_dom = hx_dom.to(computation_device), hy_dom.to(computation_device)
-            jz_dom = domain.evaluate_current_density(eval_points).to(computation_device)
+            jz_dom = domain.evaluate_current_density(sub_pts).to(computation_device)
 
             res_pde = pde_evaluator.compute_linear_pde_residual(
-                eval_points, Az_sub_star, nu_dom, jz_dom, hx_dom, hy_dom
+                xy=sub_pts,
+                A_z_star=Az_sub_star,
+                nu_phys=nu_dom,
+                J_z=jz_dom,
+                H_cx=hx_dom,
+                H_cy=hy_dom,
+                nu_star_net=nu_star_net
             )
 
-            A_z_phys = torch.where(mask_bool, Az_sub_phys.detach(), A_z_phys)
-            B_x_phys = torch.where(mask_bool, Bx_sub_phys.detach(), B_x_phys)
-            B_y_phys = torch.where(mask_bool, By_sub_phys.detach(), B_y_phys)
-            nu_phys_all = torch.where(mask_bool, nu_dom.detach(), nu_phys_all)
-            residual_total = torch.where(mask_bool, torch.abs(res_pde.detach()), residual_total)
+            A_z_phys[mask_bool] = Az_sub_phys.detach()
+            B_x_phys[mask_bool] = Bx_sub_phys.detach()
+            B_y_phys[mask_bool] = By_sub_phys.detach()
+            nu_phys_all[mask_bool] = nu_dom.detach()
+            residual_total[mask_bool] = torch.abs(res_pde.detach())
 
     A_z_numpy = A_z_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)
     B_x_numpy = B_x_phys.cpu().numpy().reshape(visualizer_instance.resolution, visualizer_instance.resolution)

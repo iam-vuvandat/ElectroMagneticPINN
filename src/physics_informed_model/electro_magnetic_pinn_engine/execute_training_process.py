@@ -1,3 +1,6 @@
+import torch.optim as optim
+
+
 def execute_training_process(pinn_instance):
     if pinn_instance.pinn_architecture_instance is None:
         pinn_instance._build_system()
@@ -24,9 +27,12 @@ def execute_training_process(pinn_instance):
         if getattr(tm, 'relobralo_balancer', None) is not None:
             tm.relobralo_balancer.reset_anchors(reset_weights=False)
         domains_data = tm.train_adam(
-            epochs=epochs_warmup, domains_data=domains_data,
+            epochs=epochs_warmup,
+            domains_data=domains_data,
             dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
-            resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+            resample_fn=resample_data_fn,
+            resample_interval=pinn_instance.sampler_config.resample_interval,
+            reset_lr=True
         )
 
         if getattr(t_cfg, 'enable_lbfgs_after_warmup', False):
@@ -41,15 +47,29 @@ def execute_training_process(pinn_instance):
         alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 0.3))
         fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
         epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
+        total_fpi_epochs = fpi_iters * epochs_per_fpi
 
         fit_ep = getattr(t_cfg, 'fit_nu_epochs', 250)
         fit_lr = getattr(t_cfg, 'fit_nu_lr', 3e-3)
+        eta_min = float(getattr(t_cfg, 'adam_eta_min', 1e-5))
+        fpi_lr_start = float(getattr(t_cfg, 'fpi_adam_learning_rate', tm.base_learning_rate_adam))
 
-        print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
+        for param_group in tm.optimizer_adam.param_groups:
+            param_group['initial_lr'] = fpi_lr_start
+            param_group['lr'] = fpi_lr_start
+
+        fpi_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            tm.optimizer_adam,
+            T_max=max(total_fpi_epochs, 1),
+            eta_min=eta_min
+        )
+
+        print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter, continuous LR) ---")
         for f_iter in range(fpi_iters):
             tm.current_fpi_step = f_iter + 1
             current_alpha_damp = initial_alpha_damp if f_iter == 0 else alpha_damp
-            print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters} | damping={current_alpha_damp}] <<<")
+            current_lr = tm.optimizer_adam.param_groups[0]['lr']
+            print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters} | damping={current_alpha_damp} | lr={current_lr:.3e}] <<<")
 
             max_diff = tm.fit_nu_network_step(
                 domains_data, alpha_damping=current_alpha_damp, epochs=fit_ep, lr=fit_lr
@@ -63,9 +83,13 @@ def execute_training_process(pinn_instance):
             if getattr(tm, 'relobralo_balancer', None) is not None:
                 tm.relobralo_balancer.reset_anchors(reset_weights=False)
             domains_data = tm.train_adam(
-                epochs=epochs_per_fpi, domains_data=domains_data,
+                epochs=epochs_per_fpi,
+                domains_data=domains_data,
                 dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
-                resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+                resample_fn=resample_data_fn,
+                resample_interval=pinn_instance.sampler_config.resample_interval,
+                reset_lr=False,
+                scheduler=fpi_scheduler
             )
 
             if getattr(t_cfg, 'enable_lbfgs_after_fpi_step', False):
