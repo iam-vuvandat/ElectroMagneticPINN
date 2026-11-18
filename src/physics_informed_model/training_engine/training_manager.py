@@ -95,8 +95,28 @@ class TrainingManager:
             is_resampling_step=is_resampling_step
         )
 
-    def train_adam(self, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
-        return train_adam(self, epochs, domains_data, dynamic_resampling=dynamic_resampling, resample_fn=resample_fn, resample_interval=resample_interval)
-
+    def train_adam(
+        self,
+        epochs,
+        domains_data,
+        dynamic_resampling=False,
+        resample_fn=None,
+        resample_interval=100,
+        reset_lr=True,
+        scheduler=None,
+        lr_start=None
+    ):
+        return train_adam(
+            self,
+            epochs,
+            domains_data,
+            dynamic_resampling=dynamic_resampling,
+            resample_fn=resample_fn,
+            resample_interval=resample_interval,
+            reset_lr=reset_lr,
+            scheduler=scheduler,
+            lr_start=lr_start
+        )
+    
     def train_lbfgs(self, max_iterations, domains_data):
         return train_lbfgs(self, max_iterations, domains_data)
