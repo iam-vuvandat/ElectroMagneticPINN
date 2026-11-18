@@ -50,6 +50,16 @@ def execute_training_process(pinn_instance):
             tm.current_fpi_step = f_iter + 1
             current_alpha_damp = initial_alpha_damp if f_iter == 0 else alpha_damp
             print(f"\n>>> [FPI OUTER LOOP {f_iter + 1}/{fpi_iters} | damping={current_alpha_damp}] <<<")
+
+            max_diff = tm.fit_nu_network_step(
+                domains_data, alpha_damping=current_alpha_damp, epochs=fit_ep, lr=fit_lr
+            )
+            print(f"[*] Outer FPI Iter {f_iter + 1} (alpha={current_alpha_damp}): Max Nu Diff = {max_diff:.4e}")
+
+            if f_iter > 0 and max_diff < fpi_tol:
+                print(f"[OK] FPI Early convergence at iteration {f_iter + 1}!")
+                break
+
             if getattr(tm, 'relobralo_balancer', None) is not None:
                 tm.relobralo_balancer.reset_anchors(reset_weights=False)
             domains_data = tm.train_adam(
@@ -57,20 +67,12 @@ def execute_training_process(pinn_instance):
                 dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
                 resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
             )
-            max_diff = tm.fit_nu_network_step(
-                domains_data, alpha_damping=current_alpha_damp, epochs=fit_ep, lr=fit_lr
-            )
-            print(f"[*] Outer FPI Iter {f_iter + 1} (alpha={current_alpha_damp}): Max Nu Diff = {max_diff:.4e}")
 
             if getattr(t_cfg, 'enable_lbfgs_after_fpi_step', False):
                 lbfgs_fpi_iters = int(getattr(t_cfg, 'lbfgs_fpi_step_iterations', getattr(t_cfg, 'number_of_lbfgs_iterations', 1500)))
                 if lbfgs_fpi_iters > 0:
                     print(f"\n--- [STAGE 1B-LBFGS] L-BFGS FPI Step Refinement ({lbfgs_fpi_iters} Iterations) ---")
                     domains_data = tm.train_lbfgs(max_iterations=lbfgs_fpi_iters, domains_data=domains_data)
-
-            if f_iter > 0 and max_diff < fpi_tol:
-                print(f"[OK] FPI Early convergence at iteration {f_iter + 1}!")
-                break
 
     if getattr(t_cfg, 'enable_lbfgs_refinement_stage', True) and t_cfg.number_of_lbfgs_iterations > 0:
         if getattr(pinn_instance.sampler_config, 'resample_points_before_lbfgs_stage', True):
