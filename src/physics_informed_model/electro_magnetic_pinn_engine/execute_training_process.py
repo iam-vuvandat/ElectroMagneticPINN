@@ -17,18 +17,37 @@ def execute_training_process(pinn_instance):
     tm.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
 
     total_adam_epochs = t_cfg.number_of_adam_epochs
+    default_min_epochs = int(getattr(t_cfg, 'min_adam_epochs', 3000))
+    warmup_min_epochs = int(getattr(t_cfg, 'warmup_min_epochs', default_min_epochs))
+    fpi_min_epochs = int(getattr(t_cfg, 'fpi_min_epochs', default_min_epochs))
+    warmup_max_cfg = getattr(t_cfg, 'warmup_max_epochs', None)
+    fpi_max_cfg = getattr(t_cfg, 'fpi_max_epochs', None)
+
     warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
     enable_warmup = bool(getattr(t_cfg, 'enable_linear_warmup_stage', True))
     enable_adaptation = bool(getattr(t_cfg, 'enable_nonlinear_adaptation_stage', True))
 
-    epochs_warmup = int(total_adam_epochs * warmup_ratio) if enable_warmup else 0
-    epochs_adaptation = (total_adam_epochs - epochs_warmup) if enable_adaptation else 0
+    if enable_warmup:
+        if warmup_max_cfg is not None:
+            epochs_warmup = max(int(warmup_max_cfg), warmup_min_epochs)
+        else:
+            epochs_warmup = max(int(total_adam_epochs * warmup_ratio), warmup_min_epochs)
+    else:
+        epochs_warmup = 0
+
+    fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 16))
+    if enable_adaptation:
+        if fpi_max_cfg is not None:
+            epochs_per_fpi = max(int(fpi_max_cfg), fpi_min_epochs)
+        else:
+            epochs_adaptation = max(0, total_adam_epochs - epochs_warmup)
+            epochs_per_fpi = max(fpi_min_epochs, epochs_adaptation // max(fpi_iters, 1)) if epochs_adaptation > 0 else 0
+    else:
+        epochs_per_fpi = 0
+
+    total_fpi_epochs = fpi_iters * epochs_per_fpi
     eta_min = float(getattr(t_cfg, 'adam_eta_min', 1e-5))
     custom_fpi_lr = getattr(t_cfg, 'fpi_adam_learning_rate', None)
-
-    fpi_iters = int(getattr(t_cfg, 'fpi_outer_iterations', 10))
-    epochs_per_fpi = max(1, epochs_adaptation // max(fpi_iters, 1)) if epochs_adaptation > 0 else 0
-    total_fpi_epochs = fpi_iters * epochs_per_fpi
 
     shared_scheduler = None
     if custom_fpi_lr is None:
@@ -44,7 +63,7 @@ def execute_training_process(pinn_instance):
 
     if enable_warmup and epochs_warmup > 0:
         tm.current_fpi_step = 0
-        print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
+        print(f"\n--- [STAGE 1A] Adam Linear Warm-up (min={warmup_min_epochs}, max={epochs_warmup} Epochs) ---")
         if getattr(tm, 'relobralo_balancer', None) is not None:
             tm.relobralo_balancer.reset_anchors(reset_weights=False)
         domains_data = tm.train_adam(
@@ -54,7 +73,8 @@ def execute_training_process(pinn_instance):
             resample_fn=resample_data_fn,
             resample_interval=pinn_instance.sampler_config.resample_interval,
             reset_lr=(shared_scheduler is None),
-            scheduler=shared_scheduler
+            scheduler=shared_scheduler,
+            min_epochs=warmup_min_epochs
         )
 
         if getattr(t_cfg, 'enable_lbfgs_after_warmup', False):
@@ -63,7 +83,7 @@ def execute_training_process(pinn_instance):
                 print(f"\n--- [STAGE 1A-LBFGS] L-BFGS Warm-up Refinement ({lbfgs_warmup_iters} Iterations) ---")
                 domains_data = tm.train_lbfgs(max_iterations=lbfgs_warmup_iters, domains_data=domains_data)
 
-    if enable_adaptation and epochs_adaptation > 0:
+    if enable_adaptation and epochs_per_fpi > 0:
         initial_alpha_damp = float(getattr(t_cfg, 'fpi_initial_alpha_damping', 1.0))
         alpha_damp = float(getattr(t_cfg, 'fpi_alpha_damping', 0.3))
         fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
@@ -85,7 +105,7 @@ def execute_training_process(pinn_instance):
                 eta_min=eta_min
             )
 
-        print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter, continuous LR) ---")
+        print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, min={fpi_min_epochs}, max={epochs_per_fpi} epochs/iter, continuous LR) ---")
         for f_iter in range(fpi_iters):
             tm.current_fpi_step = f_iter + 1
             if getattr(pinn_instance.sampler_config, 'resample_points_before_fpi_step', True):
@@ -113,7 +133,8 @@ def execute_training_process(pinn_instance):
                 resample_fn=resample_data_fn,
                 resample_interval=pinn_instance.sampler_config.resample_interval,
                 reset_lr=False,
-                scheduler=fpi_scheduler
+                scheduler=fpi_scheduler,
+                min_epochs=fpi_min_epochs
             )
 
             if getattr(t_cfg, 'enable_lbfgs_after_fpi_step', False):

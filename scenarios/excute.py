@@ -152,20 +152,29 @@ def main():
     pinn_model.training_config.enable_lbfgs_after_fpi_step = False
     pinn_model.training_config.lbfgs_fpi_step_iterations = 0
 
-    epochs_warmup_target = 10000
-    fpi_iterations = 8
-    epochs_per_fpi = 10000
+    fpi_iterations = 16
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
     pinn_model.training_config.fpi_initial_alpha_damping = 1.0
     pinn_model.training_config.fpi_alpha_damping = 0.3
     pinn_model.training_config.fpi_tolerance = 1e-6
 
-    pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
-    pinn_model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / pinn_model.training_config.number_of_adam_epochs
+    pinn_model.training_config.warmup_min_epochs = 3000
+    pinn_model.training_config.warmup_max_epochs = 10000
+    pinn_model.training_config.fpi_min_epochs = 3000
+    pinn_model.training_config.fpi_max_epochs = 10000
+    pinn_model.training_config.min_adam_epochs = 3000
+    pinn_model.training_config.number_of_adam_epochs = (
+        pinn_model.training_config.warmup_max_epochs
+        + (fpi_iterations * pinn_model.training_config.fpi_max_epochs)
+    )
+    pinn_model.training_config.linear_warmup_epochs_ratio = (
+        pinn_model.training_config.warmup_max_epochs
+        / pinn_model.training_config.number_of_adam_epochs
+    )
 
-    pinn_model.training_config.adam_learning_rate = 2.5e-3
-    pinn_model.training_config.fpi_adam_learning_rate = 1e-3
+    pinn_model.training_config.adam_learning_rate = 3e-3
+    pinn_model.training_config.fpi_adam_learning_rate = 3e-3
     pinn_model.training_config.target_loss_threshold = 1e-3
     pinn_model.training_config.adam_eta_min = 5e-5
     pinn_model.training_config.grad_clip_max_norm = 1.0
