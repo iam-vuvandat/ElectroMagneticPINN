@@ -45,7 +45,7 @@ def train_adam(
     else:
         cur_lr = float(training_manager_instance.optimizer_adam.param_groups[0]['lr'])
         if scheduler_type == 'linear':
-            linear_steps = max(resolved_min_epochs, 1)
+            linear_steps = max(epochs, 1)
             end_factor = min(max(eta_min / max(cur_lr, 1e-12), 1e-8), 1.0)
             scheduler_adam = optim.lr_scheduler.LinearLR(
                 training_manager_instance.optimizer_adam,

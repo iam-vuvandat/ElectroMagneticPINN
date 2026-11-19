@@ -139,8 +139,8 @@ def main():
     pinn_model.visualization_config.contour_levels = 60
 
     pinn_model.visualization_config.az_scale = "linear"
-    pinn_model.visualization_config.az_vmin = -0.02
-    pinn_model.visualization_config.az_vmax = 0.01
+    pinn_model.visualization_config.az_vmin = -0.04
+    pinn_model.visualization_config.az_vmax = 0.005
     pinn_model.visualization_config.az_cmap = "jet"
 
     pinn_model.visualization_config.b_mag_scale = "linear"
@@ -188,11 +188,11 @@ def main():
     pinn_model.training_config.fpi_alpha_damping = 0.3
     pinn_model.training_config.fpi_tolerance = 1e-6
 
-    pinn_model.training_config.warmup_min_epochs = 3000
+    pinn_model.training_config.warmup_min_epochs = 4000
     pinn_model.training_config.warmup_max_epochs = 10000
-    pinn_model.training_config.fpi_min_epochs = 3000
+    pinn_model.training_config.fpi_min_epochs = 4000
     pinn_model.training_config.fpi_max_epochs = 10000
-    pinn_model.training_config.min_adam_epochs = 3000
+    pinn_model.training_config.min_adam_epochs = 4000
     pinn_model.training_config.number_of_adam_epochs = (
         pinn_model.training_config.warmup_max_epochs
         + (fpi_iterations * pinn_model.training_config.fpi_max_epochs)
@@ -203,10 +203,10 @@ def main():
     )
 
     pinn_model.training_config.lr_scheduler_type = "linear"
-    pinn_model.training_config.adam_learning_rate = 2e-3
-    pinn_model.training_config.fpi_adam_learning_rate = 1e-3
+    pinn_model.training_config.adam_learning_rate = 2.5e-3
+    pinn_model.training_config.fpi_adam_learning_rate = 2.5e-3
     pinn_model.training_config.target_loss_threshold = 1e-3
-    pinn_model.training_config.adam_eta_min = 5e-5
+    pinn_model.training_config.adam_eta_min = 1e-4
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
     pinn_model.training_config.adam_log_interval = 100

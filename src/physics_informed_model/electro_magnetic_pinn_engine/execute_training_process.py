@@ -71,13 +71,7 @@ def execute_training_process(pinn_instance):
         for param_group in tm.optimizer_adam.param_groups:
             param_group['initial_lr'] = tm.base_learning_rate_adam
             param_group['lr'] = tm.base_learning_rate_adam
-        if scheduler_type == 'linear':
-            total_schedule_epochs = max(
-                (warmup_min_epochs if enable_warmup else 0) + (fpi_iters * fpi_min_epochs if enable_adaptation else 0),
-                1
-            )
-        else:
-            total_schedule_epochs = max(epochs_warmup + total_fpi_epochs, 1)
+        total_schedule_epochs = max(epochs_warmup + total_fpi_epochs, 1)
         shared_scheduler = build_adam_scheduler(
             tm.optimizer_adam,
             tm.base_learning_rate_adam,
@@ -122,11 +116,10 @@ def execute_training_process(pinn_instance):
                 param_group['initial_lr'] = fpi_lr_start
                 param_group['lr'] = fpi_lr_start
 
-            fpi_schedule_steps = (fpi_iters * fpi_min_epochs) if scheduler_type == 'linear' else total_fpi_epochs
             fpi_scheduler = build_adam_scheduler(
                 tm.optimizer_adam,
                 fpi_lr_start,
-                max(fpi_schedule_steps, 1)
+                max(total_fpi_epochs, 1)
             )
 
         print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, min={fpi_min_epochs}, max={epochs_per_fpi} epochs/iter, continuous LR) ---")
