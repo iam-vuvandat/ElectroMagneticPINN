@@ -136,6 +136,35 @@ def main():
     pinn_model.visualization_config.display_colab_frames = True
     pinn_model.visualization_config.update_interval = 1000
     pinn_model.visualization_config.resolution = 120
+    pinn_model.visualization_config.contour_levels = 60
+
+    pinn_model.visualization_config.az_scale = "linear"
+    pinn_model.visualization_config.az_vmin = -0.02
+    pinn_model.visualization_config.az_vmax = 0.01
+    pinn_model.visualization_config.az_cmap = "jet"
+
+    pinn_model.visualization_config.b_mag_scale = "linear"
+    pinn_model.visualization_config.b_mag_vmin = 0.0
+    pinn_model.visualization_config.b_mag_vmax = 1.8
+    pinn_model.visualization_config.b_mag_cmap = "ansys_fem"
+    pinn_model.visualization_config.b_mag_unit = "Tesla"
+    pinn_model.visualization_config.b_mag_number_of_division = 100
+
+    pinn_model.visualization_config.mur_scale = "linear"
+    pinn_model.visualization_config.mur_vmin = 0.0
+    pinn_model.visualization_config.mur_vmax = 3000.0
+    pinn_model.visualization_config.mur_cmap = "turbo"
+
+    pinn_model.visualization_config.res_scale = "log"
+    pinn_model.visualization_config.res_vmin = 1e-4
+    pinn_model.visualization_config.res_vmax = 10.0
+    pinn_model.visualization_config.res_cmap = "inferno"
+    pinn_model.visualization_config.res_discrete_levels = [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]
+
+    pinn_model.visualization_config.by_scale = "linear"
+    pinn_model.visualization_config.by_vmin = None
+    pinn_model.visualization_config.by_vmax = None
+    pinn_model.visualization_config.by_cmap = "coolwarm"
 
     pinn_model.training_config.enable_relobralo = False
     pinn_model.training_config.relobralo_alpha = 0.999
@@ -310,8 +339,11 @@ def main():
     print("\n==================================================")
     print("[4/4] PLOTTING AND COMPARING FEM VS PINN (3 PANELS)")
     print("==================================================")
-    cmap_ansys = mcolors.LinearSegmentedColormap.from_list("ansys_fem_interp", ANSYS_FEM_HEX_COLORS, N=100)
-    levels = np.linspace(0.0, 2.0, 101)
+    b_vmin = pinn_model.visualization_config.b_mag_vmin
+    b_vmax = pinn_model.visualization_config.b_mag_vmax
+    b_divs = pinn_model.visualization_config.b_mag_number_of_division
+    cmap_ansys = mcolors.LinearSegmentedColormap.from_list("ansys_fem_interp", ANSYS_FEM_HEX_COLORS, N=b_divs)
+    levels = np.linspace(b_vmin, b_vmax, b_divs + 1)
     norm = mcolors.BoundaryNorm(levels, ncolors=cmap_ansys.N, clip=True)
 
     fig, axs = plt.subplots(1, 3, figsize=(21, 6), dpi=300)
@@ -400,4 +432,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
