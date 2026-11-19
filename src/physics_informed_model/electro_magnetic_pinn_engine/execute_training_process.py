@@ -47,18 +47,41 @@ def execute_training_process(pinn_instance):
 
     total_fpi_epochs = fpi_iters * epochs_per_fpi
     eta_min = float(getattr(t_cfg, 'adam_eta_min', 1e-5))
+    scheduler_type = str(getattr(t_cfg, 'lr_scheduler_type', 'linear')).lower()
     custom_fpi_lr = getattr(t_cfg, 'fpi_adam_learning_rate', None)
+
+    def build_adam_scheduler(optimizer, base_lr, total_iters):
+        steps = max(int(total_iters), 1)
+        if scheduler_type == 'linear':
+            end_factor = min(max(eta_min / max(base_lr, 1e-12), 1e-8), 1.0)
+            return optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=1.0,
+                end_factor=end_factor,
+                total_iters=steps
+            )
+        return optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=steps,
+            eta_min=eta_min
+        )
 
     shared_scheduler = None
     if custom_fpi_lr is None:
         for param_group in tm.optimizer_adam.param_groups:
             param_group['initial_lr'] = tm.base_learning_rate_adam
             param_group['lr'] = tm.base_learning_rate_adam
-        total_schedule_epochs = max(epochs_warmup + total_fpi_epochs, 1)
-        shared_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        if scheduler_type == 'linear':
+            total_schedule_epochs = max(
+                (warmup_min_epochs if enable_warmup else 0) + (fpi_iters * fpi_min_epochs if enable_adaptation else 0),
+                1
+            )
+        else:
+            total_schedule_epochs = max(epochs_warmup + total_fpi_epochs, 1)
+        shared_scheduler = build_adam_scheduler(
             tm.optimizer_adam,
-            T_max=total_schedule_epochs,
-            eta_min=eta_min
+            tm.base_learning_rate_adam,
+            total_schedule_epochs
         )
 
     if enable_warmup and epochs_warmup > 0:
@@ -99,10 +122,11 @@ def execute_training_process(pinn_instance):
                 param_group['initial_lr'] = fpi_lr_start
                 param_group['lr'] = fpi_lr_start
 
-            fpi_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            fpi_schedule_steps = (fpi_iters * fpi_min_epochs) if scheduler_type == 'linear' else total_fpi_epochs
+            fpi_scheduler = build_adam_scheduler(
                 tm.optimizer_adam,
-                T_max=max(total_fpi_epochs, 1),
-                eta_min=eta_min
+                fpi_lr_start,
+                max(fpi_schedule_steps, 1)
             )
 
         print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, min={fpi_min_epochs}, max={epochs_per_fpi} epochs/iter, continuous LR) ---")

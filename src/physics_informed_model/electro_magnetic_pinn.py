@@ -61,6 +61,7 @@ class ElectroMagneticPINN:
             fit_nu_lr=3e-3,
 
             grad_clip_max_norm=1.0,
+            lr_scheduler_type="linear",
             adam_eta_min=1e-6,
             max_non_finite_streak=5,
             adam_log_interval=100,

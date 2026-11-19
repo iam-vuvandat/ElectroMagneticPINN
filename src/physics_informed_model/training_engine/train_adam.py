@@ -39,14 +39,26 @@ def train_adam(
             param_group['initial_lr'] = start_lr
             param_group['lr'] = start_lr
 
+    scheduler_type = str(getattr(t_cfg, 'lr_scheduler_type', 'linear')).lower()
     if scheduler is not None:
         scheduler_adam = scheduler
     else:
-        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(
-            training_manager_instance.optimizer_adam,
-            T_max=max(epochs, 1),
-            eta_min=eta_min
-        )
+        cur_lr = float(training_manager_instance.optimizer_adam.param_groups[0]['lr'])
+        if scheduler_type == 'linear':
+            linear_steps = max(resolved_min_epochs, 1)
+            end_factor = min(max(eta_min / max(cur_lr, 1e-12), 1e-8), 1.0)
+            scheduler_adam = optim.lr_scheduler.LinearLR(
+                training_manager_instance.optimizer_adam,
+                start_factor=1.0,
+                end_factor=end_factor,
+                total_iters=linear_steps
+            )
+        else:
+            scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(
+                training_manager_instance.optimizer_adam,
+                T_max=max(epochs, 1),
+                eta_min=eta_min
+            )
 
     stop_reason = f"Completed all {epochs} epochs."
     non_finite_streak = 0
