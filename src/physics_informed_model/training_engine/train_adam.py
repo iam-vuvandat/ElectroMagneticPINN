@@ -12,7 +12,8 @@ def train_adam(
     resample_interval=100,
     reset_lr=True,
     scheduler=None,
-    lr_start=None
+    lr_start=None,
+    min_epochs=None
 ):
     model = training_manager_instance.model
     model.train()
@@ -27,6 +28,9 @@ def train_adam(
         t_cfg,
         'target_loss_threshold',
         getattr(training_manager_instance, 'target_loss_threshold', None)
+    )
+    resolved_min_epochs = int(
+        min_epochs if min_epochs is not None else getattr(t_cfg, 'min_adam_epochs', 3000)
     )
 
     if reset_lr:
@@ -92,6 +96,7 @@ def train_adam(
 
         reached_target = (
             target_loss_threshold is not None
+            and (epoch + 1) >= resolved_min_epochs
             and current_loss_value <= float(target_loss_threshold)
         )
 
