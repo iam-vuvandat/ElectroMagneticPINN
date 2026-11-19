@@ -166,7 +166,7 @@ def main():
     pinn_model.visualization_config.by_vmax = None
     pinn_model.visualization_config.by_cmap = "coolwarm"
 
-    pinn_model.training_config.enable_relobralo = False
+    pinn_model.training_config.enable_relobralo = True
     pinn_model.training_config.relobralo_alpha = 0.999
     pinn_model.training_config.relobralo_rho = 0.999
     pinn_model.training_config.relobralo_temperature = 1.0
@@ -205,7 +205,7 @@ def main():
     pinn_model.training_config.lr_scheduler_type = "linear"
     pinn_model.training_config.adam_learning_rate = 2.5e-3
     pinn_model.training_config.fpi_adam_learning_rate = 2.5e-3
-    pinn_model.training_config.target_loss_threshold = 1e-4
+    pinn_model.training_config.target_loss_threshold = 1e-3
     pinn_model.training_config.adam_eta_min = 1e-4
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
@@ -257,7 +257,7 @@ def main():
     )
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 1200
-    magnet_left.training_config.number_of_surface_points = 600
+    magnet_left.training_config.number_of_surface_points = 1800
     magnet_left.network_config.hidden_layers = 4
     magnet_left.network_config.hidden_neurons = 128
     magnet_left.network_config.activation_function = nn.Mish()
@@ -274,7 +274,7 @@ def main():
     )
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 1200
-    magnet_right.training_config.number_of_surface_points = 600
+    magnet_right.training_config.number_of_surface_points = 1800
     magnet_right.network_config.hidden_layers = 4
     magnet_right.network_config.hidden_neurons = 128
     magnet_right.network_config.activation_function = nn.Mish()
