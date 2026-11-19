@@ -205,7 +205,7 @@ def main():
     pinn_model.training_config.lr_scheduler_type = "linear"
     pinn_model.training_config.adam_learning_rate = 2.5e-3
     pinn_model.training_config.fpi_adam_learning_rate = 2.5e-3
-    pinn_model.training_config.target_loss_threshold = 1e-3
+    pinn_model.training_config.target_loss_threshold = 1e-4
     pinn_model.training_config.adam_eta_min = 1e-4
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
