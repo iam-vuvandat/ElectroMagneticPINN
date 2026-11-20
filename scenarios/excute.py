@@ -139,8 +139,8 @@ def main():
     pinn_model.visualization_config.contour_levels = 60
 
     pinn_model.visualization_config.az_scale = "linear"
-    pinn_model.visualization_config.az_vmin = -0.04
-    pinn_model.visualization_config.az_vmax = 0.005
+    pinn_model.visualization_config.az_vmin = -0.02
+    pinn_model.visualization_config.az_vmax = 0.01
     pinn_model.visualization_config.az_cmap = "jet"
 
     pinn_model.visualization_config.b_mag_scale = "linear"
@@ -233,8 +233,11 @@ def main():
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 3000
     iron_yoke.training_config.number_of_surface_points = 1200
-    iron_yoke.training_config.pde_weight = 10.0
+    iron_yoke.training_config.pde_weight = 1.0
     iron_yoke.training_config.interface_weight = 1.0
+    iron_yoke.training_config.interface_az_weight = 100.0
+    iron_yoke.training_config.interface_bn_weight = 1.0
+    iron_yoke.training_config.interface_ht_weight = 1.0
 
     iron_yoke.network_config.hidden_layers = 4
     iron_yoke.network_config.hidden_neurons = 128
@@ -260,8 +263,11 @@ def main():
     magnet_left.physics_config.is_nonlinear = False
     magnet_left.training_config.number_of_interior_points = 1200
     magnet_left.training_config.number_of_surface_points = 1800
-    magnet_left.training_config.pde_weight = 10.0
+    magnet_left.training_config.pde_weight = 1.0
     magnet_left.training_config.interface_weight = 1.0
+    magnet_left.training_config.interface_az_weight = 100.0
+    magnet_left.training_config.interface_bn_weight = 1.0
+    magnet_left.training_config.interface_ht_weight = 1.0
     magnet_left.network_config.hidden_layers = 4
     magnet_left.network_config.hidden_neurons = 128
     magnet_left.network_config.activation_function = nn.Mish()
@@ -279,8 +285,11 @@ def main():
     magnet_right.physics_config.is_nonlinear = False
     magnet_right.training_config.number_of_interior_points = 1200
     magnet_right.training_config.number_of_surface_points = 1800
-    magnet_right.training_config.pde_weight = 10.0
+    magnet_right.training_config.pde_weight = 1.0
     magnet_right.training_config.interface_weight = 1.0
+    magnet_right.training_config.interface_az_weight = 100.0
+    magnet_right.training_config.interface_bn_weight = 1.0
+    magnet_right.training_config.interface_ht_weight = 1.0
     magnet_right.network_config.hidden_layers = 4
     magnet_right.network_config.hidden_neurons = 128
     magnet_right.network_config.activation_function = nn.Mish()
@@ -294,8 +303,11 @@ def main():
         sampling_density_multiplier=1.0,
         number_of_interior_points=6000,
         number_of_surface_points=0,
-        pde_weight=10.0,
-        interface_weight=1.0
+        pde_weight=1.0,
+        interface_weight=1.0,
+        interface_az_weight=100.0,
+        interface_bn_weight=1.0,
+        interface_ht_weight=1.0
     )
     bg_network_cfg = SimpleNamespace(
         hidden_layers=4,
