@@ -9,6 +9,7 @@ from .boundary_factor import boundary_factor
 from .forward_network import forward_network, forward_nu_network
 from .forward import forward
 
+
 class XPINNArchitecture(nn.Module):
     _build_single_network = _build_single_network
     _initialize_weights = _initialize_weights
@@ -39,7 +40,6 @@ class XPINNArchitecture(nn.Module):
             else:
                 net_key = f'domain_{domain.domain_id}'
                 
-            # 1. Dựng Mạng chính (Net_Az)
             config = domain.network_config
             if config.fourier_features:
                 actual_input_dim = config.fourier_mapping_size * 2
@@ -51,8 +51,8 @@ class XPINNArchitecture(nn.Module):
             sub_net = self._build_single_network(actual_input_dim, config)
             self.networks[net_key] = sub_net
 
-            # 2. Dựng Mạng phụ (Net_nu) cho các miền vật liệu
-            if net_key != 'background':
+            is_nonlinear = bool(getattr(domain.physics_config, 'is_nonlinear', False))
+            if net_key != 'background' and is_nonlinear:
                 nu_config = getattr(domain, 'nu_network_config', SimpleNamespace(
                     hidden_layers=2, hidden_neurons=32, activation_function=nn.SiLU(), fourier_features=False
                 ))
@@ -72,7 +72,6 @@ class XPINNArchitecture(nn.Module):
         self._initialize_weights()
 
     def _initialize_nu_network_constant(self, domain, net_key):
-        """Khởi tạo Net_nu vừa bám giá trị ban đầu vừa mở rộng tính biến thiên không gian."""
         sim_domain = self.electro_magnetic_pinn.simulation_domain_engine_instance
         dummy_pts = torch.zeros((1, 2))
         nu_target_phys = domain.evaluate_reluctivity(dummy_pts, is_nonlinear=False).item()
@@ -86,8 +85,7 @@ class XPINNArchitecture(nn.Module):
         net = self.nu_networks[net_key]
         for module in net:
             if isinstance(module, nn.Linear):
-                # Tăng gain khởi tạo lên 0.10 để không làm phẳng độ dốc không gian
-                nn.init.xavier_normal_(module.weight, gain=0.50)  # Tăng gain để học độ dốc không gian tốt hơn
+                nn.init.xavier_normal_(module.weight, gain=0.50)
                 nn.init.zeros_(module.bias)
                 
         last_linear = [m for m in net if isinstance(m, nn.Linear)][-1]
