@@ -18,6 +18,7 @@ class TrainingManager:
         t_cfg = self.electro_magnetic_pinn.training_config
 
         self.base_learning_rate_adam = getattr(t_cfg, 'adam_learning_rate', getattr(t_cfg, 'learning_rate_adam', 1e-3))
+        self.adam_lr_scheduler = getattr(t_cfg, 'adam_lr_scheduler', 'linear')
         self.target_loss_threshold = getattr(t_cfg, 'target_loss_threshold', getattr(t_cfg, 'target_loss', 1e-5))
         self.lbfgs_learning_rate = getattr(t_cfg, 'lbfgs_learning_rate', 0.5)
         self.lbfgs_maximum_iterations = getattr(t_cfg, 'number_of_lbfgs_iterations', getattr(t_cfg, 'lbfgs_maximum_iterations', 1500))

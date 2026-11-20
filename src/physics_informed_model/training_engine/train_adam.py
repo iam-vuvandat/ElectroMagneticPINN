@@ -9,7 +9,9 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     pinn = training_manager_instance.electro_magnetic_pinn
     t_cfg = getattr(pinn, 'training_config', None)
 
-    eta_min = getattr(t_cfg, 'adam_eta_min', 1e-6)
+    base_lr = float(getattr(t_cfg, 'adam_learning_rate', training_manager_instance.base_learning_rate_adam))
+    eta_min = float(getattr(t_cfg, 'adam_eta_min', 1e-6))
+    scheduler_mode = str(getattr(t_cfg, 'adam_lr_scheduler', getattr(training_manager_instance, 'adam_lr_scheduler', 'linear'))).lower()
     max_clip_norm = getattr(t_cfg, 'grad_clip_max_norm', 1.0)
     max_non_finite_streak = getattr(t_cfg, 'max_non_finite_streak', 5)
     log_interval = getattr(t_cfg, 'adam_log_interval', 100)
@@ -20,10 +22,27 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
     )
 
     for param_group in training_manager_instance.optimizer_adam.param_groups:
-        param_group['initial_lr'] = training_manager_instance.base_learning_rate_adam
-        param_group['lr'] = training_manager_instance.base_learning_rate_adam
+        param_group['initial_lr'] = base_lr
+        param_group['lr'] = base_lr
 
-    scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(training_manager_instance.optimizer_adam, T_max=max(epochs, 1), eta_min=eta_min)
+    total_iters = max(int(epochs), 1)
+    if scheduler_mode == 'linear':
+        end_factor = min(max(eta_min / max(base_lr, 1e-12), 0.0), 1.0)
+        scheduler_adam = optim.lr_scheduler.LinearLR(
+            training_manager_instance.optimizer_adam,
+            start_factor=1.0,
+            end_factor=end_factor,
+            total_iters=total_iters
+        )
+    elif scheduler_mode == 'cosine':
+        scheduler_adam = optim.lr_scheduler.CosineAnnealingLR(
+            training_manager_instance.optimizer_adam,
+            T_max=total_iters,
+            eta_min=eta_min
+        )
+    else:
+        scheduler_adam = None
+
     stop_reason = f"Completed all {epochs} epochs."
     non_finite_streak = 0
     training_manager_instance.completed_adam_epochs = 0
@@ -55,7 +74,8 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
         if max_clip_norm > 0.0:
             torch.nn.utils.clip_grad_norm_(model.networks.parameters(), max_norm=max_clip_norm)
         training_manager_instance.optimizer_adam.step()
-        scheduler_adam.step()
+        if scheduler_adam is not None:
+            scheduler_adam.step()
 
         epoch_elapsed = time.perf_counter() - epoch_start_time
 
@@ -77,6 +97,7 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
         if (epoch + 1) == 1 or (epoch + 1) % log_interval == 0 or reached_target:
             bd = training_manager_instance.last_loss_breakdown
             bc_val = bd.get('boundary_loss', 0.0)
+            current_lr = training_manager_instance.optimizer_adam.param_groups[0]['lr']
             if getattr(training_manager_instance, 'relobralo_balancer', None) is not None:
                 lmb = bd.get('relobralo_lambdas', {})
                 has_bc = 'loss_bc' in lmb
@@ -84,7 +105,7 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
                 lmb_keys_label = "Lambda(pde/a/bn/ht/bc)" if has_bc else "Lambda(pde/a/bn/ht)"
                 lmb_bc_str = f"/{lmb.get('loss_bc', 1.0):.2f}" if has_bc else ""
                 print(
-                    f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
+                    f"Adam Epoch {epoch + 1:05d} | LR = {current_lr:.2e} | Total = {current_loss_value:.4e} | "
                     f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
                     f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e}"
                     f"{bc_str} | "
@@ -93,7 +114,7 @@ def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampli
                 )
             else:
                 print(
-                    f"Adam Epoch {epoch + 1:05d} | Total = {current_loss_value:.4e} | "
+                    f"Adam Epoch {epoch + 1:05d} | LR = {current_lr:.2e} | Total = {current_loss_value:.4e} | "
                     f"PDE = {bd.get('pde_loss', 0.0):.3e} | "
                     f"IF(Az/Bn/Ht) = {bd.get('interface_Az', 0.0):.2e}/{bd.get('interface_Bn', 0.0):.2e}/{bd.get('interface_Ht', 0.0):.2e} | "
                     f"BC = {bc_val:.2e} | "
