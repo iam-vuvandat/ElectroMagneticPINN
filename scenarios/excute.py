@@ -135,6 +135,9 @@ def main():
     pinn_model.visualization_config.display_colab_frames = True
     pinn_model.visualization_config.update_interval = 1000
     pinn_model.visualization_config.resolution = 120
+    pinn_model.visualization_config.az_scale = "linear"
+    pinn_model.visualization_config.az_vmin = -0.02
+    pinn_model.visualization_config.az_vmax = 0.01
 
     pinn_model.training_config.enable_relobralo = False
     pinn_model.training_config.relobralo_alpha = 0.999
