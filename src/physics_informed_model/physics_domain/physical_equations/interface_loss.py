@@ -134,7 +134,7 @@ class InterfaceLoss:
 
         Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
-        nu_pair_scale = torch.clamp(torch.maximum(nu_a_star.detach(), nu_b_star.detach()), min=1e-6)
+        nu_pair_scale = torch.clamp(torch.sqrt(nu_a_star.detach() * nu_b_star.detach()), min=0.05)
         ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_pair_scale
         err_Ht = corner_w * (ht_diff_normalized ** 2)
 
@@ -153,7 +153,11 @@ class InterfaceLoss:
         loss_Bn = torch.mean(err_Bn)
         loss_Ht = torch.mean(err_Ht)
 
-        w_az = float(getattr(domain_a.training_config, 'interface_potential_weight', 1.0))
+        w_az = float(getattr(
+            domain_a.training_config,
+            'interface_az_weight',
+            getattr(domain_a.training_config, 'interface_potential_weight', 1.0)
+        ))
         w_bn = float(getattr(domain_a.training_config, 'interface_bn_weight', 1.0))
         w_ht = float(getattr(domain_a.training_config, 'interface_ht_weight', 1.0))
 

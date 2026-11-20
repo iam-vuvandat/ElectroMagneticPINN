@@ -67,7 +67,11 @@ def compute_loss(training_manager_instance, domains_data, update_relobralo=True,
                 key_a=net_key, domain_a=domain, key_b='background', domain_b=bg_domain, pts=outer_pts
             )
             w_if = float(getattr(domain.training_config, 'interface_weight', 1.0))
-            w_az = float(getattr(domain.training_config, 'interface_potential_weight', 1.0))
+            w_az = float(getattr(
+                domain.training_config,
+                'interface_az_weight',
+                getattr(domain.training_config, 'interface_potential_weight', 1.0)
+            ))
             w_bn = float(getattr(domain.training_config, 'interface_bn_weight', 1.0))
             w_ht = float(getattr(domain.training_config, 'interface_ht_weight', 1.0))
 
@@ -92,7 +96,11 @@ def compute_loss(training_manager_instance, domains_data, update_relobralo=True,
             )
             dom_a = pair_data["domain_a"]
             w_if = float(getattr(dom_a.training_config, 'interface_weight', 1.0))
-            w_az = float(getattr(dom_a.training_config, 'interface_potential_weight', 1.0))
+            w_az = float(getattr(
+                dom_a.training_config,
+                'interface_az_weight',
+                getattr(dom_a.training_config, 'interface_potential_weight', 1.0)
+            ))
             w_bn = float(getattr(dom_a.training_config, 'interface_bn_weight', 1.0))
             w_ht = float(getattr(dom_a.training_config, 'interface_ht_weight', 1.0))
 
