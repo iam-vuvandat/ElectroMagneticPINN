@@ -201,15 +201,15 @@ def main():
     iron_yoke.network_config.hidden_neurons = 128
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 0.9
-    iron_yoke.network_config.fourier_mapping_size = 64
+    iron_yoke.network_config.fourier_sigma = 1.2
+    iron_yoke.network_config.fourier_mapping_size = 128
 
     iron_yoke.nu_network_config.hidden_layers = 2
-    iron_yoke.nu_network_config.hidden_neurons = 64
+    iron_yoke.nu_network_config.hidden_neurons = 128
     iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
-    iron_yoke.nu_network_config.fourier_sigma = 0.75
-    iron_yoke.nu_network_config.fourier_mapping_size = 32
+    iron_yoke.nu_network_config.fourier_sigma = 1.2
+    iron_yoke.nu_network_config.fourier_mapping_size = 128
     iron_yoke.build_domain()
 
     magnet_left = sim_domain.create_material_domain(
@@ -222,11 +222,11 @@ def main():
     magnet_left.training_config.number_of_interior_points = 1200
     magnet_left.training_config.number_of_surface_points = 600
     magnet_left.network_config.hidden_layers = 4
-    magnet_left.network_config.hidden_neurons = 64
+    magnet_left.network_config.hidden_neurons = 128
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = True
-    magnet_left.network_config.fourier_sigma = 0.75
-    magnet_left.network_config.fourier_mapping_size = 32
+    magnet_left.network_config.fourier_sigma = 1.2
+    magnet_left.network_config.fourier_mapping_size = 128
     magnet_left.build_domain()
 
     magnet_right = sim_domain.create_material_domain(
@@ -239,11 +239,11 @@ def main():
     magnet_right.training_config.number_of_interior_points = 1200
     magnet_right.training_config.number_of_surface_points = 600
     magnet_right.network_config.hidden_layers = 4
-    magnet_right.network_config.hidden_neurons = 64
+    magnet_right.network_config.hidden_neurons = 128
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = True
-    magnet_right.network_config.fourier_sigma = 0.75
-    magnet_right.network_config.fourier_mapping_size = 32
+    magnet_right.network_config.fourier_sigma = 1.2
+    magnet_right.network_config.fourier_mapping_size = 128
     magnet_right.build_domain()
 
     bg_training_cfg = SimpleNamespace(
@@ -257,7 +257,7 @@ def main():
         hidden_neurons=256,
         activation_function=nn.Mish(),
         fourier_features=True,
-        fourier_sigma=1.8,
+        fourier_sigma=1.5,
         fourier_mapping_size=128
     )
     sim_domain.build_background_domain(
