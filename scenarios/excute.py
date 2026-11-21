@@ -141,7 +141,7 @@ def main():
     pinn_model.visualization_config.az_vmin = -0.02
     pinn_model.visualization_config.az_vmax = 0.01
 
-    pinn_model.training_config.enable_curriculum_weighting = True
+    pinn_model.training_config.enable_curriculum_weighting = False
     pinn_model.training_config.curriculum_steepness = 15.0
     pinn_model.training_config.curriculum_order = ("loss_ht", "loss_a", "loss_bn", "loss_pde")
     pinn_model.training_config.curriculum_min_weights = {
