@@ -1,4 +1,6 @@
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import sys
 import subprocess
 import zipfile
@@ -133,7 +135,7 @@ def main():
 
     pinn_model.visualization_config.active = True
     pinn_model.visualization_config.display_colab_frames = True
-    pinn_model.visualization_config.update_interval = 100
+    pinn_model.visualization_config.update_interval = 1000
     pinn_model.visualization_config.resolution = 120
     pinn_model.visualization_config.az_scale = "linear"
     pinn_model.visualization_config.az_vmin = -0.02
