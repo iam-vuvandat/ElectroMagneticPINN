@@ -126,11 +126,11 @@ def main():
 
     sim_domain.boundary.physics_config.enforce_method = "soft_loss"
     sim_domain.boundary.physics_config.potential_value = 0.0
-    sim_domain.boundary.training_config.number_of_boundary_points = 300
+    sim_domain.boundary.training_config.number_of_boundary_points = 500
     sim_domain.boundary.training_config.boundary_loss_weight = 1.0
 
     pinn_model.sampler_config.dynamic_resampling = True
-    pinn_model.sampler_config.resample_interval = 200
+    pinn_model.sampler_config.resample_interval = 500
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = False
 
     pinn_model.visualization_config.active = True
@@ -212,23 +212,23 @@ def main():
     iron_yoke.physics_config.current = 0.0
     iron_yoke.physics_config.is_nonlinear = True
 
-    iron_yoke.training_config.pde_fading_beta = 80.0
+    iron_yoke.training_config.pde_fading_beta = 40.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
-    iron_yoke.training_config.number_of_interior_points = 1000
-    iron_yoke.training_config.number_of_surface_points = 500
+    iron_yoke.training_config.number_of_interior_points = 3000
+    iron_yoke.training_config.number_of_surface_points = 800
 
     iron_yoke.network_config.hidden_layers = 5
     iron_yoke.network_config.hidden_neurons = 128
     iron_yoke.network_config.activation_function = nn.Mish()
     iron_yoke.network_config.fourier_features = True
-    iron_yoke.network_config.fourier_sigma = 1.2
+    iron_yoke.network_config.fourier_sigma = 0.9
     iron_yoke.network_config.fourier_mapping_size = 128
 
     iron_yoke.nu_network_config.hidden_layers = 2
     iron_yoke.nu_network_config.hidden_neurons = 128
     iron_yoke.nu_network_config.activation_function = nn.Mish()
     iron_yoke.nu_network_config.fourier_features = True
-    iron_yoke.nu_network_config.fourier_sigma = 1.2
+    iron_yoke.nu_network_config.fourier_sigma = 0.9
     iron_yoke.nu_network_config.fourier_mapping_size = 128
     iron_yoke.build_domain()
 
@@ -239,13 +239,13 @@ def main():
         coercive_direction=magnet_left_coercive_dir
     )
     magnet_left.physics_config.is_nonlinear = False
-    magnet_left.training_config.number_of_interior_points = 400
-    magnet_left.training_config.number_of_surface_points = 250
+    magnet_left.training_config.number_of_interior_points = 1000
+    magnet_left.training_config.number_of_surface_points = 400
     magnet_left.network_config.hidden_layers = 5
     magnet_left.network_config.hidden_neurons = 128
     magnet_left.network_config.activation_function = nn.Mish()
     magnet_left.network_config.fourier_features = True
-    magnet_left.network_config.fourier_sigma = 1.2
+    magnet_left.network_config.fourier_sigma = 0.9
     magnet_left.network_config.fourier_mapping_size = 128
     magnet_left.build_domain()
 
@@ -256,20 +256,20 @@ def main():
         coercive_direction=magnet_right_coercive_dir
     )
     magnet_right.physics_config.is_nonlinear = False
-    magnet_right.training_config.number_of_interior_points = 400
-    magnet_right.training_config.number_of_surface_points = 250
+    magnet_right.training_config.number_of_interior_points = 1000
+    magnet_right.training_config.number_of_surface_points = 400
     magnet_right.network_config.hidden_layers = 5
     magnet_right.network_config.hidden_neurons = 128
     magnet_right.network_config.activation_function = nn.Mish()
     magnet_right.network_config.fourier_features = True
-    magnet_right.network_config.fourier_sigma = 1.2
+    magnet_right.network_config.fourier_sigma = 0.9
     magnet_right.network_config.fourier_mapping_size = 128
     magnet_right.build_domain()
 
     bg_training_cfg = SimpleNamespace(
-        pde_fading_beta=80.0,
+        pde_fading_beta=40.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=2000,
+        number_of_interior_points=5000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
@@ -277,7 +277,7 @@ def main():
         hidden_neurons=256,
         activation_function=nn.Mish(),
         fourier_features=True,
-        fourier_sigma=1.5,
+        fourier_sigma=1.0,
         fourier_mapping_size=128
     )
     sim_domain.build_background_domain(
