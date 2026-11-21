@@ -155,7 +155,7 @@ def main():
     pinn_model.training_config.lbfgs_fpi_step_iterations = 0
 
     epochs_warmup_target = 5000
-    fpi_iterations = 16
+    fpi_iterations = 10
     epochs_per_fpi = 5000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
@@ -293,4 +293,102 @@ def main():
     ).requires_grad_(True)
 
     _, B_x_pinn, B_y_pinn = pinn_model.evaluate_fields(eval_pts, return_numpy=True)
-    pinn_
+    pinn_b_mag = np.sqrt(B_x_pinn**2 + B_y_pinn**2).reshape(res_y, res_x)
+
+    delta_b_mag = np.abs(pinn_b_mag - fem_b_mag)
+    fem_b_max = np.max(fem_b_mag)
+    norm_error_percent = (delta_b_mag / fem_b_max) * 100.0
+
+    print("\n==================================================")
+    print("[4/4] PLOTTING AND COMPARING FEM VS PINN (3 PANELS)")
+    print("==================================================")
+    cmap_ansys = mcolors.LinearSegmentedColormap.from_list("ansys_fem_interp", ANSYS_FEM_HEX_COLORS, N=100)
+    levels = np.linspace(0.0, 2.0, 101)
+    norm = mcolors.BoundaryNorm(levels, ncolors=cmap_ansys.N, clip=True)
+
+    fig, axs = plt.subplots(1, 3, figsize=(21, 6), dpi=300)
+    extent = [fem_x_mm.min(), fem_x_mm.max(), fem_y_mm.min(), fem_y_mm.max()]
+
+    im0 = axs[0].imshow(
+        fem_b_mag,
+        extent=extent,
+        origin="lower",
+        cmap=cmap_ansys,
+        norm=norm,
+        aspect="equal"
+    )
+    axs[0].set_title(r"Ansys Maxwell 2D FEM $|B|$ (Tesla)", fontweight="bold")
+    axs[0].set_xlabel("X (mm)")
+    axs[0].set_ylabel("Y (mm)")
+    cbar0 = fig.colorbar(im0, ax=axs[0], pad=0.02)
+    cbar0.set_label(r"$|B|$ (T)")
+
+    im1 = axs[1].imshow(
+        pinn_b_mag,
+        extent=extent,
+        origin="lower",
+        cmap=cmap_ansys,
+        norm=norm,
+        aspect="equal"
+    )
+    axs[1].set_title(r"ElectroMagneticPINN $|B|$ (Tesla)", fontweight="bold")
+    axs[1].set_xlabel("X (mm)")
+    axs[1].set_ylabel("Y (mm)")
+    cbar1 = fig.colorbar(im1, ax=axs[1], pad=0.02)
+    cbar1.set_label(r"$|B|$ (T)")
+
+    im2 = axs[2].imshow(
+        norm_error_percent,
+        extent=extent,
+        origin="lower",
+        cmap="viridis",
+        vmin=0.0,
+        vmax=10.0,
+        aspect="equal"
+    )
+    axs[2].set_title(r"Normalized Error (%) [$\Delta|B| / B_{\mathrm{max}}$]", fontweight="bold")
+    axs[2].set_xlabel("X (mm)")
+    axs[2].set_ylabel("Y (mm)")
+    cbar2 = fig.colorbar(im2, ax=axs[2], pad=0.02)
+    cbar2.set_label("Normalized Error (%)")
+
+    plt.tight_layout()
+    save_fig_path = output_dir / "fem_vs_pinn_bmap_comparison_relobralo.png"
+    plt.savefig(save_fig_path, dpi=300)
+    print(f"[*] Saved comparison plot to: {save_fig_path}")
+
+    print("[*] Displaying figure...")
+    plt.show()
+
+    if "google.colab" in sys.modules:
+        zip_path = Path(parent_directory) / f"{checkpoint_name}_results.zip"
+        checkpoint_path = resolve_checkpoint_filepath(checkpoint_name)
+        if not checkpoint_path.exists() and Path(f"{checkpoint_path}.pkl").exists():
+            checkpoint_path = Path(f"{checkpoint_path}.pkl")
+
+        vis_dir = Path(pinn_model.visualization_config.output_directory)
+        if not vis_dir.is_absolute() and not vis_dir.exists():
+            alt_vis_dir = Path(parent_directory) / vis_dir
+            if alt_vis_dir.exists():
+                vis_dir = alt_vis_dir
+
+        print(f"[*] Google Colab environment detected. Archiving all results to: {zip_path}...")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            if checkpoint_path.exists():
+                zf.write(checkpoint_path, arcname=f"checkpoints/{checkpoint_path.name}")
+            if output_dir.exists():
+                for file_item in output_dir.rglob("*"):
+                    if file_item.is_file():
+                        zf.write(file_item, arcname=f"{output_dir.name}/{file_item.relative_to(output_dir)}")
+            if vis_dir.exists():
+                for file_item in vis_dir.rglob("*"):
+                    if file_item.is_file():
+                        zf.write(file_item, arcname=f"{vis_dir.name}/{file_item.relative_to(vis_dir)}")
+
+        print(f"[*] Preparing download: {zip_path}...")
+        from google.colab import files
+        files.download(str(zip_path))
+
+
+if __name__ == "__main__":
+    main()
