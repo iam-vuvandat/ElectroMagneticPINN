@@ -135,11 +135,7 @@ class InterfaceLoss:
         Ht_a_star = Hx_a_star * tx + Hy_a_star * ty
         Ht_b_star = Hx_b_star * tx + Hy_b_star * ty
 
-        nu_geo_scale = torch.sqrt(
-            torch.clamp(nu_a_star.detach(), min=1e-6) * torch.clamp(nu_b_star.detach(), min=1e-6)
-        )
-        ht_diff_normalized = (Ht_a_star - Ht_b_star) / nu_geo_scale
-        err_Ht = corner_w * (ht_diff_normalized ** 2)
+        err_Ht = corner_w * ((Ht_a_star - Ht_b_star) ** 2)
 
         return err_val, err_Bn, err_Ht
 

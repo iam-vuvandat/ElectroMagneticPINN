@@ -1,5 +1,6 @@
 import torch
 
+
 class MaxwellPDELoss:
     def __init__(self, electro_magnetic_pinn=None, L0=0.1, H0=800000.0, nu0=795774.715459):
         self.electro_magnetic_pinn = electro_magnetic_pinn
@@ -35,7 +36,6 @@ class MaxwellPDELoss:
         H_cy_star = H_cy / self.H0
         J_z_star = J_z / (self.H0 / self.L0)
 
-        # 1. Gradient của Az* -> B*
         grad_A_star = torch.autograd.grad(
             outputs=A_z_star,
             inputs=xy,
@@ -46,11 +46,9 @@ class MaxwellPDELoss:
         dAz_dx_star = grad_A_star[:, 0:1] * self.L0
         dAz_dy_star = grad_A_star[:, 1:2] * self.L0
 
-        # 2. H* = nu* * B* - Hc*
         Hx_star = nu_star * dAz_dy_star - H_cx_star
         Hy_star = -nu_star * dAz_dx_star - H_cy_star
 
-        # 3. curl(H*) = dHy*/dx* - dHx*/dy*
         grad_Hx = torch.autograd.grad(outputs=Hx_star, inputs=xy, grad_outputs=torch.ones_like(Hx_star), create_graph=True)[0]
         grad_Hy = torch.autograd.grad(outputs=Hy_star, inputs=xy, grad_outputs=torch.ones_like(Hy_star), create_graph=True)[0]
 
@@ -58,8 +56,7 @@ class MaxwellPDELoss:
         dHx_dy_star = grad_Hx[:, 1:2] * self.L0
 
         res_pde = dHy_dx_star - dHx_dy_star - J_z_star
-        nu_scale = torch.clamp(nu_star.detach(), min=1e-6)
-        return res_pde / nu_scale
+        return res_pde
 
     def compute_fading_weight(self, domain, xy):
         beta = float(getattr(domain.training_config, 'pde_fading_beta', 80.0))
