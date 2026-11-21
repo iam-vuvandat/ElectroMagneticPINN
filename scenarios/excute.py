@@ -159,7 +159,7 @@ def main():
         "loss_pde": 1.0
     }
 
-    pinn_model.training_config.enable_relobralo = True
+    pinn_model.training_config.enable_relobralo = False
     pinn_model.training_config.relobralo_alpha = 0.999
     pinn_model.training_config.relobralo_rho = 0.999
     pinn_model.training_config.relobralo_temperature = 1.0
