@@ -35,22 +35,23 @@ def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=N
                 Az_star = model.forward_network(net_key, pts_grad)
                 grad_Az = torch.autograd.grad(
                     outputs=Az_star, inputs=pts_grad,
-                    grad_outputs=torch.ones_like(Az_star), create_graph=True
+                    grad_outputs=torch.ones_like(Az_star), create_graph=False
                 )[0]
                 Bx_star = grad_Az[:, 1:2] * sim_domain.L0
                 By_star = -grad_Az[:, 0:1] * sim_domain.L0
                 B_mag_phys = torch.sqrt(Bx_star**2 + By_star**2 + 1e-12) * sim_domain.B0
 
-                nu_BH_phys = domain.evaluate_reluctivity(pts_grad, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
-                nu_BH_star = nu_BH_phys / sim_domain.nu0
+                with torch.no_grad():
+                    nu_BH_phys = domain.evaluate_reluctivity(pts_grad, B_magnitude_tensor=B_mag_phys, is_nonlinear=True)
+                    nu_BH_star = nu_BH_phys / sim_domain.nu0
 
-                nu_old_star = model.forward_nu_network(net_key, pts)
+                    nu_old_star = model.forward_nu_network(net_key, pts)
 
-                nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
+                    nu_target_star = (1.0 - alpha_damping) * nu_old_star + alpha_damping * nu_BH_star
 
-                diff_val = torch.max(torch.abs(nu_target_star.detach() - nu_old_star.detach())).item()
-                max_nu_diff = max(max_nu_diff, diff_val)
-                targets_dict[net_key] = (pts, nu_target_star.detach())
+                    diff_val = torch.max(torch.abs(nu_target_star - nu_old_star)).item()
+                    max_nu_diff = max(max_nu_diff, diff_val)
+                    targets_dict[net_key] = (pts.detach(), nu_target_star.detach())
 
     if not targets_dict:
         return 0.0
@@ -61,7 +62,7 @@ def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=N
     opt_nu = optim.Adam(nu_params, lr=lr)
 
     for _ in range(epochs):
-        opt_nu.zero_grad()
+        opt_nu.zero_grad(set_to_none=True)
         total_fit_loss = torch.tensor(0.0, device=device)
         for k, (pts, nu_target_star) in targets_dict.items():
             nu_pred_star = model.forward_nu_network(k, pts)
@@ -69,5 +70,8 @@ def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=N
             total_fit_loss = total_fit_loss + torch.mean(rel_err ** 2)
         total_fit_loss.backward()
         opt_nu.step()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return max_nu_diff
