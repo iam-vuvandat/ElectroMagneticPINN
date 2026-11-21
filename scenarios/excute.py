@@ -179,8 +179,8 @@ def main():
     epochs_per_fpi = 5000
 
     pinn_model.training_config.fpi_outer_iterations = fpi_iterations
-    pinn_model.training_config.fpi_initial_alpha_damping = 0.3
-    pinn_model.training_config.fpi_alpha_damping = 0.3
+    pinn_model.training_config.fpi_initial_alpha_damping = 0.5
+    pinn_model.training_config.fpi_alpha_damping = 0.5
     pinn_model.training_config.fpi_tolerance = 1e-6
 
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
@@ -188,7 +188,7 @@ def main():
 
     pinn_model.training_config.adam_learning_rate = 1e-3
     pinn_model.training_config.adam_lr_scheduler = "linear"
-    pinn_model.training_config.target_loss_threshold = 5e-4
+    pinn_model.training_config.target_loss_threshold = 7e-4
     pinn_model.training_config.adam_eta_min = 1e-6
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
