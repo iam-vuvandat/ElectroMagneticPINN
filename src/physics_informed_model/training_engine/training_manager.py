@@ -9,6 +9,7 @@ from training_engine.compute_loss import compute_loss
 from training_engine.train_adam import train_adam
 from training_engine.train_lbfgs import train_lbfgs
 from training_engine.relobralo_balancer import ReLoBRaLoBalancer
+from training_engine.curriculum_scheduler import CurriculumWeightScheduler
 
 
 class TrainingManager:
@@ -46,6 +47,20 @@ class TrainingManager:
         boundary_obj = getattr(sim_domain, 'boundary', None)
         enforce_method = getattr(boundary_obj.physics_config, 'enforce_method', 'hard_factor') if boundary_obj else 'hard_factor'
         balancer_keys = ("loss_pde", "loss_a", "loss_bn", "loss_ht", "loss_bc") if enforce_method == 'soft_loss' else ("loss_pde", "loss_a", "loss_bn", "loss_ht")
+
+        self.enable_curriculum_weighting = bool(getattr(t_cfg, 'enable_curriculum_weighting', False))
+        self.curriculum_scheduler = None
+        if self.enable_curriculum_weighting:
+            total_adam = int(getattr(t_cfg, 'number_of_adam_epochs', 0))
+            warmup_ratio = float(getattr(t_cfg, 'linear_warmup_epochs_ratio', 0.3))
+            warmup_epochs = int(total_adam * warmup_ratio) if getattr(t_cfg, 'enable_linear_warmup_stage', True) else 0
+            self.curriculum_scheduler = CurriculumWeightScheduler(
+                total_warmup_epochs=warmup_epochs,
+                stage_order=getattr(t_cfg, 'curriculum_order', ("loss_ht", "loss_a", "loss_bn", "loss_pde")),
+                steepness=float(getattr(t_cfg, 'curriculum_steepness', 15.0)),
+                min_weights=getattr(t_cfg, 'curriculum_min_weights', None),
+                max_weights=getattr(t_cfg, 'curriculum_max_weights', None)
+            )
 
         self.enable_relobralo = bool(getattr(t_cfg, 'enable_relobralo', False))
         self.relobralo_balancer = None

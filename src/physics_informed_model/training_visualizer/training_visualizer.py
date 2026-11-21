@@ -30,6 +30,7 @@ class TrainingVisualizer:
         self.bn_loss_history = []
         self.ht_loss_history = []
         self.bc_loss_history = []
+        self.w_pde_history = []
         self.w_az_history = []
         self.w_bn_history = []
         self.w_ht_history = []
@@ -69,6 +70,7 @@ class TrainingVisualizer:
         self.bc_loss_history.append(bc_val)
 
         lmb = loss_breakdown.get('relobralo_lambdas', {})
+        self.w_pde_history.append(float(lmb.get('loss_pde', 1.0)))
         self.w_az_history.append(float(lmb.get('loss_a', 1.0)))
         self.w_bn_history.append(float(lmb.get('loss_bn', 1.0)))
         self.w_ht_history.append(float(lmb.get('loss_ht', 1.0)))

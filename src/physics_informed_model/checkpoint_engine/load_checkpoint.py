@@ -111,6 +111,13 @@ def load_checkpoint(pinn_instance, filepath=None):
                 checkpoint_data["optimizer_lbfgs_state_dict"]
             )
         if (
+            checkpoint_data.get("curriculum_state_dict")
+            and getattr(tm, "curriculum_scheduler", None)
+        ):
+            tm.curriculum_scheduler.load_state_dict(
+                checkpoint_data["curriculum_state_dict"]
+            )
+        if (
             checkpoint_data.get("relobralo_state_dict")
             and getattr(tm, "relobralo_balancer", None)
         ):
@@ -132,6 +139,7 @@ def load_checkpoint(pinn_instance, filepath=None):
         vis.bn_loss_history = checkpoint_data.get("bn_loss_history", [])
         vis.ht_loss_history = checkpoint_data.get("ht_loss_history", [])
         vis.bc_loss_history = checkpoint_data.get("bc_loss_history", [])
+        vis.w_pde_history = checkpoint_data.get("w_pde_history", [])
         vis.w_az_history = checkpoint_data.get("w_az_history", [])
         vis.w_bn_history = checkpoint_data.get("w_bn_history", [])
         vis.w_ht_history = checkpoint_data.get("w_ht_history", [])

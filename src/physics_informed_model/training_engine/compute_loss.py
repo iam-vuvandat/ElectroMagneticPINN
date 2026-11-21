@@ -132,40 +132,39 @@ def compute_loss(training_manager_instance, domains_data, update_relobralo=True,
             w_bc = float(getattr(boundary_obj.training_config, 'boundary_loss_weight', 1.0))
             total_bc_tensor = w_bc * raw_bc_loss
 
-    balancer = getattr(training_manager_instance, 'relobralo_balancer', None)
-    if balancer is not None:
-        raw_losses = {
-            "loss_pde": total_pde_tensor,
-            "loss_a": total_az_tensor,
-            "loss_bn": total_bn_tensor,
-            "loss_ht": total_ht_tensor
-        }
-        if enforce_method == 'soft_loss':
-            raw_losses["loss_bc"] = total_bc_tensor
+    raw_losses = {
+        "loss_pde": total_pde_tensor,
+        "loss_a": total_az_tensor,
+        "loss_bn": total_bn_tensor,
+        "loss_ht": total_ht_tensor
+    }
+    if enforce_method == 'soft_loss':
+        raw_losses["loss_bc"] = total_bc_tensor
 
+    scheduler = getattr(training_manager_instance, 'curriculum_scheduler', None)
+    balancer = getattr(training_manager_instance, 'relobralo_balancer', None)
+    step = getattr(training_manager_instance, 'global_step', 0)
+
+    curr_lambdas = scheduler.get_weights(step=step, keys=raw_losses.keys()) if scheduler is not None else None
+
+    if curr_lambdas is not None:
+        lambdas = curr_lambdas
+    elif balancer is not None:
         if update_relobralo:
             lambdas = balancer.update(raw_losses, is_resampling_step=is_resampling_step)
         else:
             lambdas = balancer.get_weights(raw_losses.keys())
-
-        total_loss = (
-            lambdas["loss_pde"] * total_pde_tensor
-            + lambdas["loss_a"] * total_az_tensor
-            + lambdas["loss_bn"] * total_bn_tensor
-            + lambdas["loss_ht"] * total_ht_tensor
-        )
-        if enforce_method == 'soft_loss':
-            total_loss = total_loss + lambdas.get("loss_bc", 1.0) * total_bc_tensor
     else:
-        lambdas = {
-            "loss_pde": 1.0,
-            "loss_a": 1.0,
-            "loss_bn": 1.0,
-            "loss_ht": 1.0
-        }
-        if enforce_method == 'soft_loss':
-            lambdas["loss_bc"] = 1.0
-        total_loss = total_pde_tensor + total_az_tensor + total_bn_tensor + total_ht_tensor + total_bc_tensor
+        lambdas = {k: 1.0 for k in raw_losses.keys()}
+
+    total_loss = (
+        lambdas["loss_pde"] * total_pde_tensor
+        + lambdas["loss_a"] * total_az_tensor
+        + lambdas["loss_bn"] * total_bn_tensor
+        + lambdas["loss_ht"] * total_ht_tensor
+    )
+    if enforce_method == 'soft_loss':
+        total_loss = total_loss + lambdas.get("loss_bc", 1.0) * total_bc_tensor
 
     training_manager_instance.last_loss_breakdown = {
         "pde_loss": total_pde_tensor.item(),

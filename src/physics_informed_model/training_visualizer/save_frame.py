@@ -265,6 +265,8 @@ def save_frame(visualizer_instance, epoch, loss_value, domains_data, loss_breakd
     ax_loss.legend(loc="upper right", fontsize=8.5)
 
     ax_w = axs[0, 3]
+    if len(getattr(visualizer_instance, 'w_pde_history', [])) == len(steps):
+        ax_w.plot(steps, visualizer_instance.w_pde_history, label="PDE", linewidth=1.2)
     ax_w.plot(steps, visualizer_instance.w_az_history, label=r"$A_z$", linewidth=1.2)
     ax_w.plot(steps, visualizer_instance.w_bn_history, label=r"$B_n$", linewidth=1.2)
     ax_w.plot(steps, visualizer_instance.w_ht_history, label=r"$H_t$", linewidth=1.2)

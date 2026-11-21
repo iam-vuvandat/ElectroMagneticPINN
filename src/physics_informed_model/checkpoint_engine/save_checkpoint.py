@@ -61,6 +61,11 @@ def save_checkpoint(pinn_instance, filepath=None):
             if tm and tm.optimizer_lbfgs
             else None
         ),
+        "curriculum_state_dict": (
+            tm.curriculum_scheduler.state_dict()
+            if tm and getattr(tm, "curriculum_scheduler", None)
+            else None
+        ),
         "relobralo_state_dict": (
             tm.relobralo_balancer.state_dict()
             if tm and getattr(tm, "relobralo_balancer", None)
@@ -85,6 +90,7 @@ def save_checkpoint(pinn_instance, filepath=None):
         "bn_loss_history": getattr(vis, "bn_loss_history", []) if vis else [],
         "ht_loss_history": getattr(vis, "ht_loss_history", []) if vis else [],
         "bc_loss_history": getattr(vis, "bc_loss_history", []) if vis else [],
+        "w_pde_history": getattr(vis, "w_pde_history", []) if vis else [],
         "w_az_history": getattr(vis, "w_az_history", []) if vis else [],
         "w_bn_history": getattr(vis, "w_bn_history", []) if vis else [],
         "w_ht_history": getattr(vis, "w_ht_history", []) if vis else [],

@@ -6,6 +6,7 @@ from .compute_loss import compute_loss
 from .train_adam import train_adam
 from .train_lbfgs import train_lbfgs
 from .relobralo_balancer import ReLoBRaLoBalancer
+from .curriculum_scheduler import CurriculumWeightScheduler
 
 __all__ = [
     "TrainingManager",
@@ -15,5 +16,6 @@ __all__ = [
     "compute_loss",
     "train_adam",
     "train_lbfgs",
-    "ReLoBRaLoBalancer"
+    "ReLoBRaLoBalancer",
+    "CurriculumWeightScheduler"
 ]

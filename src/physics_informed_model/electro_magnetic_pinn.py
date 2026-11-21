@@ -34,6 +34,12 @@ class ElectroMagneticPINN:
             enable_lbfgs_after_fpi_step=False,
             linear_warmup_epochs_ratio=0.3,
 
+            enable_curriculum_weighting=False,
+            curriculum_steepness=15.0,
+            curriculum_order=("loss_ht", "loss_a", "loss_bn", "loss_pde"),
+            curriculum_min_weights=None,
+            curriculum_max_weights=None,
+
             enable_relobralo=False,
             relobralo_alpha=0.999,
             relobralo_temperature=0.1,

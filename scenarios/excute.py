@@ -52,7 +52,7 @@ plt.rcParams.update({
 def main():
     output_dir = Path(parent_directory) / "figure_high_precision_simulation_test"
     output_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_name = "toymodel1_relobralo"
+    checkpoint_name = "toymodel1_curriculum_relobralo"
 
     yoke_outline = [[-0.06, -0.03], [0.06, -0.03], [0.06, 0.0], [-0.06, 0.0]]
     magnet_left_outline = [[-0.05, 0.0], [-0.005, 0.0], [-0.005, 0.018], [-0.05, 0.018]]
@@ -113,7 +113,7 @@ def main():
     fem_y_mm = field_record.y
     fem_b_mag = field_record.b_mag
 
-    print("[2/4] PINN MODEL SETUP (ELECTROMAGNETIC PINN WITH GLOBAL RELOBRALO)")
+    print("[2/4] PINN MODEL SETUP (CURRICULUM WARM-UP + GLOBAL RELOBRALO)")
     pinn_model = ElectroMagneticPINN()
     sim_domain = pinn_model.simulation_domain_engine_instance
 
@@ -141,7 +141,25 @@ def main():
     pinn_model.visualization_config.az_vmin = -0.02
     pinn_model.visualization_config.az_vmax = 0.01
 
-    pinn_model.training_config.enable_relobralo = False
+    pinn_model.training_config.enable_curriculum_weighting = True
+    pinn_model.training_config.curriculum_steepness = 15.0
+    pinn_model.training_config.curriculum_order = ("loss_ht", "loss_a", "loss_bn", "loss_pde")
+    pinn_model.training_config.curriculum_min_weights = {
+        "loss_ht": 1.0,
+        "loss_a": 0.02,
+        "loss_bc": 0.05,
+        "loss_bn": 0.01,
+        "loss_pde": 1e-3
+    }
+    pinn_model.training_config.curriculum_max_weights = {
+        "loss_ht": 1.0,
+        "loss_a": 1.0,
+        "loss_bc": 1.0,
+        "loss_bn": 1.0,
+        "loss_pde": 1.0
+    }
+
+    pinn_model.training_config.enable_relobralo = True
     pinn_model.training_config.relobralo_alpha = 0.999
     pinn_model.training_config.relobralo_rho = 0.999
     pinn_model.training_config.relobralo_temperature = 1.0
@@ -271,7 +289,7 @@ def main():
     pinn_model.update_electromagnetic_pinn()
 
     if re_train_pinn:
-        print("[*] re_train_pinn = True: Training PINN model with global ReLoBRaLo...")
+        print("[*] re_train_pinn = True: Training PINN model with Curriculum Warm-up + ReLoBRaLo...")
         pinn_model.execute_training_process()
         print(f"[*] Saving PINN checkpoint: '{checkpoint_name}'...")
         pinn_model.save_checkpoint(checkpoint_name)
@@ -355,7 +373,7 @@ def main():
     cbar2.set_label("Normalized Error (%)")
 
     plt.tight_layout()
-    save_fig_path = output_dir / "fem_vs_pinn_bmap_comparison_relobralo.png"
+    save_fig_path = output_dir / "fem_vs_pinn_bmap_comparison_curriculum_relobralo.png"
     plt.savefig(save_fig_path, dpi=300)
     print(f"[*] Saved comparison plot to: {save_fig_path}")
 
