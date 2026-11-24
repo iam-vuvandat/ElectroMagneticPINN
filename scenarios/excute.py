@@ -194,10 +194,10 @@ def main():
     pinn_model.training_config.max_non_finite_streak = 5
     pinn_model.training_config.adam_log_interval = 100
 
-    pinn_model.training_config.pretrain_nu_epochs = 2000
-    pinn_model.training_config.pretrain_nu_lr = 3e-3
-    pinn_model.training_config.fit_nu_epochs = 1600
-    pinn_model.training_config.fit_nu_lr = 2e-3
+    pinn_model.training_config.pretrain_nu_epochs = 5000
+    pinn_model.training_config.pretrain_nu_lr = 1e-3
+    pinn_model.training_config.fit_nu_epochs = 5000
+    pinn_model.training_config.fit_nu_lr = 1e-3
 
     pinn_model.training_config.number_of_lbfgs_iterations = 0
     pinn_model.training_config.lbfgs_learning_rate = 0.5
