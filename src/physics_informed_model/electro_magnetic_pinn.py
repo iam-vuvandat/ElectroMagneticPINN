@@ -46,6 +46,9 @@ class ElectroMagneticPINN:
             relobralo_rho=0.999,
 
             adam_learning_rate=1e-3,
+            adam_eta_min=1e-6,
+            fpi_lr_begin=3e-4,
+            fpi_lr_finish=1e-5,
             adam_lr_scheduler="linear",
             number_of_adam_epochs=2500,
             target_loss_threshold=1e-5,
@@ -61,7 +64,6 @@ class ElectroMagneticPINN:
             fit_nu_lr=3e-3,
 
             grad_clip_max_norm=1.0,
-            adam_eta_min=1e-6,
             max_non_finite_streak=5,
             adam_log_interval=100,
             lbfgs_log_interval=25,

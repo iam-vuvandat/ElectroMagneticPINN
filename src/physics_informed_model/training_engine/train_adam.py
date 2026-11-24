@@ -3,14 +3,27 @@ import torch
 import torch.optim as optim
 
 
-def train_adam(training_manager_instance, epochs, domains_data, dynamic_resampling=False, resample_fn=None, resample_interval=100):
+def train_adam(
+    training_manager_instance,
+    epochs,
+    domains_data,
+    dynamic_resampling=False,
+    resample_fn=None,
+    resample_interval=100,
+    lr_begin=None,
+    lr_finish=None
+):
     model = training_manager_instance.model
     model.train()
     pinn = training_manager_instance.electro_magnetic_pinn
     t_cfg = getattr(pinn, 'training_config', None)
 
-    base_lr = float(getattr(t_cfg, 'adam_learning_rate', training_manager_instance.base_learning_rate_adam))
-    eta_min = float(getattr(t_cfg, 'adam_eta_min', 1e-6))
+    default_lr_begin = float(getattr(t_cfg, 'adam_learning_rate', training_manager_instance.base_learning_rate_adam))
+    default_lr_finish = float(getattr(t_cfg, 'adam_eta_min', 1e-6))
+
+    base_lr = float(lr_begin) if lr_begin is not None else default_lr_begin
+    eta_min = float(lr_finish) if lr_finish is not None else default_lr_finish
+
     scheduler_mode = str(getattr(t_cfg, 'adam_lr_scheduler', getattr(training_manager_instance, 'adam_lr_scheduler', 'linear'))).lower()
     max_clip_norm = getattr(t_cfg, 'grad_clip_max_norm', 1.0)
     max_non_finite_streak = getattr(t_cfg, 'max_non_finite_streak', 5)

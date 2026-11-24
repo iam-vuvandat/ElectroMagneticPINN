@@ -20,13 +20,19 @@ def execute_training_process(pinn_instance):
 
     if getattr(t_cfg, 'enable_linear_warmup_stage', True) and epochs_warmup > 0:
         tm.current_fpi_step = 0
-        print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs) ---")
+        warmup_lr_begin = getattr(t_cfg, 'adam_learning_rate', 1e-3)
+        warmup_lr_finish = getattr(t_cfg, 'adam_eta_min', 1e-6)
+        print(f"\n--- [STAGE 1A] Adam Linear Warm-up ({epochs_warmup} Epochs, LR: {warmup_lr_begin} -> {warmup_lr_finish}) ---")
         if getattr(tm, 'relobralo_balancer', None) is not None:
             tm.relobralo_balancer.reset_anchors(reset_weights=False)
         domains_data = tm.train_adam(
-            epochs=epochs_warmup, domains_data=domains_data,
+            epochs=epochs_warmup,
+            domains_data=domains_data,
             dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
-            resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+            resample_fn=resample_data_fn,
+            resample_interval=pinn_instance.sampler_config.resample_interval,
+            lr_begin=warmup_lr_begin,
+            lr_finish=warmup_lr_finish
         )
 
         if getattr(t_cfg, 'enable_lbfgs_after_warmup', False):
@@ -42,10 +48,17 @@ def execute_training_process(pinn_instance):
         fpi_tol = float(getattr(t_cfg, 'fpi_tolerance', 1e-5))
         epochs_per_fpi = max(1, epochs_adaptation // fpi_iters)
 
+        fpi_lr_begin = getattr(t_cfg, 'fpi_lr_begin', None)
+        if fpi_lr_begin is None:
+            fpi_lr_begin = getattr(t_cfg, 'adam_learning_rate', 1e-3)
+        fpi_lr_finish = getattr(t_cfg, 'fpi_lr_finish', None)
+        if fpi_lr_finish is None:
+            fpi_lr_finish = getattr(t_cfg, 'adam_eta_min', 1e-6)
+
         fit_ep = getattr(t_cfg, 'fit_nu_epochs', 250)
         fit_lr = getattr(t_cfg, 'fit_nu_lr', 3e-3)
 
-        print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter) ---")
+        print(f"\n--- [STAGE 1B] FPI Outer Loop ({fpi_iters} iterations, {epochs_per_fpi} epochs/iter, LR: {fpi_lr_begin} -> {fpi_lr_finish}) ---")
         for f_iter in range(fpi_iters):
             tm.current_fpi_step = f_iter + 1
             current_alpha_damp = initial_alpha_damp if f_iter == 0 else alpha_damp
@@ -63,9 +76,13 @@ def execute_training_process(pinn_instance):
             if getattr(tm, 'relobralo_balancer', None) is not None:
                 tm.relobralo_balancer.reset_anchors(reset_weights=False)
             domains_data = tm.train_adam(
-                epochs=epochs_per_fpi, domains_data=domains_data,
+                epochs=epochs_per_fpi,
+                domains_data=domains_data,
                 dynamic_resampling=pinn_instance.sampler_config.dynamic_resampling,
-                resample_fn=resample_data_fn, resample_interval=pinn_instance.sampler_config.resample_interval
+                resample_fn=resample_data_fn,
+                resample_interval=pinn_instance.sampler_config.resample_interval,
+                lr_begin=fpi_lr_begin,
+                lr_finish=fpi_lr_finish
             )
 
             if getattr(t_cfg, 'enable_lbfgs_after_fpi_step', False):
