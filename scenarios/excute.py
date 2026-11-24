@@ -130,7 +130,7 @@ def main():
     sim_domain.boundary.training_config.boundary_loss_weight = 1.0
 
     pinn_model.sampler_config.dynamic_resampling = True
-    pinn_model.sampler_config.resample_interval = 500
+    pinn_model.sampler_config.resample_interval = 50
     pinn_model.sampler_config.resample_points_before_lbfgs_stage = False
 
     pinn_model.visualization_config.active = True
