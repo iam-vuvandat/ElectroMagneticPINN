@@ -32,4 +32,4 @@ def _build_system(pinn_instance):
     domains_data = pinn_instance.collocation_sampler_instance.generate_all_domain_points()
     pre_ep = getattr(pinn_instance.training_config, 'pretrain_nu_epochs', 300)
     pre_lr = getattr(pinn_instance.training_config, 'pretrain_nu_lr', 1e-2)
-    pinn_instance.training_manager_instance.pretrain_nu_networks(domains_data, epochs=pre_ep, lr=pre_lr)
+    
