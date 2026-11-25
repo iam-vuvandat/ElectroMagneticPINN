@@ -185,17 +185,17 @@ def main():
     pinn_model.training_config.enable_fpi_l2_evaluation = True
     pinn_model.training_config.fpi_eval_points_per_domain = 2000
     pinn_model.training_config.fpi_convergence_metric = "mu_r"
-    pinn_model.training_config.fpi_net_fit_tolerance = 1e-2
+    pinn_model.training_config.fpi_net_fit_tolerance = 3e-2
 
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     pinn_model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / pinn_model.training_config.number_of_adam_epochs
 
     pinn_model.training_config.adam_learning_rate = 5e-4
-    pinn_model.training_config.adam_eta_min = 5e-5
-    pinn_model.training_config.fpi_lr_begin = 5e-5
-    pinn_model.training_config.fpi_lr_finish = 5e-5
+    pinn_model.training_config.adam_eta_min = 5e-6
+    pinn_model.training_config.fpi_lr_begin = 5e-6
+    pinn_model.training_config.fpi_lr_finish = 5e-6
     pinn_model.training_config.adam_lr_scheduler = "linear"
-    pinn_model.training_config.target_loss_threshold = 3e-4
+    pinn_model.training_config.target_loss_threshold = 5e-4
     pinn_model.training_config.grad_clip_max_norm = 1.0
     pinn_model.training_config.max_non_finite_streak = 5
     pinn_model.training_config.adam_log_interval = 100
@@ -218,7 +218,7 @@ def main():
     iron_yoke.physics_config.current = 0.0
     iron_yoke.physics_config.is_nonlinear = True
 
-    iron_yoke.training_config.pde_fading_beta = 40.0
+    iron_yoke.training_config.pde_fading_beta = 0.0
     iron_yoke.training_config.sampling_density_multiplier = 1.0
     iron_yoke.training_config.number_of_interior_points = 3000
     iron_yoke.training_config.number_of_surface_points = 6000
@@ -273,7 +273,7 @@ def main():
     magnet_right.build_domain()
 
     bg_training_cfg = SimpleNamespace(
-        pde_fading_beta=40.0,
+        pde_fading_beta=0.0,
         sampling_density_multiplier=1.0,
         number_of_interior_points=5000,
         number_of_surface_points=0
