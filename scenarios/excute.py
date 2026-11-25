@@ -182,6 +182,10 @@ def main():
     pinn_model.training_config.fpi_initial_alpha_damping = 0.5
     pinn_model.training_config.fpi_alpha_damping = 0.5
     pinn_model.training_config.fpi_tolerance = 1e-6
+    pinn_model.training_config.enable_fpi_l2_evaluation = True
+    pinn_model.training_config.fpi_eval_points_per_domain = 2000
+    pinn_model.training_config.fpi_convergence_metric = "mu_r"
+    pinn_model.training_config.fpi_net_fit_tolerance = 1e-2
 
     pinn_model.training_config.number_of_adam_epochs = epochs_warmup_target + (fpi_iterations * epochs_per_fpi)
     pinn_model.training_config.linear_warmup_epochs_ratio = epochs_warmup_target / pinn_model.training_config.number_of_adam_epochs
@@ -300,8 +304,10 @@ def main():
         pinn_model.load_checkpoint(checkpoint_name)
 
     print("\n==================================================")
-    print("[3/4] COMPUTING PINN B-FIELD ON SYNCHRONIZED GRID")
+    print("[3/4] COMPUTING PINN B-FIELD & PERMEABILITY L2 ON SYNCHRONIZED GRID")
     print("==================================================")
+    pinn_model.evaluate_permeability_l2_error()
+
     res_x = len(fem_x_mm)
     res_y = len(fem_y_mm)
     x_m = fem_x_mm / 1000.0

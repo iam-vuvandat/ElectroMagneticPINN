@@ -7,6 +7,7 @@ from .train_adam import train_adam
 from .train_lbfgs import train_lbfgs
 from .relobralo_balancer import ReLoBRaLoBalancer
 from .curriculum_scheduler import CurriculumWeightScheduler
+from .fpi_convergence_tracker import FPIConvergenceTracker
 
 __all__ = [
     "TrainingManager",
@@ -17,5 +18,6 @@ __all__ = [
     "train_adam",
     "train_lbfgs",
     "ReLoBRaLoBalancer",
-    "CurriculumWeightScheduler"
+    "CurriculumWeightScheduler",
+    "FPIConvergenceTracker"
 ]

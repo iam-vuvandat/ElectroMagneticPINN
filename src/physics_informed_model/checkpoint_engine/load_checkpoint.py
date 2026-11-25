@@ -124,6 +124,13 @@ def load_checkpoint(pinn_instance, filepath=None):
             tm.relobralo_balancer.load_state_dict(
                 checkpoint_data["relobralo_state_dict"]
             )
+        if (
+            checkpoint_data.get("fpi_tracker_state_dict")
+            and getattr(tm, "fpi_tracker", None)
+        ):
+            tm.fpi_tracker.load_state_dict(
+                checkpoint_data["fpi_tracker_state_dict"]
+            )
         tm.completed_adam_epochs = checkpoint_data.get(
             "completed_adam_epochs", 0
         )

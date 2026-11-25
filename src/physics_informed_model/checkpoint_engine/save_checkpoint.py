@@ -71,6 +71,11 @@ def save_checkpoint(pinn_instance, filepath=None):
             if tm and getattr(tm, "relobralo_balancer", None)
             else None
         ),
+        "fpi_tracker_state_dict": (
+            tm.fpi_tracker.state_dict()
+            if tm and getattr(tm, "fpi_tracker", None)
+            else None
+        ),
         "completed_adam_epochs": getattr(tm, "completed_adam_epochs", 0) if tm else 0,
         "global_step": getattr(tm, "global_step", 0) if tm else 0,
         "current_fpi_step": getattr(tm, "current_fpi_step", 0) if tm else 0,

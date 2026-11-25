@@ -57,6 +57,10 @@ class ElectroMagneticPINN:
             fpi_initial_alpha_damping=1.0,
             fpi_alpha_damping=0.3,
             fpi_tolerance=1e-5,
+            enable_fpi_l2_evaluation=True,
+            fpi_eval_points_per_domain=2000,
+            fpi_convergence_metric="mu_r",
+            fpi_net_fit_tolerance=1e-2,
 
             pretrain_nu_epochs=300,
             pretrain_nu_lr=1e-2,
@@ -160,6 +164,13 @@ class ElectroMagneticPINN:
 
     def evaluate_fields(self, points_tensor, return_numpy=False):
         return evaluate_fields(self, points_tensor, return_numpy=return_numpy)
+
+    def evaluate_permeability_l2_error(self, points_per_domain=None):
+        if self.training_manager_instance is None:
+            self._build_system()
+        return self.training_manager_instance.fpi_tracker.evaluate_against_bh_reference(
+            points_per_domain=points_per_domain
+        )
 
     def plot_fields(self, resolution=180, save_path=None, show=False, figsize=(12, 10)):
         return plot_fields(self, resolution=resolution, save_path=save_path, show=show, figsize=figsize)

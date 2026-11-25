@@ -10,6 +10,7 @@ from training_engine.train_adam import train_adam
 from training_engine.train_lbfgs import train_lbfgs
 from training_engine.relobralo_balancer import ReLoBRaLoBalancer
 from training_engine.curriculum_scheduler import CurriculumWeightScheduler
+from training_engine.fpi_convergence_tracker import FPIConvergenceTracker
 
 
 class TrainingManager:
@@ -72,7 +73,14 @@ class TrainingManager:
                 rho=float(getattr(t_cfg, 'relobralo_rho', 0.999))
             )
 
+        fpi_eval_pts = int(getattr(t_cfg, 'fpi_eval_points_per_domain', 2000))
+        self.fpi_tracker = FPIConvergenceTracker(
+            electro_magnetic_pinn=self.electro_magnetic_pinn,
+            points_per_domain=fpi_eval_pts
+        )
+
         self.last_loss_breakdown = {}
+        self.last_nu_fit_metrics = {}
         self.completed_adam_epochs = 0
         self.global_step = 0
         self.current_fpi_step = 0

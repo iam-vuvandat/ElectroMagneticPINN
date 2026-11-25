@@ -1,10 +1,12 @@
 import torch
 import torch.optim as optim
 from training_engine.resolve_domain_net_key import resolve_domain_net_key
+from training_engine.fpi_convergence_tracker import FPIConvergenceTracker
 
 
 def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=None, epochs=None, lr=None):
     model = training_manager_instance.model
+    training_manager_instance.last_nu_fit_metrics = {}
     if not hasattr(model, 'nu_networks') or len(model.nu_networks) == 0:
         return 0.0
 
@@ -70,6 +72,17 @@ def fit_nu_network_step(training_manager_instance, domains_data, alpha_damping=N
             total_fit_loss = total_fit_loss + torch.mean(rel_err ** 2)
         total_fit_loss.backward()
         opt_nu.step()
+
+    with torch.no_grad():
+        for k, (pts, nu_target_star) in targets_dict.items():
+            nu_pred_star = torch.clamp(model.forward_nu_network(k, pts), min=1e-6)
+            nu_tgt_clamped = torch.clamp(nu_target_star, min=1e-6)
+            mu_pred = 1.0 / nu_pred_star
+            mu_tgt = 1.0 / nu_tgt_clamped
+            training_manager_instance.last_nu_fit_metrics[k] = {
+                "net_rel_l2_nu": FPIConvergenceTracker.relative_l2(nu_pred_star, nu_tgt_clamped),
+                "net_rel_l2_mu": FPIConvergenceTracker.relative_l2(mu_pred, mu_tgt)
+            }
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
