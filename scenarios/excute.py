@@ -275,7 +275,7 @@ def main():
     bg_training_cfg = SimpleNamespace(
         pde_fading_beta=0.0,
         sampling_density_multiplier=1.0,
-        number_of_interior_points=5000,
+        number_of_interior_points=10000,
         number_of_surface_points=0
     )
     bg_network_cfg = SimpleNamespace(
