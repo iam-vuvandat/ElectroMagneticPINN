@@ -22,7 +22,7 @@ except ImportError:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyaedt"])
 
 re_simulation_fem = False
-re_train_pinn = True
+re_train_pinn = False
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 parent_directory = os.path.abspath(os.path.join(current_directory, ".."))
@@ -420,3 +420,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+    
